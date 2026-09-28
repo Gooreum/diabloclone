@@ -62,7 +62,10 @@ const rollChance = (m: MonsterUnit, i: number) => rollPct(m) < aiParam(m, i);
 // ---------------------------------------------------------------- tactics
 
 export function idle(w: AiWorld, m: MonsterUnit, frames: number): void {
-  if (m.mode !== 'NU') w.startMode(m, 'NU');
+  if (m.mode !== 'NU') {
+    w.startMode(m, 'NU');
+    m.modeStart = w.frame;
+  }
   m.path = [];
   m.nextThink = w.frame + Math.max(frames, 1);
 }

@@ -50,8 +50,8 @@ export interface GameInit {
 
 export interface GameEvent { type: string; [k: string]: unknown }
 
-export interface PlayerSnapshot { id: number; x: number; y: number; mode: PlayerMode; dir: number; life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number }
-export interface MonsterSnapshot { id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; hp: number; maxHp: number }
+export interface PlayerSnapshot { id: number; x: number; y: number; mode: PlayerMode; dir: number; modeTick: number; life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number }
+export interface MonsterSnapshot { id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; modeTick: number; hp: number; maxHp: number }
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number }
 export interface WorldSnapshot {
@@ -136,11 +136,11 @@ export class Game {
     return {
       tick: this.tickCount,
       player: {
-        id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir,
+        id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir, modeTick: this.tickCount - p.modeStart,
         life: c?.life ?? 0, maxLife: c?.maxLife ?? 0, mana: c?.mana ?? 0, maxMana: c?.maxMana ?? 0,
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
       },
-      monsters: this.monsters.map((m) => ({ id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, hp: m.hp, maxHp: m.stats.maxHp })),
+      monsters: this.monsters.map((m) => ({ id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart, hp: m.hp, maxHp: m.stats.maxHp })),
       items: this.ground.map((g) => ({ id: g.item.id, code: g.item.code, quality: g.item.quality, quantity: g.item.quantity, x: g.x, y: g.y })),
       missiles: this.missiles.map((m) => ({ id: m.id, name: m.name, x: m.x, y: m.y })),
       inventory: [...this.inventory],
@@ -258,6 +258,7 @@ export class Game {
       }
       if (this.tickCount < p.modeEnd) return;
       p.mode = 'NU';
+      p.modeStart = this.tickCount;
     }
     const act = p.action;
     if (act?.kind === 'attack') {
@@ -315,20 +316,45 @@ export class Game {
     if (p.path.length === 0) {
       if (p.mode === 'WL' || p.mode === 'RN') {
         p.mode = 'NU';
+        p.modeStart = this.tickCount;
         this.events.push({ type: 'arrived', x: p.x, y: p.y });
       }
       return;
     }
-    p.mode = p.running ? 'RN' : 'WL';
+    const moving: PlayerMode = p.running ? 'RN' : 'WL';
+    if (p.mode !== moving) {
+      p.mode = moving;
+      p.modeStart = this.tickCount;
+    }
     this.advance(p, this.stepLength(), (d) => (p.dir = d));
   }
 
-  private advance(u: { x: number; y: number; path: Pt[] }, budget: number, setDir: (d: number) => void): void {
+  /**
+   * 유닛 점유: 살아있는 유닛은 크기(서브타일)만큼 공간을 차지해 서로 겹칠 수 없다.
+   * 근사(원작 미확인): 원작은 서브타일 충돌 패턴(PATH_GetUnitCollisionPattern)을 쓰지만, 여기선 반지름 size/2 원으로 근사.
+   */
+  private blockedByUnit(self: object, x: number, y: number, size: number): boolean {
+    const r = size / 2;
+    const p = this.player;
+    if (self !== p && p.mode !== 'DT' && p.mode !== 'DD' && Math.hypot(p.x - x, p.y - y) < r + PLAYER_SIZE / 2 - 0.25) return true;
+    for (const m of this.monsters) {
+      if (m === self || m.mode === 'DT' || m.mode === 'DD') continue;
+      if (Math.hypot(m.x - x, m.y - y) < r + m.type.sizeX / 2 - 0.25) return true;
+    }
+    return false;
+  }
+
+  private advance(u: { x: number; y: number; path: Pt[] }, budget: number, setDir: (d: number) => void, size = PLAYER_SIZE): void {
     while (budget > 0 && u.path.length > 0) {
       const next = u.path[0] as Pt;
       const dx = next.x - u.x, dy = next.y - u.y;
       const d = Math.hypot(dx, dy);
       if (d > 1e-9) setDir(dir64(dx, dy));
+      const step = Math.min(d, budget);
+      if (d > 1e-9 && this.blockedByUnit(u, u.x + (dx / d) * step, u.y + (dy / d) * step, size)) {
+        u.path = [];
+        return;
+      }
       if (d <= budget) {
         u.x = next.x;
         u.y = next.y;
@@ -439,7 +465,9 @@ export class Game {
         const path = t ? findPath(this.map, m, { x: t.x + 0.5, y: t.y + 0.5 }, 3000) : null;
         if (!path || path.length === 0) return false;
         m.path = path;
-        m.mode = run ? 'RN' : 'WL';
+        const mode = run ? 'RN' : 'WL';
+        if (m.mode !== mode) m.modeStart = this.tickCount;
+        m.mode = mode;
         m.moveSpeed = run ? m.type.run : m.type.velocity;
         return true;
       },
@@ -461,14 +489,16 @@ export class Game {
         }
         if (this.tickCount < m.modeEnd) continue;
         m.mode = 'NU';
+        m.modeStart = this.tickCount;
         m.nextThink = this.tickCount + m.type.aiDelay;
       }
       if (m.mode === 'WL' || m.mode === 'RN') {
         if (m.path.length) {
-          this.advance(m, (m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS, (d) => (m.dir = d));
+          this.advance(m, (m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS, (d) => (m.dir = d), m.type.sizeX);
           continue;
         }
         m.mode = 'NU';
+        m.modeStart = this.tickCount;
         m.nextThink = this.tickCount + m.type.aiDelay;
       }
       if (this.tickCount >= m.nextThink && hasAi(m.type.ai)) {

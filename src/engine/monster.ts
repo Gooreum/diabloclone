@@ -38,6 +38,8 @@ export interface MonsterType {
   hitClass: number;
   resist: { dm: number; ma: number; fi: number; li: number; co: number; po: number };
   modes: Set<string>;
+  /** monstats2 레이어별 외형 변형 (예: TR → ['lit','med','hvy']) */
+  layers: Record<string, string[]>;
   undead: boolean; demon: boolean;
 }
 
@@ -53,6 +55,13 @@ export class MonsterDb {
       const r2 = s2.get(r.Id) ?? {};
       const modes = new Set<string>();
       for (const m of ['DT', 'NU', 'WL', 'GH', 'A1', 'A2', 'BL', 'SC', 'S1', 'S2', 'S3', 'S4', 'DD', 'KB', 'SQ', 'RN']) if (n(r2[`m${m}`]) === 1) modes.add(m);
+      const layers: Record<string, string[]> = {};
+      for (const [col, name] of [['HD', 'HD'], ['TR', 'TR'], ['LG', 'LG'], ['RA', 'RA'], ['LA', 'LA'], ['RH', 'RH'], ['LH', 'LH'], ['SH', 'SH'], ['S1', 'S1'], ['S2', 'S2'], ['S3', 'S3'], ['S4', 'S4'], ['S5', 'S5'], ['S6', 'S6'], ['S7', 'S7'], ['S8', 'S8']] as const) {
+        if (n(r2[col]) !== 1) continue;
+        const vcol = col === 'RA' ? 'Rav' : col === 'LA' ? 'Lav' : `${col}v`;
+        const v = (r2[vcol] ?? '').replace(/"/g, '').split(',').map((x) => x.trim()).filter(Boolean);
+        layers[name] = v.length ? v : ['lit'];
+      }
       this.types.set(r.Id, {
         id: r.Id, nameStr: r.NameStr ?? r.Id, code: r.Code ?? '', ai: r.AI ?? '', baseW: (r2.BaseW ?? 'hth').toUpperCase(),
         level: n(r.Level), minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp), rarity: n(r.Rarity), velocity: n(r.Velocity), run: n(r.Run),
@@ -64,7 +73,7 @@ export class MonsterDb {
         treasure: [r.TreasureClass1 ?? '', r.TreasureClass2 ?? '', r.TreasureClass3 ?? '', r.TreasureClass4 ?? ''],
         sizeX: n(r2.SizeX) || 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
         resist: { dm: n(r.ResDm), ma: n(r.ResMa), fi: n(r.ResFi), li: n(r.ResLi), co: n(r.ResCo), po: n(r.ResPo) },
-        modes, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
+        modes, layers, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
       });
     }
   }

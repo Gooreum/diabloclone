@@ -22,6 +22,7 @@ export interface ItemBase {
   invWidth: number;
   invHeight: number;
   invFile: string;
+  flippyFile: string;
   cost: number;
   durability: number;
   noDurability: boolean;
@@ -64,7 +65,7 @@ export class ItemDb {
           code: r.code, name: r.name ?? r.code, namestr: r.namestr ?? r.code, category,
           type: r.type ?? '', type2: r.type2 ?? '', level: n(r.level), levelReq: n(r.levelreq), rarity: n(r.rarity),
           spawnable: n(r.spawnable) === 1, version: n(r.version),
-          invWidth: n(r.invwidth) || 1, invHeight: n(r.invheight) || 1, invFile: r.invfile ?? '', cost: n(r.cost),
+          invWidth: n(r.invwidth) || 1, invHeight: n(r.invheight) || 1, invFile: r.invfile ?? '', flippyFile: r.flippyfile ?? '', cost: n(r.cost),
           durability: n(r.durability), noDurability: n(r.nodurability) === 1,
           minDam: n(r.mindam), maxDam: n(r.maxdam), twoHandMinDam: n(r['2handmindam']), twoHandMaxDam: n(r['2handmaxdam']),
           twoHanded: n(r['2handed']) === 1,

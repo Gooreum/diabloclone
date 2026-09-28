@@ -54,7 +54,7 @@ describe('Game: move 명령 → 이동 시뮬레이션', () => {
   //       Phrozen Keep KB a=463 — 1 야드 = 1.5 서브타일, 1 프레임 = 1/25 초
   //       → 걷기 9 서브타일/초 = 0.36/프레임, 달리기 13.5 서브타일/초 = 0.54/프레임
   it('걷기: 9 서브타일 직선 이동에 25 프레임(1초)', () => {
-    const g = new Game(open(), { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, 1);
+    const g = new Game({ map: open(), player: { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, seed: 1 });
     g.enqueue({ type: 'move', x: 14.5, y: 5.5, run: false });
     for (let i = 0; i < 24; i++) g.tick();
     expect(g.snapshot().player.x).toBeLessThan(14.5);
@@ -63,13 +63,13 @@ describe('Game: move 명령 → 이동 시뮬레이션', () => {
     expect(g.snapshot().player.x).toBeCloseTo(14.5, 5);
   });
   it('달리기: 13.5 서브타일에 25 프레임', () => {
-    const g = new Game(open(), { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, 1);
+    const g = new Game({ map: open(), player: { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, seed: 1 });
     g.enqueue({ type: 'move', x: 19, y: 5.5, run: true });
     for (let i = 0; i < 25; i++) g.tick();
     expect(g.snapshot().player.x).toBeCloseTo(19, 5);
   });
   it('도착 후 대기(NU) 모드와 arrived 이벤트', () => {
-    const g = new Game(open(), { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, 1);
+    const g = new Game({ map: open(), player: { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, seed: 1 });
     g.enqueue({ type: 'move', x: 7.5, y: 5.5, run: false });
     const events = Array.from({ length: 30 }, () => g.tick()).flat();
     expect(g.snapshot().player.mode).toBe('NU');
@@ -78,7 +78,7 @@ describe('Game: move 명령 → 이동 시뮬레이션', () => {
   it('벽 안 좌표로 move 하면 가장 가까운 이동 가능 지점으로 간다', () => {
     const map = open();
     for (let y = 0; y < 40; y++) map.block(20, y);
-    const g = new Game(map, { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, 1);
+    const g = new Game({ map: map, player: { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, seed: 1 });
     g.enqueue({ type: 'move', x: 20.5, y: 5.5, run: true });
     for (let i = 0; i < 100; i++) g.tick();
     const p = g.snapshot().player;
@@ -88,7 +88,7 @@ describe('Game: move 명령 → 이동 시뮬레이션', () => {
   it('완전히 갇힌 곳으로 move 하면 이동 없이 moveBlocked', () => {
     const map = open();
     for (let i = 25; i <= 35; i++) { map.block(i, 25); map.block(i, 35); map.block(25, i); map.block(35, i); }
-    const g = new Game(map, { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, 1);
+    const g = new Game({ map: map, player: { x: 5.5, y: 5.5, walkVelocity: 6, runVelocity: 9 }, seed: 1 });
     g.enqueue({ type: 'move', x: 30.5, y: 30.5, run: false });
     const ev = g.tick();
     expect(ev.some((e) => e.type === 'moveBlocked')).toBe(true);

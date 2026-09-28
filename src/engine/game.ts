@@ -46,6 +46,8 @@ export interface GameInit {
   /** 장착 아이템 (슬롯 코드 → 아이템). 슬라이스: rarm, larm */
   equipment?: Record<string, ItemInstance>;
   inTown?: boolean;
+  inventory?: ItemInstance[];
+  gold?: number;
   /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
   levels?: LevelDef[];
 }
@@ -122,6 +124,8 @@ export class Game {
     this.classStats = init.classStats;
     this.expTable = init.expTable;
     this.equipment = init.equipment ?? {};
+    this.inventory.push(...(init.inventory ?? []));
+    this.gold = init.gold ?? 0;
     const p = init.player;
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
@@ -165,6 +169,25 @@ export class Game {
     if (p.mode === 'WL' || p.mode === 'RN') p.mode = 'NU';
     this.populate(next);
     this.events.push({ type: 'levelChanged', level: id });
+  }
+
+  /**
+   * 사망 후 부활: 마을에서 생명·마나 가득 찬 상태로 다시 시작.
+   * 근사(원작 차이): 원작은 시체에 장비를 남기고 골드 일부를 잃는다 — Phase 7(아이템)에서 구현.
+   */
+  respawn(levelId: string, x: number, y: number): void {
+    const p = this.player;
+    p.mode = 'NU';
+    p.modeStart = this.tickCount;
+    if (this.character) {
+      this.character.life = this.character.maxLife;
+      this.character.mana = this.character.maxMana;
+    }
+    this.changeLevel(levelId, x, y);
+  }
+
+  get isDead(): boolean {
+    return this.player.mode === 'DT' || this.player.mode === 'DD';
   }
 
   private populate(level: LevelState): void {

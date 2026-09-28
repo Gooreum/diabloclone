@@ -1,16 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
+import { newHero, uniqueName } from './helpers';
 
-const hasData = existsSync('game-data/d2data.mpq');
+test.skip(!existsSync('game-data/d2data.mpq'), '원작 game-data 필요');
 
-test.skip(!hasData, '원작 game-data 필요');
-
-test('Rogue Encampment 가 원작 타일로 렌더링된다', async ({ page }) => {
+test('새 캐릭터로 시작하면 Rogue Encampment 가 원작 타일로 렌더링된다', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/');
-  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
-  await page.waitForTimeout(500);
+  await newHero(page, uniqueName('Town'));
+  await page.waitForTimeout(800);
   const ratio = await page.evaluate(() => {
     const c = document.getElementById('game') as HTMLCanvasElement;
     const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
@@ -21,4 +19,5 @@ test('Rogue Encampment 가 원작 타일로 렌더링된다', async ({ page }) =
   await page.locator('#game').screenshot({ path: 'test-results/town-render.png' });
   expect(errors).toEqual([]);
   expect(ratio).toBeGreaterThan(0.3);
+  expect(await page.evaluate(() => window.__game!.game.levelId)).toBe('town');
 });

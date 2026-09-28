@@ -96,6 +96,11 @@ export class TreasureDb {
     }
   }
 
+  /** 불러온 아이템 id 와 겹치지 않도록 다음 id 를 올린다 */
+  reserveIds(maxId: number): void {
+    this.nextId = Math.max(this.nextId, maxId + 1);
+  }
+
   get(name: string): Tc | undefined {
     return this.tcs.get(name);
   }

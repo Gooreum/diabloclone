@@ -33,6 +33,7 @@ export function planSpawns(info: LevelMonsterInfo, rooms: Room[], map: Collision
   const out: SpawnRequest[] = [];
   if (!info.monDen || info.pool.length === 0) return out;
   const weights = info.pool.map((id) => monsters.types.get(id)?.rarity ?? 0);
+  const occupied = new Set<number>();
   const total = weights.reduce((a, b) => a + b, 0);
   for (const room of rooms) {
     const cells = Math.trunc(room.w / 3) * Math.trunc(room.h / 3);
@@ -48,8 +49,9 @@ export function planSpawns(info: LevelMonsterInfo, rooms: Room[], map: Collision
       const size = isFallen ? 1 + partySize(t, rng) : t.minGrp + rng.pick(Math.max(t.maxGrp - t.minGrp + 1, 1));
       const leader = out.length;
       for (let k = 0; k < size; k++) {
-        const pos = freeSpot(map, cx + rng.pick(3), cy + rng.pick(3), rng);
+        const pos = freeSpot(map, cx + rng.pick(3), cy + rng.pick(3), rng, occupied);
         if (!pos || exclude?.(pos.x, pos.y)) continue;
+        occupied.add(pos.y * map.width + pos.x);
         out.push({ typeId, x: pos.x + 0.5, y: pos.y + 0.5, leaderIndex: leader });
       }
     }
@@ -62,11 +64,16 @@ function partySize(t: { minGrp: number; maxGrp: number }, rng: Rng): number {
   return t.minGrp + rng.pick(Math.max(t.maxGrp - t.minGrp + 1, 1));
 }
 
-function freeSpot(map: CollisionMap, x: number, y: number, rng: Rng): { x: number; y: number } | null {
-  for (let r = 0; r <= 3; r++) {
+function freeSpot(map: CollisionMap, x: number, y: number, rng: Rng, occupied: Set<number>): { x: number; y: number } | null {
+  const free = (px: number, py: number) => {
+    if (!map.walkable(px, py)) return false;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (occupied.has((py + dy) * map.width + px + dx)) return false;
+    return true;
+  };
+  for (let r = 0; r <= 4; r++) {
     for (let k = 0; k < 8; k++) {
       const px = x + (r ? rng.pick(2 * r + 1) - r : 0), py = y + (r ? rng.pick(2 * r + 1) - r : 0);
-      if (map.walkable(px, py)) return { x: px, y: py };
+      if (free(px, py)) return { x: px, y: py };
     }
   }
   return null;

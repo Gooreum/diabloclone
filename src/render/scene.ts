@@ -30,9 +30,15 @@ const animFrame = (anim: AnimData, key: string, modeTick: number, loop = true): 
 export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps, picks: PickBox[]): DepthSprite[] {
   const out: DepthSprite[] = [];
   picks.length = 0;
+  // 화면 밖 유닛은 그리지 않는다 (여유 200px)
+  const onScreen = (x: number, y: number) => {
+    const p = toCanvas(cam, x, y);
+    return p.x > -200 && p.x < cam.width + 200 && p.y > -200 && p.y < cam.height + 300;
+  };
 
   // 바닥 아이템 (깊이는 약간 앞으로 — 유닛보다 먼저 그려 발밑에 놓임)
   for (const it of s.items) {
+    if (!onScreen(it.x, it.y)) continue;
     const base = d.itemDb?.base(it.code);
     if (!base?.flippyFile) continue;
     out.push({
@@ -46,6 +52,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   }
 
   for (const m of s.monsters) {
+    if (!onScreen(m.x, m.y)) continue;
     const t = d.monsters?.types.get(m.typeId);
     if (!t) continue;
     const equip: Record<string, string> = {};
@@ -77,6 +84,5 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       if (comp) d.units.draw(ctx, comp, pm.dir, frame, p.x, p.y);
     },
   });
-  void cam;
   return out;
 }

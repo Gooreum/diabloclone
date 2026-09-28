@@ -13,21 +13,34 @@ export class InputController {
   private lastRepeat = 0;
   pickBoxes: PickBox[] = [];
 
-  constructor(
-    private readonly canvas: HTMLCanvasElement,
-    private readonly camera: () => Camera,
-    private readonly send: (c: Command) => void,
-  ) {
-    canvas.addEventListener('mousedown', (e) => this.onDown(e));
-    window.addEventListener('mouseup', () => {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly camera: () => Camera;
+  private readonly send: (c: Command) => void;
+  private readonly off: (() => void)[] = [];
+  enabled = true;
+
+  constructor(canvas: HTMLCanvasElement, camera: () => Camera, send: (c: Command) => void) {
+    this.canvas = canvas;
+    this.camera = camera;
+    this.send = send;
+    const on = <K extends keyof HTMLElementEventMap>(t: EventTarget, type: K, fn: (e: HTMLElementEventMap[K]) => void) => {
+      t.addEventListener(type, fn as EventListener);
+      this.off.push(() => t.removeEventListener(type, fn as EventListener));
+    };
+    on(canvas, 'mousedown', (e) => this.enabled && this.onDown(e));
+    on(window, 'mouseup', () => {
       this.holding = false;
       this.holdCommand = null;
     });
-    canvas.addEventListener('mousemove', (e) => (this.mouse = this.local(e)));
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'r' || e.key === 'R') this.run = !this.run;
+    on(canvas, 'mousemove', (e) => (this.mouse = this.local(e)));
+    on(canvas, 'contextmenu', (e) => e.preventDefault());
+    on(window, 'keydown', (e) => {
+      if (this.enabled && (e.key === 'r' || e.key === 'R')) this.run = !this.run;
     });
+  }
+
+  dispose(): void {
+    for (const f of this.off.splice(0)) f();
   }
 
   private local(e: MouseEvent): { x: number; y: number } {

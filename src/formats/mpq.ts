@@ -127,72 +127,68 @@ const HASH_ENTRY_DELETED = 0xfffffffe;
 
 export class MpqError extends Error {}
 
-export class MpqArchive {
-  readonly sectorSize: number;
+export interface MpqHeader { base: number; sectorSize: number; hashOffset: number; blockOffset: number; hashCount: number; blockCount: number }
+
+/** 헤더 탐색: 512바이트 경계, 'MPQ\x1B' 사용자 데이터 헤더는 실제 헤더 오프셋을 가리킨다. bytes 는 파일 앞부분 */
+export function parseHeader(bytes: Uint8Array): MpqHeader {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let base = -1;
+  for (let off = 0; off + 32 <= bytes.length; off += 0x200) {
+    const magic = view.getUint32(off, true);
+    if (magic === 0x1a51504d) { base = off; break; }
+    if (magic === 0x1b51504d) { base = off + view.getUint32(off + 8, true); break; }
+  }
+  if (base < 0 || base + 32 > bytes.length || view.getUint32(base, true) !== 0x1a51504d) throw new MpqError('MPQ header not found');
+  return {
+    base,
+    sectorSize: 512 << view.getUint16(base + 14, true),
+    hashOffset: view.getUint32(base + 16, true),
+    blockOffset: view.getUint32(base + 20, true),
+    hashCount: view.getUint32(base + 24, true),
+    blockCount: view.getUint32(base + 28, true),
+  };
+}
+
+function decryptTable(bytes: Uint8Array, count: number, key: number): Uint32Array {
+  if (bytes.length < count * 16) throw new MpqError('MPQ table out of range');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const words = new Uint32Array(count * 4);
+  for (let i = 0; i < words.length; i++) words[i] = view.getUint32(i * 4, true);
+  decryptBlock(words, key);
+  return words;
+}
+
+export function parseHashTable(bytes: Uint8Array, count: number): MpqHashEntry[] {
+  const hw = decryptTable(bytes, count, hashString('(hash table)', HASH_FILE_KEY));
+  const out: MpqHashEntry[] = [];
+  for (let i = 0; i < count; i++) {
+    const w2 = hw[i * 4 + 2] ?? 0;
+    out.push({ nameA: hw[i * 4] ?? 0, nameB: hw[i * 4 + 1] ?? 0, locale: w2 & 0xffff, platform: w2 >>> 16, blockIndex: hw[i * 4 + 3] ?? 0 });
+  }
+  return out;
+}
+
+export function parseBlockTable(bytes: Uint8Array, count: number): MpqBlockEntry[] {
+  const bw = decryptTable(bytes, count, hashString('(block table)', HASH_FILE_KEY));
+  const out: MpqBlockEntry[] = [];
+  for (let i = 0; i < count; i++) out.push({ offset: bw[i * 4] ?? 0, compressedSize: bw[i * 4 + 1] ?? 0, fileSize: bw[i * 4 + 2] ?? 0, flags: bw[i * 4 + 3] ?? 0 });
+  return out;
+}
+
+/** 헤더 + 해시/블록 테이블 (데이터 접근 방식과 무관) */
+export class MpqIndex {
+  readonly header: MpqHeader;
   readonly hashTable: MpqHashEntry[];
   readonly blockTable: MpqBlockEntry[];
-  private readonly data: Uint8Array;
-  private readonly base: number;
 
-  private constructor(data: Uint8Array, base: number, sectorSize: number, hashTable: MpqHashEntry[], blockTable: MpqBlockEntry[]) {
-    this.data = data;
-    this.base = base;
-    this.sectorSize = sectorSize;
+  constructor(header: MpqHeader, hashTable: MpqHashEntry[], blockTable: MpqBlockEntry[]) {
+    this.header = header;
     this.hashTable = hashTable;
     this.blockTable = blockTable;
   }
 
-  static open(input: ArrayBuffer | Uint8Array): MpqArchive {
-    const data = input instanceof Uint8Array ? input : new Uint8Array(input);
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    // 헤더는 512바이트 경계에서 탐색 ('MPQ\x1B' 사용자 데이터 헤더는 실제 헤더 오프셋을 가리킨다)
-    let base = -1;
-    for (let off = 0; off + 32 <= data.length; off += 0x200) {
-      const magic = view.getUint32(off, true);
-      if (magic === 0x1a51504d) { base = off; break; }
-      if (magic === 0x1b51504d) { base = off + view.getUint32(off + 8, true); break; }
-    }
-    if (base < 0 || base + 32 > data.length || view.getUint32(base, true) !== 0x1a51504d) {
-      throw new MpqError('MPQ header not found');
-    }
-    const sectorShift = view.getUint16(base + 14, true);
-    const hashOffset = view.getUint32(base + 16, true);
-    const blockOffset = view.getUint32(base + 20, true);
-    const hashCount = view.getUint32(base + 24, true);
-    const blockCount = view.getUint32(base + 28, true);
-
-    const readTable = (offset: number, count: number, key: number): Uint32Array => {
-      const start = base + offset;
-      if (start + count * 16 > data.length) throw new MpqError('MPQ table out of range');
-      const words = new Uint32Array(count * 4);
-      for (let i = 0; i < words.length; i++) words[i] = view.getUint32(start + i * 4, true);
-      decryptBlock(words, key);
-      return words;
-    };
-
-    const hw = readTable(hashOffset, hashCount, hashString('(hash table)', HASH_FILE_KEY));
-    const hashTable: MpqHashEntry[] = [];
-    for (let i = 0; i < hashCount; i++) {
-      const w2 = hw[i * 4 + 2] ?? 0;
-      hashTable.push({
-        nameA: hw[i * 4] ?? 0,
-        nameB: hw[i * 4 + 1] ?? 0,
-        locale: w2 & 0xffff,
-        platform: w2 >>> 16,
-        blockIndex: hw[i * 4 + 3] ?? 0,
-      });
-    }
-    const bw = readTable(blockOffset, blockCount, hashString('(block table)', HASH_FILE_KEY));
-    const blockTable: MpqBlockEntry[] = [];
-    for (let i = 0; i < blockCount; i++) {
-      blockTable.push({
-        offset: bw[i * 4] ?? 0,
-        compressedSize: bw[i * 4 + 1] ?? 0,
-        fileSize: bw[i * 4 + 2] ?? 0,
-        flags: bw[i * 4 + 3] ?? 0,
-      });
-    }
-    return new MpqArchive(data, base, 512 << sectorShift, hashTable, blockTable);
+  get sectorSize(): number {
+    return this.header.sectorSize;
   }
 
   /** 출처: Zezula MPQ format — "Hash table" 탐색: 빈 엔트리에서 중단, 삭제 엔트리는 건너뜀 */
@@ -217,11 +213,86 @@ export class MpqArchive {
   has(path: string): boolean {
     return this.findBlock(path) !== null;
   }
+}
+
+function fileKey(path: string, block: MpqBlockEntry): number {
+  const name = path.slice(Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')) + 1);
+  let key = hashString(name, HASH_FILE_KEY);
+  // 출처: Zezula — MPQ_FILE_FIX_KEY: key = (key + BlockOffset) ^ FileSize
+  if (block.flags & MPQ_FILE_FIX_KEY) key = ((key + block.offset) >>> 0 ^ block.fileSize) >>> 0;
+  return key;
+}
+
+/** 블록 원본 바이트(raw, 길이 compressedSize) → 파일 내용 (복호화 + 섹터별 압축 해제) */
+export function decodeBlock(rawInput: Uint8Array, block: MpqBlockEntry, sectorSize: number, path: string): Uint8Array {
+  const raw = rawInput.slice();
+  const encrypted = (block.flags & MPQ_FILE_ENCRYPTED) !== 0;
+  const key = encrypted ? fileKey(path, block) : 0;
+  const packed = (block.flags & (MPQ_FILE_COMPRESS | MPQ_FILE_IMPLODE)) !== 0;
+
+  if (block.flags & MPQ_FILE_SINGLE_UNIT) {
+    if (encrypted) decryptBytes(raw, key);
+    return packed && raw.length < block.fileSize ? decompressSector(raw, block.fileSize, block.flags, path) : raw;
+  }
+
+  const sectorCount = Math.ceil(block.fileSize / sectorSize);
+  const out = new Uint8Array(block.fileSize);
+
+  if (!packed) {
+    // 압축 없는 파일: 섹터 오프셋 테이블 없이 연속 저장, 섹터별로 key+i 복호화
+    for (let i = 0; i < sectorCount; i++) {
+      const s = i * sectorSize;
+      const chunk = raw.subarray(s, Math.min(s + sectorSize, block.fileSize));
+      if (encrypted) decryptBytes(chunk, (key + i) >>> 0);
+      out.set(chunk, s);
+    }
+    return out;
+  }
+
+  // 섹터 오프셋 테이블 (sectorCount + 1 개, SECTOR_CRC 면 +1). 암호화 키는 key - 1.
+  const entries = sectorCount + 1 + (block.flags & MPQ_FILE_SECTOR_CRC ? 1 : 0);
+  const tableBytes = raw.slice(0, entries * 4);
+  if (encrypted) decryptBytes(tableBytes, (key - 1) >>> 0);
+  const tv = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
+  for (let i = 0; i < sectorCount; i++) {
+    const from = tv.getUint32(i * 4, true);
+    const to = tv.getUint32((i + 1) * 4, true);
+    if (to < from || to > raw.length) throw new MpqError(`MPQ sector table corrupt: ${path}`);
+    const sector = raw.slice(from, to);
+    if (encrypted) decryptBytes(sector, (key + i) >>> 0);
+    const expected = Math.min(sectorSize, block.fileSize - i * sectorSize);
+    const plain = sector.length < expected ? decompressSector(sector, expected, block.flags, path) : sector;
+    out.set(plain.subarray(0, expected), i * sectorSize);
+  }
+  return out;
+}
+
+/** 메모리 전체 버퍼 기반 MPQ (Node 테스트/스크립트) */
+export class MpqArchive extends MpqIndex {
+  private readonly data: Uint8Array;
+
+  private constructor(data: Uint8Array, header: MpqHeader, hashTable: MpqHashEntry[], blockTable: MpqBlockEntry[]) {
+    super(header, hashTable, blockTable);
+    this.data = data;
+  }
+
+  static open(input: ArrayBuffer | Uint8Array): MpqArchive {
+    const data = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const h = parseHeader(data);
+    const at = (off: number, len: number) => {
+      const s = h.base + off;
+      if (s + len > data.length) throw new MpqError('MPQ table out of range');
+      return data.subarray(s, s + len);
+    };
+    return new MpqArchive(data, h, parseHashTable(at(h.hashOffset, h.hashCount * 16), h.hashCount), parseBlockTable(at(h.blockOffset, h.blockCount * 16), h.blockCount));
+  }
 
   read(path: string): Uint8Array | null {
     const block = this.findBlock(path);
     if (!block) return null;
-    return this.readBlock(block, path);
+    const start = this.header.base + block.offset;
+    if (start + block.compressedSize > this.data.length) throw new MpqError(`MPQ block out of range: ${path}`);
+    return decodeBlock(this.data.subarray(start, start + block.compressedSize), block, this.sectorSize, path);
   }
 
   /** (listfile) 이 있으면 파일 목록 반환 */
@@ -229,59 +300,6 @@ export class MpqArchive {
     const raw = this.read('(listfile)');
     if (!raw) return [];
     return new TextDecoder('latin1').decode(raw).split(/[\r\n;]+/).filter((s) => s.length > 0);
-  }
-
-  private fileKey(path: string, block: MpqBlockEntry): number {
-    const name = path.slice(Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')) + 1);
-    let key = hashString(name, HASH_FILE_KEY);
-    // 출처: Zezula — MPQ_FILE_FIX_KEY: key = (key + BlockOffset) ^ FileSize
-    if (block.flags & MPQ_FILE_FIX_KEY) key = ((key + block.offset) >>> 0 ^ block.fileSize) >>> 0;
-    return key;
-  }
-
-  private readBlock(block: MpqBlockEntry, path: string): Uint8Array {
-    const start = this.base + block.offset;
-    if (start + block.compressedSize > this.data.length) throw new MpqError(`MPQ block out of range: ${path}`);
-    const raw = this.data.slice(start, start + block.compressedSize);
-    const encrypted = (block.flags & MPQ_FILE_ENCRYPTED) !== 0;
-    const key = encrypted ? this.fileKey(path, block) : 0;
-    const packed = (block.flags & (MPQ_FILE_COMPRESS | MPQ_FILE_IMPLODE)) !== 0;
-
-    if (block.flags & MPQ_FILE_SINGLE_UNIT) {
-      if (encrypted) decryptBytes(raw, key);
-      return packed && raw.length < block.fileSize ? decompressSector(raw, block.fileSize, block.flags, path) : raw;
-    }
-
-    const sectorCount = Math.ceil(block.fileSize / this.sectorSize);
-    const out = new Uint8Array(block.fileSize);
-
-    if (!packed) {
-      // 압축 없는 파일: 섹터 오프셋 테이블 없이 연속 저장, 섹터별로 key+i 복호화
-      for (let i = 0; i < sectorCount; i++) {
-        const s = i * this.sectorSize;
-        const chunk = raw.subarray(s, Math.min(s + this.sectorSize, block.fileSize));
-        if (encrypted) decryptBytes(chunk, (key + i) >>> 0);
-        out.set(chunk, s);
-      }
-      return out;
-    }
-
-    // 섹터 오프셋 테이블 (sectorCount + 1 개, SECTOR_CRC 면 +1). 암호화 키는 key - 1.
-    const entries = sectorCount + 1 + (block.flags & MPQ_FILE_SECTOR_CRC ? 1 : 0);
-    const tableBytes = raw.slice(0, entries * 4);
-    if (encrypted) decryptBytes(tableBytes, (key - 1) >>> 0);
-    const tv = new DataView(tableBytes.buffer, tableBytes.byteOffset, tableBytes.byteLength);
-    for (let i = 0; i < sectorCount; i++) {
-      const from = tv.getUint32(i * 4, true);
-      const to = tv.getUint32((i + 1) * 4, true);
-      if (to < from || to > raw.length) throw new MpqError(`MPQ sector table corrupt: ${path}`);
-      const sector = raw.slice(from, to);
-      if (encrypted) decryptBytes(sector, (key + i) >>> 0);
-      const expected = Math.min(this.sectorSize, block.fileSize - i * this.sectorSize);
-      const plain = sector.length < expected ? decompressSector(sector, expected, block.flags, path) : sector;
-      out.set(plain.subarray(0, expected), i * this.sectorSize);
-    }
-    return out;
   }
 }
 

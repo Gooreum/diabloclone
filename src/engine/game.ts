@@ -1,7 +1,7 @@
 // 게임 시뮬레이션: 명령 큐 → 고정 25fps 틱 → 이벤트 + 읽기 전용 스냅샷. (DOM/렌더 비의존)
 import type { Command } from './command';
 import type { CollisionMap } from './collision';
-import { angleIndex, SUBTILES_PER_YARD, type Pt } from './geom';
+import { dir64, SUBTILES_PER_YARD, type Pt } from './geom';
 import { ENGINE_FPS } from './index';
 import { findPath, nearestWalkable } from './path';
 import { Rng } from './rng';
@@ -50,7 +50,7 @@ export interface GameInit {
 
 export interface GameEvent { type: string; [k: string]: unknown }
 
-export interface PlayerSnapshot { id: number; x: number; y: number; mode: PlayerMode; dir16: number; life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number }
+export interface PlayerSnapshot { id: number; x: number; y: number; mode: PlayerMode; dir: number; life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number }
 export interface MonsterSnapshot { id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; hp: number; maxHp: number }
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number }
@@ -64,7 +64,7 @@ export interface WorldSnapshot {
 }
 
 interface PlayerState {
-  id: number; x: number; y: number; mode: PlayerMode; dir16: number;
+  id: number; x: number; y: number; mode: PlayerMode; dir: number;
   path: Pt[]; running: boolean; walkVelocity: number; runVelocity: number;
   modeEnd: number; hitTick: number; hitDone: boolean; modeStart: number;
   /** 진행 중인 행동 */
@@ -106,7 +106,7 @@ export class Game {
     this.inTown = init.inTown ?? false;
     const p = init.player;
     this.player = {
-      id: 1, x: p.x, y: p.y, mode: 'NU', dir16: 0, path: [], running: false,
+      id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
       walkVelocity: p.walkVelocity, runVelocity: p.runVelocity,
       modeEnd: 0, hitTick: -1, hitDone: true, modeStart: 0, action: null, repathAt: 0,
     };
@@ -136,7 +136,7 @@ export class Game {
     return {
       tick: this.tickCount,
       player: {
-        id: p.id, x: p.x, y: p.y, mode: p.mode, dir16: p.dir16,
+        id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir,
         life: c?.life ?? 0, maxLife: c?.maxLife ?? 0, mana: c?.mana ?? 0, maxMana: c?.maxMana ?? 0,
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
       },
@@ -266,11 +266,11 @@ export class Game {
         p.action = null;
       } else if (isInMeleeRange(p.x, p.y, PLAYER_SIZE, this.playerMeleeRange(), target.x, target.y, target.type.sizeX)) {
         p.path = [];
-        p.dir16 = angleIndex(target.x - p.x, target.y - p.y, 16);
+        p.dir = dir64(target.x - p.x, target.y - p.y);
         this.setPlayerMode('A1', 100 - this.weaponSpeed());
         return;
       } else if (act.standStill) {
-        p.dir16 = angleIndex(target.x - p.x, target.y - p.y, 16);
+        p.dir = dir64(target.x - p.x, target.y - p.y);
         this.setPlayerMode('A1', 100 - this.weaponSpeed());
         p.action = null;
         p.hitDone = true;
@@ -320,15 +320,15 @@ export class Game {
       return;
     }
     p.mode = p.running ? 'RN' : 'WL';
-    this.advance(p, this.stepLength(), (d) => (p.dir16 = d), 16);
+    this.advance(p, this.stepLength(), (d) => (p.dir = d));
   }
 
-  private advance(u: { x: number; y: number; path: Pt[] }, budget: number, setDir: (d: number) => void, dirs: number): void {
+  private advance(u: { x: number; y: number; path: Pt[] }, budget: number, setDir: (d: number) => void): void {
     while (budget > 0 && u.path.length > 0) {
       const next = u.path[0] as Pt;
       const dx = next.x - u.x, dy = next.y - u.y;
       const d = Math.hypot(dx, dy);
-      if (d > 1e-9) setDir(angleIndex(dx, dy, dirs));
+      if (d > 1e-9) setDir(dir64(dx, dy));
       if (d <= budget) {
         u.x = next.x;
         u.y = next.y;
@@ -423,7 +423,7 @@ export class Game {
       m.hitTick = t.hitTick;
       m.hitDone = !(mode === 'A1' || mode === 'A2');
       m.path = [];
-      if (mode === 'A1' || mode === 'A2') m.dir = angleIndex(this.player.x - m.x, this.player.y - m.y, 8);
+      if (mode === 'A1' || mode === 'A2') m.dir = dir64(this.player.x - m.x, this.player.y - m.y);
     }
   }
 
@@ -465,7 +465,7 @@ export class Game {
       }
       if (m.mode === 'WL' || m.mode === 'RN') {
         if (m.path.length) {
-          this.advance(m, (m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS, (d) => (m.dir = d), 8);
+          this.advance(m, (m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS, (d) => (m.dir = d));
           continue;
         }
         m.mode = 'NU';

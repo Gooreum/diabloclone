@@ -10,13 +10,14 @@ export const SUBTILES_PER_YARD = 1.5;
 export const dist = (a: Pt, b: Pt): number => Math.hypot(a.x - b.x, a.y - b.y);
 
 /**
- * 이동 벡터 → 방향 인덱스. 화면(등각) 기준 각도로 계산한다.
- * 16방향 기준 0 = 남서(↙) 시작은 원작 COF 방향 순서가 확정되면 렌더 단계에서 매핑한다 (여기선 각도만 양자화).
+ * 이동 벡터(월드 서브타일) → 64방향 인덱스. 0 = 화면 남쪽(아래), 시계 방향(남→남서→서→북서→북 …)으로 5.625°씩 증가.
+ * 출처: OpenDiablo2 d2dcc/dcc_dir_lookup.go Dir64ToDcc — 64방향 테이블의 0번이 DCC 8방향 4(남), 이후 0(남서)·5(서)·1(북서)… 순서
+ *       (https://github.com/OpenDiablo2/OpenDiablo2)
  */
-export function angleIndex(dx: number, dy: number, directions: number): number {
+export function dir64(dx: number, dy: number): number {
   const sx = (dx - dy) * 16; // 서브타일 → 화면 픽셀 (32×16 등각)
   const sy = (dx + dy) * 8;
-  const a = Math.atan2(sy, sx); // 화면 기준 각도
-  const step = (Math.PI * 2) / directions;
-  return ((Math.round(a / step) % directions) + directions) % directions;
+  const a = Math.atan2(sy, sx) - Math.PI / 2; // 화면 아래 = 0
+  const idx = Math.round(a / ((Math.PI * 2) / 64));
+  return ((idx % 64) + 64) % 64;
 }

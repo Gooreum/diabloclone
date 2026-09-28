@@ -1,0 +1,9 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+# 원작 게임 데이터 — 저작권 에셋, 절대 커밋 금지
+game-data/
+*.mpq
+*.MPQ
+.ai-bouncer-tasks/

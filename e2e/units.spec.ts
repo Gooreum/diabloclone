@@ -12,7 +12,7 @@ test('몬스터·바닥 아이템이 원작 스프라이트로 그려지고 클�
   await page.locator('#game').screenshot({ path: 'test-results/units.png' });
   expect(errors).toEqual([]);
   const s = await page.evaluate(() => window.__game!.game.snapshot());
-  expect(s.monsters.length).toBe(3);
+  expect(s.monsters.length).toBeGreaterThanOrEqual(3);
 });
 
 test('몬스터를 좌클릭하면 다가가서 공격한다', async ({ page }) => {

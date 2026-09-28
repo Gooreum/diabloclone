@@ -46,7 +46,27 @@ export interface GameInit {
   /** 장착 아이템 (슬롯 코드 → 아이템). 슬라이스: rarm, larm */
   equipment?: Record<string, ItemInstance>;
   inTown?: boolean;
+  /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
+  levels?: LevelDef[];
 }
+
+/** 레벨 출구: 플레이어가 영역(서브타일)에 들어가면 다른 레벨의 지정 위치로 이동 */
+export interface LevelExit {
+  x: number; y: number; w: number; h: number; to: string; toX: number; toY: number;
+  /** 지정 시 도착 y = 현재 y + dy (야외 경계처럼 나란히 이어지는 출구) */
+  dy?: number;
+}
+
+export interface LevelDef {
+  id: string;
+  map: CollisionMap;
+  inTown: boolean;
+  exits: LevelExit[];
+  /** 처음 들어갈 때 배치할 몬스터 */
+  spawns?: { typeId: string; x: number; y: number; leaderIndex: number }[];
+}
+
+interface LevelState { def: LevelDef; monsters: MonsterUnit[]; ground: GroundItem[]; missiles: Missile[]; populated: boolean }
 
 export interface GameEvent { type: string; [k: string]: unknown }
 
@@ -76,7 +96,6 @@ interface GroundItem { item: ItemInstance; x: number; y: number }
 interface Missile { id: number; name: string; x: number; y: number; dx: number; dy: number; left: number; ownerId: number; damage: { min: number; max: number }; toHit: number; ownerLevel: number; hitClass: number }
 
 export class Game {
-  readonly map: CollisionMap;
   readonly rng: Rng;
   readonly data: GameData | undefined;
   readonly character: Character | undefined;
@@ -85,25 +104,24 @@ export class Game {
   readonly equipment: Record<string, ItemInstance>;
   readonly inventory: ItemInstance[] = [];
   gold = 0;
-  inTown: boolean;
   private tickCount = 0;
   private readonly queue: Command[] = [];
   private readonly player: PlayerState;
-  readonly monsters: MonsterUnit[] = [];
-  private readonly ground: GroundItem[] = [];
-  private readonly missiles: Missile[] = [];
+  private readonly levels = new Map<string, LevelState>();
+  private level: LevelState;
   private nextUnitId = 100;
   private events: GameEvent[] = [];
 
   constructor(init: GameInit) {
-    this.map = init.map;
+    const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
+    for (const d of defs) this.levels.set(d.id, { def: d, monsters: [], ground: [], missiles: [], populated: false });
+    this.level = this.levels.get((defs[0] as LevelDef).id) as LevelState;
     this.rng = new Rng(init.seed);
     this.data = init.data;
     this.character = init.character;
     this.classStats = init.classStats;
     this.expTable = init.expTable;
     this.equipment = init.equipment ?? {};
-    this.inTown = init.inTown ?? false;
     const p = init.player;
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
@@ -115,6 +133,66 @@ export class Game {
   get frame(): number {
     return this.tickCount;
   }
+  get map(): CollisionMap {
+    return this.level.def.map;
+  }
+  get inTown(): boolean {
+    return this.level.def.inTown;
+  }
+  get levelId(): string {
+    return this.level.def.id;
+  }
+  get monsters(): MonsterUnit[] {
+    return this.level.monsters;
+  }
+  private get ground(): GroundItem[] {
+    return this.level.ground;
+  }
+  private get missiles(): Missile[] {
+    return this.level.missiles;
+  }
+
+  /** 레벨 전환: 진행 중 행동 취소, 첫 방문이면 몬스터 배치 */
+  changeLevel(id: string, x: number, y: number): void {
+    const next = this.levels.get(id);
+    if (!next) throw new Error(`unknown level ${id}`);
+    this.level = next;
+    const p = this.player;
+    p.x = x;
+    p.y = y;
+    p.path = [];
+    p.action = null;
+    if (p.mode === 'WL' || p.mode === 'RN') p.mode = 'NU';
+    this.populate(next);
+    this.events.push({ type: 'levelChanged', level: id });
+  }
+
+  private populate(level: LevelState): void {
+    if (level.populated) return;
+    level.populated = true;
+    const prev = this.level;
+    this.level = level;
+    const leaders: number[] = [];
+    level.def.spawns?.forEach((sp, i) => {
+      const leader = sp.leaderIndex === i ? undefined : leaders[sp.leaderIndex];
+      const m = this.spawnMonster(sp.typeId, sp.x, sp.y, leader);
+      leaders[i] = m.id;
+    });
+    this.level = prev;
+  }
+
+  private checkExits(): void {
+    const p = this.player;
+    for (const e of this.level.def.exits) {
+      if (p.x >= e.x && p.x < e.x + e.w && p.y >= e.y && p.y < e.y + e.h) {
+        const target = this.levels.get(e.to);
+        const ty = e.dy !== undefined ? p.y + e.dy : e.toY;
+        const spot = target ? nearestWalkable(target.def.map, { x: e.toX, y: ty }, 12) : null;
+        this.changeLevel(e.to, spot ? spot.x + 0.5 : e.toX, spot ? spot.y + 0.5 : ty);
+        return;
+      }
+    }
+  }
 
   enqueue(cmd: Command): void {
     this.queue.push(cmd);
@@ -122,8 +200,10 @@ export class Game {
 
   tick(): GameEvent[] {
     this.events = [];
+    this.populate(this.level);
     for (const cmd of this.queue.splice(0)) this.apply(cmd);
     this.updatePlayer();
+    this.checkExits();
     this.updateMonsters();
     this.updateMissiles();
     this.regen();

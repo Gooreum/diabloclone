@@ -9,20 +9,23 @@ export interface UnitState {
   until: number;
   /** 스탯 이름(itemstatcost.txt) → 값 */
   stats: Record<string, number>;
+  /** 상태를 건 스킬 (Frozen Armor 이벤트 등에서 스킬 수치를 다시 계산할 때) */
+  skill?: { id: number; lvl: number };
 }
 
 export class StateList {
   private readonly list: UnitState[] = [];
 
   /** 상태 부여. 이미 있으면 스탯을 교체하고 만료 프레임은 더 늦은 쪽으로 */
-  set(name: string, until: number, stats: Record<string, number> = {}): void {
+  set(name: string, until: number, stats: Record<string, number> = {}, skill?: { id: number; lvl: number }): void {
     const cur = this.list.find((s) => s.name === name);
     if (cur) {
       cur.until = Math.max(cur.until, until);
       cur.stats = stats;
+      if (skill) cur.skill = skill;
       return;
     }
-    this.list.push({ name, until, stats });
+    this.list.push({ name, until, stats, ...(skill ? { skill } : {}) });
   }
 
   get(name: string): UnitState | undefined {

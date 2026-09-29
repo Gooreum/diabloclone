@@ -41,14 +41,17 @@ export function characterOwner(ch: Character): SkillOwner {
 
 export interface PassiveStat { stat: string; itype: string; value: number }
 
-/** 배운 패시브 스킬의 스탯 목록 */
-export function passiveStats(ch: Character, db: SkillDb, calc: SkillCalc): PassiveStat[] {
+/**
+ * 배운 패시브 스킬의 스탯 목록. activeAura: 지금 켜진 오라 스킬 Id — 오라가 켜지면 그 스킬의 패시브 상태는 빠진다
+ * (출처: D2MOO SKILLS_AuraCallback_BasicAura — 오라 적용 시 passivestate 스탯 목록 해제)
+ */
+export function passiveStats(ch: Character, db: SkillDb, calc: SkillCalc, activeAura = -1): PassiveStat[] {
   const out: PassiveStat[] = [];
   const o = characterOwner(ch);
   for (const [idStr, lvl] of Object.entries(ch.skills)) {
     if (lvl <= 0) continue;
     const s = db.byId.get(Number(idStr));
-    if (!s || !s.passiveState || !s.passiveStats.length) continue;
+    if (!s || !s.passiveState || !s.passiveStats.length || s.id === activeAura) continue;
     for (const ps of s.passiveStats) out.push({ stat: ps.stat, itype: s.passiveItype, value: calc.eval(s, ps.calc, lvl, o) });
   }
   return out;

@@ -39,6 +39,8 @@ export interface MonsterType {
   resist: { dm: number; ma: number; fi: number; li: number; co: number; po: number };
   /** 냉기 효과 % (음수 = 감속, 0 이상 = 냉기 면역) — monstats coldeffect (Normal) */
   coldEffect: number;
+  /** monstats noRatio: 생명·방어·피해·명중을 MonLvl 비율 없이 표 값 그대로 (소환수) */
+  noRatio: boolean;
   modes: Set<string>;
   /** monstats2 레이어별 외형 변형 (예: TR → ['lit','med','hvy']) */
   layers: Record<string, string[]>;
@@ -76,6 +78,7 @@ export class MonsterDb {
         sizeX: n(r2.SizeX) || 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
         resist: { dm: n(r.ResDm), ma: n(r.ResMa), fi: n(r.ResFi), li: n(r.ResLi), co: n(r.ResCo), po: n(r.ResPo) },
         coldEffect: r.coldeffect === undefined || r.coldeffect === '' ? -50 : n(r.coldeffect),
+        noRatio: n(r.noRatio) === 1,
         modes, layers, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
       });
     }
@@ -103,10 +106,13 @@ export interface MonsterStats {
   a2: AttackDef;
 }
 
-/** 출처: MonsterTbls ApplyRatio = MonLvl × % / 100 (정수 나눗셈), Monster.cpp HP = min + rand(max − min + 1) */
-export function rollMonsterStats(db: MonsterDb, t: MonsterType, rng: Rng): MonsterStats {
-  const lvl = t.level;
-  const ratio = (col: 'AC' | 'TH' | 'HP' | 'DM' | 'XP', pct: number) => Math.trunc((db.levelBase(lvl, col) * pct) / 100);
+/**
+ * 출처: MonsterTbls ApplyRatio = MonLvl × % / 100 (정수 나눗셈), Monster.cpp HP = min + rand(max − min + 1)
+ *       DATATBLS_CalculateMonsterStatsByLevel — noRatio 몬스터(소환수)는 monstats 값을 그대로
+ */
+export function rollMonsterStats(db: MonsterDb, t: MonsterType, rng: Rng, level = t.level): MonsterStats {
+  const lvl = level;
+  const ratio = (col: 'AC' | 'TH' | 'HP' | 'DM' | 'XP', pct: number) => (t.noRatio ? pct : Math.trunc((db.levelBase(lvl, col) * pct) / 100));
   const minHp = ratio('HP', t.minHpPct), maxHp = ratio('HP', t.maxHpPct);
   const atk = (a: AttackDef): AttackDef => ({ min: ratio('DM', a.min), max: ratio('DM', a.max), toHit: ratio('TH', a.toHit) });
   return {

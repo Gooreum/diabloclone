@@ -42,6 +42,24 @@ export interface MonsterUnit {
   states: StateList;
   /** 시체에 Find Potion / Find Item 을 이미 사용함 (원작 STATE_CORPSE_NOSELECT) */
   corpseUsed: boolean;
+  /** 플레이어 소환수면 소환 정보 (스켈레톤·골렘·뼈벽) */
+  pet?: PetInfo;
+  /** 이번 판단의 공격 대상 유닛 Id (undefined = 플레이어) */
+  targetId?: number;
+}
+
+export interface PetInfo {
+  skillId: number;
+  petType: string;
+  /** 소멸 프레임 (뼈벽 등, Infinity = 죽을 때까지) */
+  expires: number;
+  /** 원거리 소환수(스켈레톤 메이지)의 미사일과 미사일 레벨 */
+  missile?: string;
+  missileLvl: number;
+  /** 소환 스킬이 준 보너스 (출처: D2GAME_SetSummonPassiveStats) */
+  damagePct: number;
+  normalDamage: number;
+  slowPct: number;
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean }

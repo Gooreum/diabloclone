@@ -18,6 +18,8 @@ export interface MissileDef {
   collideType: number; collideKill: boolean; explosion: boolean; alwaysExplode: boolean;
   toHit: boolean; pierce: boolean; knockBack: boolean;
   nextHit: boolean; nextDelay: number;
+  /** 지속 피해 속도 (0 이 아니면 닿아 있는 동안 매 프레임 피해 — Inferno 82, Fire Wall 41) */
+  damageRate: number;
   /** 무기 피해 반영 비율 (128 = 100%, -1 = 무기 피해 없음) */
   srcDamage: number;
   skill: string; missileSkill: boolean;
@@ -26,6 +28,8 @@ export interface MissileDef {
   hitShift: number; hitClass: number;
   minDamage: number; maxDamage: number;
   eType: string; eMin: number; eMax: number; eLen: number;
+  /** 미사일 레벨 구간별 원소 증가 (MinELev1~5, MaxELev1~5), 지속 증가 (ELevLen1~3) */
+  eMinLev: number[]; eMaxLev: number[]; eLevLen: number[];
   explosionMissile: string; subMissile1: string; hitSubMissile1: string;
   /** 기존 몬스터 미사일 코드 호환 (= vel, srcDamage) */
   srcDamagePct: number;
@@ -43,7 +47,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       celFile: r.CelFile ?? '', numDirections: n(r.NumDirections) || 1, animLen: n(r.AnimLen) || 1,
       collideType: n(r.CollideType), collideKill: n(r.CollideKill) === 1, explosion: n(r.Explosion) === 1, alwaysExplode: n(r.AlwaysExplode) === 1,
       toHit: n(r.ToHit) === 1, pierce: n(r.Pierce) === 1, knockBack: n(r.KnockBack) === 1,
-      nextHit: n(r.NextHit) === 1, nextDelay: n(r.NextDelay),
+      nextHit: n(r.NextHit) === 1, nextDelay: n(r.NextDelay), damageRate: n(r.DamageRate),
       srcDamage: src, skill: r.Skill ?? '', missileSkill: n(r.MissileSkill) === 1,
       srvDoFunc: n(r.pSrvDoFunc), srvHitFunc: n(r.pSrvHitFunc), srvDmgFunc: n(r.pSrvDmgFunc),
       params: [1, 2, 3, 4, 5].map((i) => n(r[`Param${i}`])),
@@ -52,6 +56,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       hitShift: n(r.HitShift), hitClass: n(r.HitClass),
       minDamage: n(r.MinDamage), maxDamage: n(r.MaxDamage),
       eType: r.EType ?? '', eMin: n(r.EMin), eMax: n(r.Emax), eLen: n(r.ELen),
+      eMinLev: [1, 2, 3, 4, 5].map((i) => n(r[`MinELev${i}`])), eMaxLev: [1, 2, 3, 4, 5].map((i) => n(r[`MaxELev${i}`])), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])),
       explosionMissile: r.ExplosionMissile ?? '', subMissile1: r.SubMissile1 ?? '', hitSubMissile1: r.HitSubMissile1 ?? '',
       srcDamagePct: src < 0 ? 0 : src,
     });

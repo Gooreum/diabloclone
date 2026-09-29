@@ -32,12 +32,23 @@ export interface SkillRecord {
   itypeA: string[]; etypeA: string[]; itypeB: string[];
   weapSel: number;
   anim: string; seqTrans: string; seqNum: number;
+  /** 반복 스킬이 되돌아가는 시퀀스 프레임 (Inferno 10) */
+  seqInput: number;
   reqLevel: number; maxLvl: number; reqSkills: string[];
   leftSkill: boolean; inTown: boolean; passive: boolean; aura: boolean;
   targetableOnly: boolean; searchEnemyXY: boolean; searchEnemyNear: boolean; targetCorpse: boolean;
   attackNoMana: boolean; useAttackRate: boolean; durability: boolean; decQuant: boolean; lob: boolean;
   delay: CalcNode | null;
+  /** 소환: monstats Id, pettype, petmax 공식, 소환수 스킬 레벨 공식 (sumsk1calc) */
+  summon: string; petType: string; petMax: CalcNode | null; sumSkill1: string; sumSk1Calc: CalcNode | null;
+  /** 오라 주기 (skills.txt perdelay, 프레임) · 선택 즉시 적용 (immediate) */
+  perDelay: CalcNode | null;
+  immediate: boolean;
   minMana: number; manaShift: number; mana: number; lvlMana: number;
+  /** 시작에 필요한 마나 (Inferno 6) */
+  startMana: number;
+  /** 누르고 있으면 반복 (Inferno) */
+  repeat: boolean;
   calcs: (CalcNode | null)[];
   params: number[];
   toHit: number; levToHit: number; toHitCalc: CalcNode | null;
@@ -66,14 +77,15 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     etypeA: [r.etypea1, r.etypea2].filter((x): x is string => !!x),
     itypeB: [r.itypeb1, r.itypeb2, r.itypeb3].filter((x): x is string => !!x),
     weapSel: n(r.weapsel),
-    anim: r.anim ?? '', seqTrans: r.seqtrans ?? '', seqNum: n(r.seqnum),
+    anim: r.anim ?? '', seqTrans: r.seqtrans ?? '', seqNum: n(r.seqnum), seqInput: n(r.seqinput),
     reqLevel: n(r.reqlevel), maxLvl: n(r.maxlvl),
     reqSkills: [r.reqskill1, r.reqskill2, r.reqskill3].filter((x): x is string => !!x),
     leftSkill: flag(r.leftskill), inTown: flag(r.InTown), passive: flag(r.passive), aura: flag(r.aura),
     targetableOnly: flag(r.TargetableOnly), searchEnemyXY: flag(r.SearchEnemyXY), searchEnemyNear: flag(r.SearchEnemyNear), targetCorpse: flag(r.TargetCorpse),
     attackNoMana: flag(r.AttackNoMana), useAttackRate: flag(r.UseAttackRate), durability: flag(r.durability), decQuant: flag(r.decquant), lob: flag(r.lob),
-    delay: calc(r.delay),
-    minMana: n(r.minmana), manaShift: n(r.manashift), mana: n(r.mana), lvlMana: n(r.lvlmana),
+    delay: calc(r.delay), perDelay: calc(r.perdelay), immediate: flag(r.immediate),
+    summon: r.summon ?? '', petType: r.pettype ?? '', petMax: calc(r.petmax), sumSkill1: r.sumskill1 ?? '', sumSk1Calc: calc(r.sumsk1calc),
+    minMana: n(r.minmana), manaShift: n(r.manashift), mana: n(r.mana), lvlMana: n(r.lvlmana), startMana: n(r.startmana), repeat: flag(r.repeat),
     calcs: [calc(r.calc1), calc(r.calc2), calc(r.calc3), calc(r.calc4)],
     params: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => n(r[`Param${i}`])),
     toHit: n(r.ToHit), levToHit: n(r.LevToHit), toHitCalc: calc(r.ToHitCalc),

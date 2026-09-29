@@ -10,7 +10,7 @@ export type ItemLocation =
 export type Command =
   | { type: 'move'; x: number; y: number; run: boolean }
   | { type: 'attack'; targetId: number; standStill: boolean }
-  | { type: 'useSkill'; skill: number; hand: 'left' | 'right'; x: number; y: number; targetId?: number }
+  | { type: 'useSkill'; skill: number; hand: 'left' | 'right'; x: number; y: number; targetId?: number; targetItem?: number }
   | { type: 'pickup'; itemId: number }
   | { type: 'interact'; unitId: number }
   | { type: 'useBelt'; slot: number }

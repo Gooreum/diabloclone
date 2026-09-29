@@ -11,7 +11,7 @@ import type { ItemBase, ItemDb } from './items';
 import type { ItemInstance, TreasureDb } from './treasure';
 import type { MonsterDb } from './monster';
 import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } from './monster';
-import { escape, hasAi, idle, think, walkToTarget, type AiWorld, type MonMode, type MonsterUnit } from './ai';
+import { escape, hasAi, idle, think, walkToTarget, type AiWorld, type MonMode, type MonsterUnit, type PetInfo } from './ai';
 import { addExperience, spendStat, type Character, type ClassName, type ClassStats, type ExpTable } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
@@ -19,10 +19,10 @@ import { StateList } from './states';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import type { SkillDb, SkillRecord } from './skills/db';
-import type { SkillCalc, SkillOwner } from './skills/formulas';
+import { levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
-import { rollCritical, rollWeaponDamage } from './skills/player-damage';
+import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
 import { PLAYER_SEQUENCES, type SeqFrame } from './skills/sequences';
 import { evalCalc } from './skills/calc';
 
@@ -103,7 +103,11 @@ export interface PlayerSnapshot {
   states: string[];
   leftSkill: number; rightSkill: number;
 }
-export interface MonsterSnapshot { id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; modeTick: number; hp: number; maxHp: number; states: string[] }
+export interface MonsterSnapshot {
+  id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; modeTick: number; hp: number; maxHp: number; states: string[];
+  /** 플레이어 소환수 */
+  ally?: boolean;
+}
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number }
 export interface WorldSnapshot {
@@ -116,7 +120,7 @@ export interface WorldSnapshot {
 }
 
 type PlayerAction =
-  | { kind: 'skill'; skillId: number; targetId?: number; x: number; y: number; standStill: boolean; repeat: boolean }
+  | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean }
   | { kind: 'pickup'; itemId: number };
 
 /** 진행 중인 스킬 사용 (애니메이션 + 판정 시점) */
@@ -131,6 +135,11 @@ interface Cast {
   fired: number;
   seq?: { frames: readonly SeqFrame[]; rate: number };
   leap?: { fx: number; fy: number; tx: number; ty: number; landTick: number };
+  targetItem?: number;
+  /** 반복 스킬(Inferno): 다음 발사 틱 */
+  repeatAt?: number;
+  /** Charge 돌진 중: 프레임당 이동량, 최대 시각 */
+  charge?: { speed: number; until: number };
 }
 
 interface PlayerState {
@@ -141,6 +150,10 @@ interface PlayerState {
   cast: Cast | null;
   repathAt: number;
   states: StateList;
+  /** 반복 스킬 버튼을 누르고 있는 한계 틱 (입력이 약 5틱마다 다시 보낸다) */
+  holdUntil: number;
+  /** Blaze: 마지막으로 불을 놓은 위치 */
+  lastBlaze?: Pt;
 }
 
 interface GroundItem { item: ItemInstance; x: number; y: number }
@@ -171,7 +184,21 @@ interface Missile {
   /** 충돌/소멸 시 주변에 구름 생성 (Plague Javelin) */
   cloudBurst?: { def: MissileDef; count: number; roll: () => DamagePacket };
   wander?: boolean;
+  /** 같은 시전의 여러 미사일이 한 유닛을 한 번만 맞히도록 공유하는 집합 (Nova) */
+  group?: Set<number>;
+  /** 연쇄 번개: 남은 도약 수·탐색 반경 */
+  chain?: { left: number; range: number };
+  /** 스킬 (Fire Ball 폭발 반경·Glacial Spike 빙결 등 스킬 공식 참조) */
+  skill?: SkillRecord;
+  lvl: number;
+  /** 이동 중 매 프레임 지면 불을 남긴다 (Fire Wall 생성기) */
+  groundTrail?: { def: MissileDef; roll: () => DamagePacket };
+  /** 나선 경로 (Blessed Hammer): 중심, 각, 반지름 */
+  spiral?: { cx: number; cy: number; a: number; r: number };
 }
+
+/** 저주 상태 (한 몬스터에 하나만). 출처: states.txt curse = 1 (클래식 네크로맨서 저주) */
+const CURSE_STATES = ['amplifydamage', 'dimvision', 'weaken', 'ironmaiden', 'terror', 'confuse', 'lifetap', 'attract', 'decrepify', 'lowerresist'];
 
 /** 원작 미사일 Vel(프레임당 픽셀) → 프레임당 서브타일. 출처: Phrozen Keep KB a=463 — Yards = Vel × Range / 32 */
 const missileStep = (vel: number): number => (vel / 32) * SUBTILES_PER_YARD;
@@ -193,6 +220,10 @@ export class Game {
   private nextUnitId = 100;
   private events: GameEvent[] = [];
   private passiveCache: { key: string; list: PassiveStat[] } | null = null;
+  /** 플레이어 소환수 (레벨을 옮겨 다녀도 따라온다) */
+  readonly pets: MonsterUnit[] = [];
+  /** 켜져 있는 오라 (오른쪽 버튼의 오라 스킬) */
+  private aura: { skill: SkillRecord; lvl: number; next: number } | null = null;
 
   constructor(init: GameInit) {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
@@ -210,7 +241,7 @@ export class Game {
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
       walkVelocity: p.walkVelocity, runVelocity: p.runVelocity,
-      modeEnd: 0, modeStart: 0, action: null, cast: null, repathAt: 0, states: new StateList(),
+      modeEnd: 0, modeStart: 0, action: null, cast: null, repathAt: 0, states: new StateList(), holdUntil: 0,
     };
   }
 
@@ -248,6 +279,15 @@ export class Game {
     p.action = null;
     p.cast = null;
     if (p.mode !== 'DT' && p.mode !== 'DD' && p.mode !== 'NU') p.mode = 'NU';
+    // 소환수는 새 레벨의 플레이어 곁으로 (pettype.txt warp = 1). 뼈벽은 사라진다
+    for (let i = this.pets.length - 1; i >= 0; i--) {
+      const pet = this.pets[i] as MonsterUnit;
+      if (pet.pet?.petType === 'none') {
+        this.pets.splice(i, 1);
+        continue;
+      }
+      this.warpPet(pet);
+    }
     this.populate(next);
     this.events.push({ type: 'levelChanged', level: id });
   }
@@ -308,9 +348,11 @@ export class Game {
     this.populate(this.level);
     for (const cmd of this.queue.splice(0)) this.apply(cmd);
     this.expireStates();
+    this.updateAura();
     this.updatePlayer();
     this.checkExits();
     this.updateMonsters();
+    this.updatePets();
     this.updateMissiles();
     this.regen();
     this.tickCount++;
@@ -327,9 +369,9 @@ export class Game {
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
         states: p.states.names(), leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
-      monsters: this.monsters.map((m) => ({
+      monsters: [...this.monsters, ...this.pets].map((m) => ({
         id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
-        hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(),
+        hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
       })),
       items: this.ground.map((g) => ({ id: g.item.id, code: g.item.code, quality: g.item.quality, quantity: g.item.quantity, x: g.x, y: g.y })),
       missiles: this.missiles.map((m) => ({ id: m.id, name: m.def.name, x: m.x, y: m.y, dir: dir64(m.dx, m.dy), celFile: m.def.celFile, frame: m.age % m.def.animLen })),
@@ -379,7 +421,16 @@ export class Game {
         return;
       }
       case 'useSkill': {
-        p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, x: cmd.x, y: cmd.y, standStill: true, repeat: false };
+        // 반복 스킬(Inferno)을 쓰는 중에 같은 스킬 명령이 다시 오면 = 버튼을 누르고 있음 → 방향만 갱신
+        if (p.cast?.skill.repeat && p.cast.skill.id === cmd.skill) {
+          p.holdUntil = this.tickCount + 8;
+          p.cast.tx = cmd.x;
+          p.cast.ty = cmd.y;
+          p.cast.targetId = cmd.targetId;
+          return;
+        }
+        p.holdUntil = this.tickCount + 8;
+        p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, targetItem: cmd.targetItem, x: cmd.x, y: cmd.y, standStill: true, repeat: false };
         return;
       }
       case 'pickup': {
@@ -482,8 +533,9 @@ export class Game {
   private passives(): PassiveStat[] {
     const c = this.character, db = this.data?.skills, calc = this.data?.skillCalc;
     if (!c || !db || !calc) return [];
-    const key = JSON.stringify(c.skills) + c.level;
-    if (this.passiveCache?.key !== key) this.passiveCache = { key, list: passiveStats(c, db, calc) };
+    const aura = this.aura?.skill.id ?? -1;
+    const key = JSON.stringify(c.skills) + c.level + ':' + aura;
+    if (this.passiveCache?.key !== key) this.passiveCache = { key, list: passiveStats(c, db, calc, aura) };
     return this.passiveCache.list;
   }
 
@@ -577,6 +629,21 @@ export class Game {
       p.modeStart = this.tickCount;
     }
     this.advance(p, this.stepLength(), (d) => (p.dir = d));
+    this.dropBlaze();
+  }
+
+  /** Blaze 상태로 움직이면 발밑에 불. 출처: SKILLS_CreateBlazeMissile (이동 중에만) */
+  private dropBlaze(): void {
+    const p = this.player;
+    const st = p.states.get('blaze');
+    if (!st?.skill || this.inTown) return;
+    if (p.lastBlaze && Math.hypot(p.x - p.lastBlaze.x, p.y - p.lastBlaze.y) < 1) return;
+    const s = this.skillRecord(st.skill.id), def = s ? this.data?.missiles.get(s.srvMissileA) : undefined;
+    if (!s || !def) return;
+    p.lastBlaze = { x: p.x, y: p.y };
+    this.spawnGroundFire(def, p.x, p.y, this.missileDamageRoller(def, s, st.skill.lvl, { srcDam: 0, useSkillDamage: true }), {
+      ownerId: p.id, ownerLevel: this.character?.level ?? 1, lvl: st.skill.lvl, skill: s,
+    });
   }
 
   /**
@@ -589,6 +656,12 @@ export class Game {
     if (self !== p && p.mode !== 'DT' && p.mode !== 'DD' && Math.hypot(p.x - x, p.y - y) < r + PLAYER_SIZE / 2 - 0.25) return true;
     for (const m of this.monsters) {
       if (m === self || m.mode === 'DT' || m.mode === 'DD') continue;
+      if (Math.hypot(m.x - x, m.y - y) < r + m.type.sizeX / 2 - 0.25) return true;
+    }
+    // 소환수끼리·플레이어와는 겹쳐 지나갈 수 있게 (근사: 원작은 소환수도 충돌하지만 따라다니다 끼이지 않게)
+    if (self === p || this.pets.includes(self as MonsterUnit)) return false;
+    for (const m of this.pets) {
+      if (m.mode === 'DT' || m.mode === 'DD') continue;
       if (Math.hypot(m.x - x, m.y - y) < r + m.type.sizeX / 2 - 0.25) return true;
     }
     return false;
@@ -629,6 +702,98 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------- 오라
+
+  /**
+   * 오라: 오른쪽 버튼에 오라 스킬(aura=1)을 올려 두면 켜진다. perdelay 프레임마다 다시 적용 (선택 즉시 immediate).
+   * 출처: D2MOO SKILLS_SrvDo065_BasicAura / SrvDo066_HolyFire / SrvDo081_HolyFreeze, SKILL_ComputePeriodicRate (최소 5)
+   *   BasicAura: 자신(파티)에게 aurastate + aurastat, hitpoints 는 즉시 회복(최대치까지), 회복했을 때만 마나 소모
+   *   HolyFire/HolyFreeze: 자신에게 passivestat(공격에 원소 피해), 범위 안 적에게 굴린 원소 피해(+ HolyFreeze 는 감속 상태)
+   * 근사(원작 미확인): 파티원·용병 없이 자신에게만 적용 (싱글플레이 1차 범위)
+   */
+  private updateAura(): void {
+    const c = this.character, data = this.data, calc = data?.skillCalc;
+    if (!c || !calc || this.isDead) return;
+    const s = this.skillRecord(c.rightSkill);
+    const lvl = s ? (c.skills[s.id] ?? 0) : 0;
+    if (!s || !s.aura || lvl <= 0) {
+      if (this.aura) this.endAura();
+      return;
+    }
+    if (this.aura && (this.aura.skill.id !== s.id || this.aura.lvl !== lvl)) this.endAura();
+    if (!this.aura) {
+      this.aura = { skill: s, lvl, next: s.immediate ? this.tickCount : this.tickCount + 1 };
+      this.passiveCache = null;
+    }
+    if (this.tickCount < this.aura.next) return;
+    const o = this.owner();
+    const period = Math.max(5, calc.eval(s, s.perDelay, lvl, o));
+    this.aura.next = this.tickCount + period;
+    const until = this.tickCount + period + 1;
+    const mana256 = calc.manaCost256(s, lvl);
+    const hasMana = c.mana * 256 >= mana256;
+    const stats: Record<string, number> = {};
+    let used = false;
+    if (s.srvDoFunc === 65) {
+      for (const a of s.auraStats) {
+        const v = hasMana ? calc.eval(s, a.calc, lvl, o) : 0;
+        if (!v) continue;
+        if (a.stat === 'hitpoints') {
+          // 직접 회복 스탯 (Prayer, Cleansing): 1/256 단위, 최대 생명까지
+          if (c.life < c.maxLife) {
+            c.life = Math.min(c.maxLife, c.life + v / 256);
+            used = true;
+          }
+        } else if (a.stat === 'item_poisonlengthresist') {
+          // Cleansing: 독·저주 남은 시간 × v%
+          for (const st of ['poison']) {
+            const cur = this.player.states.get(st);
+            if (cur && Number.isFinite(cur.until)) {
+              cur.until = this.tickCount + Math.trunc(((cur.until - this.tickCount) * v) / 100);
+              used = true;
+            }
+          }
+        } else stats[a.stat] = v;
+      }
+    } else {
+      // Holy Fire / Holy Freeze: 자신에게는 패시브 원소 피해 스탯
+      for (const ps of s.passiveStats) {
+        const v = hasMana ? calc.eval(s, ps.calc, lvl, o) : 0;
+        if (v) stats[ps.stat] = v;
+      }
+    }
+    this.player.states.set(s.auraState, until, stats, { id: s.id, lvl });
+    if ((s.srvDoFunc === 66 || s.srvDoFunc === 81) && !this.inTown) {
+      const range = calc.eval(s, s.auraRangeCalc, lvl, o);
+      const el = this.skillElemental(s, lvl);
+      const targetStats: Record<string, number> = {};
+      if (hasMana) for (const a of s.auraStats) targetStats[a.stat] = calc.eval(s, a.calc, lvl, o);
+      for (const m of this.monstersNear(this.player.x, this.player.y, range)) {
+        if (s.auraTargetState && Object.keys(targetStats).length) {
+          // 감속은 몬스터 냉기 효과(coldeffect)보다 강해질 수 없다 (출처: SKILLS_AuraCallback_BasicAura)
+          const capped: Record<string, number> = {};
+          for (const [k, v] of Object.entries(targetStats)) capped[k] = k === 'velocitypercent' || k === 'attackrate' || k === 'other_animrate' ? Math.max(v, m.type.coldEffect) : v;
+          if (m.type.coldEffect < 0) m.states.set(s.auraTargetState, until, capped);
+        }
+        if (el) {
+          const d = emptyDamage();
+          addElemental(d, el.eType, el.amount, 0);
+          d.hitClass = s.hitClass || 0x0d;
+          this.damageMonster(m, d);
+          used = true;
+        }
+      }
+    }
+    if (mana256 > 0 && used) c.mana = Math.max(0, c.mana - mana256 / 256);
+  }
+
+  private endAura(): void {
+    if (!this.aura) return;
+    this.player.states.remove(this.aura.skill.auraState);
+    this.aura = null;
+    this.passiveCache = null;
+  }
+
   // ---------------------------------------------------------------- skills: 선택·검사
 
   private skillRecord(id: number): SkillRecord | undefined {
@@ -648,6 +813,12 @@ export class Game {
   /** 스킬 무기 요구 (itypea1~3 중 하나, etypea 제외). 출처: skills.txt itypea/etypea — 없는 경우 제한 없음 */
   private weaponAllows(s: SkillRecord): boolean {
     if (!s.itypeA.length) return true;
+    // Smite (itypea1 = shld): 왼손 방패를 검사 (skills.txt weapsel 4)
+    if (s.itypeA.includes('shld')) {
+      const l = this.equipment.larm, items = this.data?.items;
+      const b = l ? items?.base(l.code) : undefined;
+      return !!b && !!items && items.isType(b, 'shld');
+    }
     const w = this.weaponBase(), items = this.data?.items;
     if (!w || !items) return false;
     if (s.etypeA.some((t) => items.isType(w, t))) return false;
@@ -679,7 +850,8 @@ export class Game {
       return;
     }
     // 원작: AttackNoMana 스킬은 마나가 모자라면 일반 공격으로 대신한다
-    if (c && s.id > 5 && this.data.skillCalc && this.data.skillCalc.manaCost256(s, this.skillLevel(s)) > c.mana * 256) {
+    const needMana = s.repeat ? s.startMana * 256 : (this.data.skillCalc?.manaCost256(s, this.skillLevel(s)) ?? 0);
+    if (c && s.id > 5 && this.data.skillCalc && needMana > c.mana * 256) {
       if (s.attackNoMana) s = this.skillRecord(SKILL_ATTACK) ?? s;
       else {
         this.events.push({ type: 'noMana', skill: s.id });
@@ -692,6 +864,13 @@ export class Game {
       p.action = null;
       return;
     }
+    if (act.targetItem !== undefined) {
+      const g = this.ground.find((x) => x.item.id === act.targetItem);
+      p.path = [];
+      if (g) this.startCast(s, undefined, g.x, g.y, g.item.id);
+      p.action = null;
+      return;
+    }
     const target = act.targetId !== undefined ? this.monsters.find((m) => m.id === act.targetId) : undefined;
     const corpseSkill = s.targetCorpse;
     if (corpseSkill) {
@@ -700,7 +879,8 @@ export class Game {
         p.action = null;
         return;
       }
-      if (isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, corpse.x, corpse.y, corpse.type.sizeX, 1)) {
+      // range none 인 시체 스킬(Raise Skeleton, Corpse Explosion)은 떨어져서도 쓴다, h2h(Find Potion)는 다가가서
+      if (s.range !== 'h2h' || isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, corpse.x, corpse.y, corpse.type.sizeX, 1)) {
         p.path = [];
         this.startCast(s, corpse.id, corpse.x, corpse.y);
         p.action = null;
@@ -774,18 +954,19 @@ export class Game {
   // ---------------------------------------------------------------- skills: 시작·진행
 
   /** 스킬 사용 시작: 마나 소모, 방향, 애니메이션(시퀀스 포함) 길이와 판정 시점 결정 */
-  private startCast(s: SkillRecord, targetId: number | undefined, tx: number, ty: number): boolean {
+  private startCast(s: SkillRecord, targetId: number | undefined, tx: number, ty: number, targetItem?: number): boolean {
     const p = this.player, c = this.character, data = this.data;
     if (!data) return false;
     const lvl = this.skillLevel(s);
     if (!this.startCheck(s, targetId)) return false;
-    if (c && s.id > 5 && data.skillCalc) c.mana = Math.max(0, c.mana - data.skillCalc.manaCost256(s, lvl) / 256);
+    // 반복 스킬은 발사할 때마다 마나를 쓴다 (skills.txt startmana 로 시작 조건만 검사)
+    if (c && s.id > 5 && data.skillCalc && !s.repeat) c.mana = Math.max(0, c.mana - data.skillCalc.manaCost256(s, lvl) / 256);
     if (Math.hypot(tx - p.x, ty - p.y) > 1e-6) p.dir = dir64(tx - p.x, ty - p.y);
     const wclass = this.weaponWclass();
     const token = this.playerToken();
     // 무기 공격 속도: weapons.txt speed (WSM, 음수 = 빠름). 출처: Maxroll Attack Speed — AnimRate − WSM
     const speedPct = s.useAttackRate ? 100 - (this.weaponBase()?.speed ?? 0) : 100;
-    const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0 };
+    const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0, targetItem };
     const seq = s.seqNum > 0 ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
     if (seq && seq.length) {
       // 시퀀스는 seqtrans 모드의 AnimData 속도로 진행한다
@@ -809,6 +990,14 @@ export class Game {
     }
     p.modeStart = this.tickCount;
     if (s.srvStFunc === 40 || s.srvStFunc === 41) this.prepareLeap(cast);
+    if (s.srvStFunc === 37 && data.skillCalc) {
+      // Zeal: calc1 번 타격. 근사(원작 미확인): 타격 후 애니메이션을 되감는 간격(sub_6FD15080, par2)을 첫 타격까지의 시간으로 근사
+      const n = Math.max(1, data.skillCalc.calc(s, 1, lvl, this.owner()));
+      const first = cast.hitTicks[0] ?? 1, step = Math.max(2, first);
+      cast.hitTicks = Array.from({ length: n }, (_, i) => first + i * step);
+      cast.end = this.tickCount + first + (n - 1) * step + Math.max(1, cast.end - this.tickCount - first);
+    }
+    if (s.srvStFunc === 31) this.prepareCharge(cast);
     // Concentrate 등: 스킬 사용 중 자신에게 붙는 상태 (aurastate, 공격이 끝나면 해제)
     if (s.auraState && (s.srvDoFunc === 2 || s.srvStFunc === 32) && data.skillCalc) {
       const stats: Record<string, number> = {};
@@ -864,6 +1053,31 @@ export class Game {
 
   private updateCast(cast: Cast): void {
     const p = this.player;
+    if (cast.charge) {
+      const target = cast.targetId !== undefined ? this.monsters.find((m) => m.id === cast.targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
+      if (!target || this.tickCount >= cast.charge.until) {
+        p.cast = null;
+        p.mode = 'NU';
+        p.modeStart = this.tickCount;
+        return;
+      }
+      if (isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, target.x, target.y, target.type.sizeX)) {
+        this.chargeStrike(cast);
+      } else {
+        const dx = target.x - p.x, dy = target.y - p.y, d = Math.hypot(dx, dy) || 1;
+        const step = Math.min(cast.charge.speed, Math.max(0, d - (PLAYER_SIZE + target.type.sizeX) / 2));
+        const nx = p.x + (dx / d) * step, ny = p.y + (dy / d) * step;
+        if (!this.map.walkable(Math.floor(nx), Math.floor(ny))) {
+          p.cast = null;
+          p.mode = 'NU';
+          return;
+        }
+        p.x = nx;
+        p.y = ny;
+        p.dir = dir64(dx, dy);
+        return;
+      }
+    }
     const t = this.tickCount - cast.start;
     if (cast.leap) {
       const L = cast.leap;
@@ -872,9 +1086,22 @@ export class Game {
       p.y = L.fy + (L.ty - L.fy) * k;
     }
     while (cast.fired < cast.hitTicks.length && t >= (cast.hitTicks[cast.fired] as number)) {
+      if (cast.skill.repeat) this.payRepeatMana(cast);
       this.skillEvent(cast, cast.fired);
       cast.fired++;
+      if (cast.skill.repeat) cast.repeatAt = this.tickCount + 2;
       if (!p.cast) return;
+    }
+    // 반복 스킬: 버튼을 누르고 있고 마나가 있으면 2틱마다 계속 발사 (시퀀스 입력 프레임 seqinput 에서 반복)
+    // 근사(원작 미확인): 원작 시퀀스 반복 주기 대신 2틱 간격
+    if (cast.skill.repeat && cast.repeatAt !== undefined && this.tickCount >= cast.repeatAt) {
+      const c = this.character, calc = this.data?.skillCalc;
+      if (p.holdUntil >= this.tickCount && c && calc && calc.manaCost256(cast.skill, cast.lvl) <= c.mana * 256) {
+        this.payRepeatMana(cast);
+        this.skillEvent(cast, cast.fired);
+        cast.repeatAt = this.tickCount + 2;
+        cast.end = Math.max(cast.end, this.tickCount + 3);
+      } else cast.repeatAt = undefined;
     }
     if (this.tickCount >= cast.end) {
       p.cast = null;
@@ -884,11 +1111,20 @@ export class Game {
     }
   }
 
+  private payRepeatMana(cast: Cast): void {
+    const c = this.character, calc = this.data?.skillCalc;
+    if (c && calc) c.mana = Math.max(0, c.mana - calc.manaCost256(cast.skill, cast.lvl) / 256);
+  }
+
   /** 시퀀스 스킬 중이면 지금 그릴 [모드, 프레임] */
   private seqAnim(): { mode: string; frame: number } | undefined {
     const c = this.player.cast;
     if (!c?.seq) return undefined;
-    const i = Math.min(c.seq.frames.length - 1, Math.floor(((this.tickCount - c.start) * c.seq.rate) / 256));
+    const len = c.seq.frames.length;
+    let i = Math.floor(((this.tickCount - c.start) * c.seq.rate) / 256);
+    if (c.charge) i = i % Math.max(1, c.skill.seqInput || len);
+    // 반복 스킬은 seqinput 프레임부터 다시 돈다
+    if (i >= len) i = c.skill.repeat && c.skill.seqInput > 0 && c.skill.seqInput < len ? c.skill.seqInput + ((i - len) % (len - c.skill.seqInput)) : len - 1;
     const f = c.seq.frames[i];
     return f ? { mode: f[0], frame: f[1] } : undefined;
   }
@@ -921,9 +1157,49 @@ export class Game {
         return;
       }
       case 2: {
-        // Bash/Stun/Concentrate(St32), Power Strike(St6), Impale(St7) — 근접 한 번
+        // Bash/Stun/Concentrate(St32), Power Strike(St6), Impale(St7), Vengeance(St35) — 근접 한 번
         if (!live) return;
-        this.meleeHit(live, this.meleeSpecFor(s, lvl));
+        const spec = this.meleeSpecFor(s, lvl);
+        if (s.srvStFunc === 35) {
+          spec.enDmgPct = 0;
+          spec.elem = null;
+          spec.vengeance = { fire: calc.calc(s, 1, lvl, o), cold: calc.calc(s, 2, lvl, o), ltng: calc.calc(s, 3, lvl, o), coldLen: calc.elemLength(s, lvl, o) };
+        }
+        this.meleeHit(live, spec);
+        return;
+      }
+      case 64: {
+        // Sacrifice: 피해 +calc1%, 명중 보너스, 준 피해의 calc2% 자해. 출처: SKILLS_SrvSt29 / SrvDo064_Sacrifice
+        if (!live) return;
+        this.meleeHit(live, { toHitPct: calc.toHit(s, lvl, o), enDmgPct: calc.calc(s, 1, lvl, o), flat256: 0, elem: elem(), hitClass: 0, srcDam: s.srcDam || 128, selfDamagePct: calc.calc(s, 2, lvl, o) });
+        return;
+      }
+      case 150: {
+        // Smite: 방패 피해 +calc1%, 항상 명중, calc2 프레임 기절. 출처: SKILLS_SrvDo150_Smite (HitClass 0x65)
+        if (!live) return;
+        this.meleeHit(live, { toHitPct: 0, enDmgPct: calc.calc(s, 1, lvl, o), flat256: 0, elem: elem(), hitClass: 0x65, srcDam: 128, shield: true, stunLen: calc.calc(s, 2, lvl, o) });
+        return;
+      }
+      case 13: {
+        // Zeal: 타격마다 근처(근접 거리) 적 하나, 피해 +calc2%, 명중 보너스. 출처: SKILLS_SrvDo013_Fend_Zeal_Fury
+        const p = this.player;
+        const t = live && isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, live.x, live.y, live.type.sizeX, 1) ? live
+          : this.monstersNear(p.x, p.y, 4).find((m) => isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, m.x, m.y, m.type.sizeX, 1));
+        if (!t) return;
+        cast.targetId = t.id;
+        p.dir = dir64(t.x - p.x, t.y - p.y);
+        this.meleeHit(t, { toHitPct: calc.toHit(s, lvl, o), enDmgPct: calc.calc(s, 2, lvl, o), flat256: 0, elem: s.eType ? elem() : null, hitClass: s.hitClass, srcDam: s.srcDam || 128 });
+        return;
+      }
+      case 67: {
+        // Charge: 돌진 끝의 일격 — 피해 +calc1%, 명중 보너스. 출처: SKILLS_SrvDo067_Charge
+        if (live) this.meleeHit(live, { toHitPct: calc.toHit(s, lvl, o), enDmgPct: calc.calc(s, 1, lvl, o), flat256: 0, elem: elem(), hitClass: 0, srcDam: s.srcDam || 128 });
+        return;
+      }
+      case 73: {
+        // Blessed Hammer: 캐릭터 둘레로 나선을 그리며 퍼지는 망치. 출처: SKILLS_SrvDo073_BlessedHammer (PATHTYPE_BLESSEDHAMMER)
+        const def = data.missiles.get(s.srvMissileA);
+        if (def) this.spawnPlayerMissile(def, s, lvl, cast.tx, cast.ty, undefined, { srcDam: 0, useSkillDamage: true, spiral: true });
         return;
       }
       case 3: {
@@ -953,6 +1229,8 @@ export class Game {
         const missName = this.weaponWclass() === 'XBW' && s.srvMissileB ? s.srvMissileB : s.srvMissileA;
         const def = data.missiles.get(missName);
         if (!def) return;
+        // Teeth(스킬 연결 미사일)는 스킬 피해, Multiple Shot 은 무기 피해 × SrcDamage (출처: MISSILE_CalculateDamageData)
+        const skillMissile = !!def.skill;
         const p = this.player;
         let ux = cast.tx - p.x, uy = cast.ty - p.y;
         const d = Math.hypot(ux, uy) || 1;
@@ -960,9 +1238,9 @@ export class Game {
         uy /= d;
         for (let i = 0; i < count; i++) {
           const off = i - (count - 1) / 2;
-          this.spawnPlayerMissile(def, s, lvl, cast.tx - uy * off, cast.ty + ux * off, undefined, { srcDam: def.srcDamage, useSkillDamage: false });
+          this.spawnPlayerMissile(def, s, lvl, cast.tx - uy * off, cast.ty + ux * off, undefined, skillMissile ? { srcDam: 0, useSkillDamage: true } : { srcDam: def.srcDamage, useSkillDamage: false });
         }
-        this.decQuantity('larm');
+        if (this.isBowWeapon()) this.decQuantity('larm');
         return;
       }
       case 10: {
@@ -989,8 +1267,19 @@ export class Game {
         return;
       }
       case 22: {
-        // Howl: 퍼져 나가는 함성에 닿은 적이 공포(도주). 출처: SKILLS_SrvDo022 + MISSMODE_SrvHit17_Howl
         const def = data.missiles.get(s.srvMissileA);
+        if (def && def.srvHitFunc !== 17) {
+          // Nova / Frost Nova: 64방향으로 퍼지는 미사일, 한 적은 한 번만. 출처: SKILLS_SrvDo022_NovaAttack + sub_6FD14170 (64방향 표)
+          const group = new Set<number>();
+          const vel = def.vel + calc.calc(s, 1, lvl, o);
+          const p = this.player;
+          for (let i = 0; i < 64; i++) {
+            const a = (i / 64) * Math.PI * 2;
+            this.spawnPlayerMissile(def, s, lvl, p.x + Math.cos(a) * 30, p.y + Math.sin(a) * 30, undefined, { srcDam: 0, useSkillDamage: true, group, velocity: vel });
+          }
+          return;
+        }
+        // Howl: 퍼져 나가는 함성에 닿은 적이 공포(도주). 출처: SKILLS_SrvDo022 + MISSMODE_SrvHit17_Howl
         const radius = def ? missileStep(def.vel) * def.range : 6;
         const pl = this.character?.level ?? 1;
         const dur = s.params[4]! + (lvl - 1) * s.params[5]!;
@@ -1001,6 +1290,218 @@ export class Game {
           m.states.set('terror', this.tickCount + dur);
           m.path = [];
           m.nextThink = this.tickCount;
+        }
+        return;
+      }
+      case 17: {
+        // Charged Bolt: calc1 개의 볼트가 대상 방향으로 흩어져 나감. 출처: SKILLS_SrvDo017_ChargedBolt (PATHTYPE_CHARGEDBOLT)
+        const def = data.missiles.get(s.srvMissileA);
+        if (!def) return;
+        const n = Math.max(1, calc.calc(s, 1, lvl, o));
+        const p = this.player;
+        const base = Math.atan2(cast.ty - p.y, cast.tx - p.x);
+        for (let i = 0; i < n; i++) {
+          const a = base + ((this.rng.pick(9) - 4) * Math.PI) / 12;
+          this.spawnPlayerMissile(def, s, lvl, p.x + Math.cos(a) * 10, p.y + Math.sin(a) * 10, undefined, { srcDam: 0, useSkillDamage: true, wander: true });
+        }
+        return;
+      }
+      case 18: {
+        // Frozen Armor / Shiver Armor (Bone Armor 도 같은 함수): 자신에게 방어 버프, 다른 아머는 해제. 출처: SKILLS_SrvDo018_DefensiveBuff
+        for (const other of ['frozenarmor', 'shiverarmor', 'chillingarmor']) if (other !== s.auraState) this.player.states.remove(other);
+        const stats: Record<string, number> = {};
+        for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+        // 지속 공식이 없으면(Bone Armor) 흡수량이 다할 때까지 (원작 curse.nDuration 0 = 만료 없음)
+        const len = calc.eval(s, s.auraLenCalc, lvl, o);
+        this.player.states.set(s.auraState, len > 0 ? this.tickCount + len : Infinity, stats, { id: s.id, lvl });
+        return;
+      }
+      case 19: {
+        // Inferno: 불꽃 미사일 한 개, 수명 = calc1 프레임. 출처: SKILLS_DoInferno
+        const def = data.missiles.get(s.srvMissileA);
+        if (def) this.spawnPlayerMissile(def, s, lvl, cast.tx, cast.ty, undefined, { srcDam: 0, useSkillDamage: true, range: Math.max(1, calc.calc(s, 1, lvl, o)) });
+        return;
+      }
+      case 20: {
+        // Static Field: 반경(aurarange) 안 적의 현재 생명 calc1% 번개 피해 (1 은 남김, 최소 calc2). 출처: SKILLS_AuraCallback_StaticField
+        const range = calc.eval(s, s.auraRangeCalc, lvl, o);
+        const pct = calc.calc(s, 1, lvl, o), minDmg = calc.calc(s, 2, lvl, o);
+        for (const m of this.monstersNear(this.player.x, this.player.y, range)) {
+          const hp = Math.floor(m.hp);
+          if (hp < 1) continue;
+          let dmg = Math.min(Math.trunc((hp * pct) / 100), hp - 1) * 256;
+          if (dmg < minDmg) dmg = minDmg;
+          // 음수 저항이면 저항 적용 후 같은 비율이 되도록 미리 나눈다
+          const res = m.type.resist.li;
+          if (res < 0) dmg = Math.trunc((100 * dmg) / (100 - res));
+          const d = emptyDamage();
+          addElemental(d, s.eType, dmg, 0);
+          d.hitClass = 0x0d;
+          this.damageMonster(m, d);
+        }
+        return;
+      }
+      case 21: {
+        // Telekinesis: 바닥 물약·골드·두루마리는 줍고, 적이면 번개 피해 + par2% 밀쳐내기. 출처: SKILLS_SrvDo021_Telekinesis
+        if (cast.targetItem !== undefined) {
+          const g = this.ground.find((x) => x.item.id === cast.targetItem);
+          const b = g ? data.items.base(g.item.code) : undefined;
+          if (g && b && ['gold', 'scro', 'pots', 'misl', 'key', 'poti'].some((t) => b.code === 'gld' || data.items.isType(b, t))) this.pickUp(g);
+          return;
+        }
+        if (!live || this.inTown) return;
+        const d = emptyDamage();
+        const pmin = calc.minPhys256(s, lvl, o), pmax = calc.maxPhys256(s, lvl, o);
+        if (pmax > 0) d.phys = pmin + this.rng.pick(Math.max(0, pmax - pmin));
+        const el = elem();
+        if (el) addElemental(d, el.eType, el.amount, el.len);
+        if (s.hitClass) d.hitClass = s.hitClass;
+        this.damageMonster(live, d);
+        if (live.mode !== 'DT' && this.rng.pick(100) < (s.params[1] ?? 0)) this.knockBack(live);
+        return;
+      }
+      case 23: {
+        // Blaze: 자신에게 상태 — 움직이면 발밑에 불을 남긴다. 출처: SKILLS_SrvDo023_Blaze + SKILLS_CreateBlazeMissile
+        this.player.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), {}, { id: s.id, lvl });
+        this.player.lastBlaze = undefined;
+        return;
+      }
+      case 24: {
+        // Fire Wall: 목표 지점에서 캐릭터 방향에 수직인 양쪽으로 불을 뻗는 생성기 2개. 출처: SKILLS_SrvDo024_FireWall
+        const def = data.missiles.get(s.srvMissileA);
+        if (!def || this.inTown) return;
+        const p = this.player;
+        const dx = p.x - cast.tx, dy = p.y - cast.ty;
+        for (const sign of [1, -1]) {
+          this.spawnPlayerMissile(def, s, lvl, cast.tx - sign * dy, cast.ty + sign * dx, undefined, { from: { x: cast.tx, y: cast.ty }, srcDam: 0, useSkillDamage: true });
+        }
+        return;
+      }
+      case 25: {
+        // Enchant: 대상 아군(없으면 자신)에게 화염 피해·명중 버프. 출처: SKILLS_SrvDo025_Enchant
+        const stats: Record<string, number> = {};
+        for (const a of s.auraStats) {
+          const v = calc.eval(s, a.calc, lvl, o);
+          if (v) stats[a.stat] = v;
+        }
+        this.player.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), stats, { id: s.id, lvl });
+        return;
+      }
+      case 26: {
+        // Chain Lightning: 대상에게 번개, 맞으면 aurarange 안 다른 적에게 calc1 번까지 이어짐. 출처: SKILLS_SrvDo026 + SrvHit12
+        const def = data.missiles.get(s.srvMissileA);
+        if (!def) return;
+        const jumps = calc.calc(s, 1, lvl, o);
+        const range = Math.max(1, calc.eval(s, s.auraRangeCalc, lvl, o));
+        this.spawnPlayerMissile(def, s, lvl, cast.tx, cast.ty, live?.id, { srcDam: 0, useSkillDamage: true, chain: { left: jumps, range } });
+        return;
+      }
+      case 27: {
+        // Teleport: 목표 지점으로 즉시 이동 (마을에서는 불가). 출처: SKILLS_SrvDo027_Teleport
+        if (this.inTown) return;
+        const spot = nearestWalkable(this.map, { x: cast.tx, y: cast.ty }, 4);
+        if (spot) {
+          this.player.x = spot.x + 0.5;
+          this.player.y = spot.y + 0.5;
+          this.player.path = [];
+          this.events.push({ type: 'teleported', x: this.player.x, y: this.player.y });
+        }
+        return;
+      }
+      case 30:
+      case 61: {
+        // 저주: 목표 지점 aurarange 안 적에게 auratargetstate + aurastat, 지속 auralen. 한 몬스터에는 저주 하나 (새 저주가 덮어씀)
+        // 출처: D2MOO SKILLS_SrvDo030_Curse / SrvDo061_Confuse (Dim Vision·Terror 지속은 AiCurseDivisor 로 나눔 — Normal 1)
+        const range = calc.eval(s, s.auraRangeCalc, lvl, o);
+        const len = calc.eval(s, s.auraLenCalc, lvl, o);
+        const stats: Record<string, number> = {};
+        for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+        for (const m of this.monstersNear(cast.tx, cast.ty, range)) {
+          for (const c of CURSE_STATES) if (c !== s.auraTargetState) m.states.remove(c);
+          m.states.set(s.auraTargetState, this.tickCount + len, stats, { id: s.id, lvl });
+          if (s.auraTargetState === 'terror' || s.auraTargetState === 'confuse') m.nextThink = this.tickCount;
+        }
+        return;
+      }
+      case 31: {
+        // Raise Skeleton / Skeletal Mage: 시체 자리에 소환, 시체는 사라진다. 출처: SKILLS_SrvDo031_RaiseSkeleton_Mage
+        if (!target || target.mode !== 'DD' || target.corpseUsed || !s.summon) return;
+        const extra: Partial<PetInfo> = {};
+        if (s.sumSkill1) {
+          // 스켈레톤 메이지: 원소 미사일 (necromage1~4 중 하나), 레벨 = sumsk1calc
+          // 근사(원작 미확인): 원작은 소환 때 외형 성분(D2GAME_SetUnitComponent)으로 원소를 정한다 — 여기선 무작위
+          extra.missile = `necromage${1 + this.rng.pick(4)}`;
+          extra.missileLvl = Math.max(1, calc.eval(s, s.sumSk1Calc, lvl, o));
+        }
+        const pet = this.summonPet(s, lvl, s.summon, target.x, target.y, s.petType, extra);
+        if (pet) this.monsters.splice(this.monsters.indexOf(target), 1);
+        return;
+      }
+      case 56: {
+        // Clay Golem / Blood Golem: 목표 지점에 골렘 (하나만). 출처: SKILLS_SrvDo056_Golem
+        if (s.summon) this.summonPet(s, lvl, s.summon, cast.tx, cast.ty, s.petType);
+        return;
+      }
+      case 60: {
+        // Bone Wall: 목표 지점을 지나 캐릭터 방향에 수직인 뼈벽 줄. 출처: SKILLS_SrvDo060_BoneWall (bonewallmaker 미사일이 양쪽으로 뻗으며 설치)
+        // 근사(원작 미확인): 미사일 대신 Range + LevRange×레벨 만큼 2 서브타일 간격으로 바로 설치, 수명 par2(600) 프레임
+        const maker = data.missiles.get(s.srvMissileA);
+        const steps = maker ? Math.max(1, Math.trunc(((maker.range + lvl * maker.levRange) * missileStep(maker.vel)) / 2)) : 4;
+        const p = this.player;
+        let px = -(cast.ty - p.y), py = cast.tx - p.x;
+        const pl = Math.hypot(px, py) || 1;
+        px /= pl;
+        py /= pl;
+        for (let k = -steps; k <= steps; k++) {
+          const w = this.summonPet(s, lvl, s.summon || 'bonewall', cast.tx + px * k * 2, cast.ty + py * k * 2, 'none');
+          if (w?.pet) w.pet.expires = this.tickCount + (s.params[1] || 600);
+        }
+        return;
+      }
+      case 32: {
+        // Poison Dagger: 단검 근접 + 독 (명중 보너스). 출처: SKILLS_SrvSt16 / SrvDo032_PoisonDagger
+        if (live) this.meleeHit(live, { toHitPct: calc.toHit(s, lvl, o), enDmgPct: 0, flat256: 0, elem: elem(), hitClass: 0, srcDam: s.srcDam || 128 });
+        return;
+      }
+      case 55: {
+        // Corpse Explosion: 시체 최대 생명(평균) × calc1~calc2 %, 반경 aurarange/2, calc3 % 는 화염 나머지 물리. 출처: SKILLS_SrvDo055_CorpseExplosion
+        if (!target || target.mode !== 'DD' || target.corpseUsed) return;
+        target.corpseUsed = true;
+        const hp256 = Math.trunc(((data.monsters.levelBase(target.stats.level, 'HP') * (target.type.minHpPct + target.type.maxHpPct)) / 100 / 2)) * 256;
+        const lo = Math.trunc((calc.calc(s, 1, lvl, o) * hp256) / 100), hi = Math.trunc((calc.calc(s, 2, lvl, o) * hp256) / 100);
+        let dmg = lo + (hi > lo ? this.rng.pick(hi - lo) : 0);
+        const cl = this.character?.level ?? 1;
+        if (target.stats.level && cl < target.stats.level) dmg = Math.trunc((dmg * cl) / target.stats.level);
+        const pct = Math.max(0, Math.min(100, calc.calc(s, 3, lvl, o)));
+        const radius = Math.trunc((calc.eval(s, s.auraRangeCalc, lvl, o) + 1) / 2);
+        for (const m of this.monstersNear(target.x, target.y, radius)) {
+          const d = emptyDamage();
+          if (pct > 0 && s.eType) addElemental(d, s.eType, Math.trunc((dmg * pct) / 100), calc.elemLength(s, lvl, o));
+          d.phys += Math.trunc((dmg * (100 - pct)) / 100);
+          this.damageMonster(m, d);
+        }
+        this.events.push({ type: 'corpseExploded', targetId: target.id });
+        return;
+      }
+      case 63: {
+        // Poison Explosion: 시체 → 반경 aurarange 에 독 + 독 구름. 출처: SKILLS_SrvDo063_PoisonExplosion
+        if (!target || target.mode !== 'DD' || target.corpseUsed) return;
+        target.corpseUsed = true;
+        const radius = calc.eval(s, s.auraRangeCalc, lvl, o);
+        for (const m of this.monstersNear(target.x, target.y, radius)) {
+          const el = elem();
+          if (!el) break;
+          const d = emptyDamage();
+          addElemental(d, el.eType, el.amount, el.len);
+          this.damageMonster(m, d);
+        }
+        const def = data.missiles.get(s.srvMissileA);
+        if (def) {
+          const owner = { ownerId: this.player.id, ownerLevel: this.character?.level ?? 1, lvl, skill: s } as Missile;
+          for (let k = 0; k < 6; k++) {
+            const a = (k / 6) * Math.PI * 2;
+            this.spawnCloud(def, target.x + Math.cos(a) * 1.5, target.y + Math.sin(a) * 1.5, this.missileDamageRoller(def, s, lvl, { srcDam: 0, useSkillDamage: true }), owner);
+          }
         }
         return;
       }
@@ -1165,6 +1666,40 @@ export class Game {
     cast.leap = { fx: p.x, fy: p.y, tx, ty, landTick: land };
   }
 
+  /**
+   * Charge: 대상까지 달리기 속도 × (par1 + 100)% 로 돌진, 도착하면 시퀀스의 공격 부분(seqinput 이후)을 재생해 한 번 친다.
+   * 출처: SKILLS_SrvSt31_Charge (속도 = RunVelocity × (par1 + velocitypercent)/100, 이미 근접이면 일반 공격)
+   * 근사(원작 미확인): 최대 돌진 시간 50 프레임
+   */
+  private prepareCharge(cast: Cast): void {
+    const target = cast.targetId !== undefined ? this.monsters.find((m) => m.id === cast.targetId) : undefined;
+    const p = this.player;
+    if (!target || isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, target.x, target.y, target.type.sizeX)) {
+      if (cast.seq) this.chargeStrike(cast);
+      return;
+    }
+    const pct = cast.skill.params[0] ?? 150;
+    cast.charge = { speed: ((p.runVelocity * SUBTILES_PER_YARD) / ENGINE_FPS) * (pct + 100 + this.playerStat('velocitypercent')) / 100, until: this.tickCount + 50 };
+    cast.hitTicks = [];
+    cast.end = Number.POSITIVE_INFINITY;
+  }
+
+  /** 돌진 도착: 시퀀스를 seqinput 프레임부터 이어서 재생하고 그 안의 타격 이벤트를 쓴다 */
+  private chargeStrike(cast: Cast): void {
+    const seq = cast.seq;
+    cast.charge = undefined;
+    if (!seq) return;
+    const from = cast.skill.seqInput > 0 && cast.skill.seqInput < seq.frames.length ? cast.skill.seqInput : 0;
+    const t0 = Math.ceil((from * 256) / seq.rate);
+    cast.start = this.tickCount - t0;
+    cast.fired = 0;
+    cast.hitTicks = [];
+    seq.frames.forEach((f, i) => {
+      if (i >= from && f[2] === 1 && f[0] !== 'RN') cast.hitTicks.push(Math.ceil((i * 256) / seq.rate));
+    });
+    cast.end = cast.start + Math.ceil((seq.frames.length * 256) / seq.rate);
+  }
+
   private landLeap(cast: Cast): void {
     if (!cast.leap) return;
     this.player.x = cast.leap.tx;
@@ -1196,19 +1731,32 @@ export class Game {
     if (!c || !data) return false;
     const p = this.player;
     if (!isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, m.x, m.y, m.type.sizeX, 1)) return false;
-    const w = this.weaponBase();
+    const shieldBase = spec.shield && this.equipment.larm ? data.items.base(this.equipment.larm.code) : undefined;
+    const w = spec.shield ? shieldBase : this.weaponBase();
     const passives = this.passives();
     const pct = spec.toHitPct + masteryBonus(passives, data.items, w, 'th') + this.playerStat('item_tohit_percent');
     const ar = this.playerAR();
-    if (!rollPercent(hitChance(ar + Math.trunc((ar * pct) / 100), this.monsterDefense(m, false), c.level, m.stats.level), this.rng)) {
+    // Smite: 명중 판정 결과와 무관하게 성공 (출처: SKILLS_SrvDo150_Smite — GetResultFlags | SUCCESSFULHIT)
+    if (!spec.shield && !rollPercent(hitChance(ar + Math.trunc((ar * pct) / 100), this.monsterDefense(m, false), c.level, m.stats.level), this.rng)) {
       this.events.push({ type: 'miss', targetId: m.id });
       return false;
     }
     const d = emptyDamage();
     d.phys = rollWeaponDamage({
       weapon: w, str: c.str, dex: c.dex, enDmgPct: spec.enDmgPct, damagePercent: this.playerStat('damagepercent'),
-      masteryDmg: masteryBonus(passives, data.items, w, 'dmg'), srcDam: spec.srcDam,
+      masteryDmg: spec.shield ? 0 : masteryBonus(passives, data.items, w, 'dmg'), srcDam: spec.srcDam,
     }, this.rng);
+    if (spec.vengeance) {
+      // Vengeance: 무기 기본 피해(보너스 전) 굴림의 calc1/2/3 % 를 화염·냉기·번개로 (출처: SKILLS_SrvSt35_Vengeance)
+      const base = weaponBaseRange(w);
+      const lo = Math.max(base.min, 256), hi = base.max <= lo ? lo + 256 : base.max;
+      const roll = lo + this.rng.pick(hi - lo);
+      d.fire += Math.trunc((roll * spec.vengeance.fire) / 100);
+      d.cold += Math.trunc((roll * spec.vengeance.cold) / 100);
+      d.ltng += Math.trunc((roll * spec.vengeance.ltng) / 100);
+      d.coldLen += spec.vengeance.coldLen;
+    }
+    if (spec.stunLen) d.stunLen += spec.stunLen;
     if (rollCritical(masteryBonus(passives, data.items, w, 'crit'), this.playerStat('passive_critical_strike'), this.rng)) {
       d.phys *= 2;
       d.crit = true;
@@ -1216,9 +1764,34 @@ export class Game {
     d.phys += spec.flat256;
     d.hitClass = spec.hitClass || (w ? (data.hitClassIndex.get(w.hitClass) ?? 1) : 1);
     if (spec.elem) addElemental(d, spec.elem.eType, spec.elem.amount, spec.elem.len);
+    this.addStatElemental(d);
     if (spec.hitClass) d.hitClass = spec.hitClass;
+    const hpBefore = m.hp;
     this.damageMonster(m, d);
+    if (spec.selfDamagePct) {
+      // Sacrifice: 준 물리 피해(대상 생명 이하)의 calc2 % 만큼 자신 피해 (출처: SKILLS_SrvDo064_Sacrifice)
+      const dealt = Math.min(applyMonsterResists(d, m.type.resist).phys / 256, Math.max(0, hpBefore));
+      c.life = Math.max(0, c.life - Math.trunc((dealt * spec.selfDamagePct) / 100));
+      if (c.life <= 0) this.playerDie();
+    }
     return true;
+  }
+
+  /**
+   * 스탯으로 붙은 원소 피해 (Enchant 의 firemindam/firemaxdam 등): 무기 공격에 더한다.
+   * 출처: SUNITDMG_FillDamageValues — SrcDam 128 이면 스탯 최소~최대 << 8 굴림 (+ 원소 마스터리)
+   */
+  private addStatElemental(d: DamagePacket): void {
+    const roll = (minStat: string, maxStat: string) => {
+      const max = this.playerStat(maxStat) * 256;
+      if (max < 8) return 0;
+      const min = this.playerStat(minStat) * 256;
+      return min + (max > min ? this.rng.pick(max - min) : 0);
+    };
+    d.fire += roll('firemindam', 'firemaxdam');
+    d.ltng += roll('lightmindam', 'lightmaxdam');
+    d.cold += roll('coldmindam', 'coldmaxdam');
+    d.mag += roll('magicmindam', 'magicmaxdam');
   }
 
   /** 몬스터 방어력 (상태 반영): (기본 + armorclass) × (100 + skill_armor_percent) / 100 */
@@ -1232,12 +1805,24 @@ export class Game {
    * 출처: SUNITDMG_CalculateTotalDamage / SUNITDMG_ExecuteEvents (기절 최대 250, 냉기 = coldeffect 감속, 빙결은 coldeffect < 0 인 몬스터만,
    *       독 = 매 프레임 hpregen 감소, 같은 독은 더 센 쪽으로 갱신)
    */
-  private damageMonster(m: MonsterUnit, raw: DamagePacket): void {
-    const d = applyMonsterResists(raw, m.type.resist);
+  private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player'): void {
+    if (m.pet) {
+      this.damagePet(m, raw);
+      return;
+    }
+    const d = applyMonsterResists(raw, this.monsterResists(m));
     const total = totalDamage(d);
     m.hp -= total / 256;
     m.aggro = true;
-    m.states.remove('terror');
+    // Howl 공포는 맞으면 풀린다 (Terror 저주는 유지)
+    if (!m.states.get('terror')?.skill) m.states.remove('terror');
+    // Life Tap: 저주받은 몬스터에게 준 피해의 calc1 % 만큼 회복 (auraevent damagedinmelee/damagedbymissile)
+    const lt = m.states.get('lifetap');
+    const c = this.character;
+    if (lt?.skill && source === 'player' && c) {
+      const ls = this.skillRecord(lt.skill.id), calc = this.data?.skillCalc;
+      if (ls && calc) c.life = Math.min(c.maxLife, c.life + (total / 256) * calc.calc(ls, 1, lt.skill.lvl, this.owner()) / 100);
+    }
     this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));
     const coldDiv = this.data?.coldDivisor || 1, frzDiv = this.data?.freezeDivisor || 1;
@@ -1251,14 +1836,23 @@ export class Game {
       if (!cur || -(cur.stats.hpregen ?? 0) <= d.pois) m.states.set('poison', this.tickCount + d.poisLen, { hpregen: -d.pois });
     }
     if (m.hp <= 0) {
-      this.killMonster(m);
+      this.killMonster(m, source);
       return;
     }
     const stunned = m.states.has('stunned') || m.states.has('freeze');
     if (!stunned && m.type.modes.has('GH') && rollGetHit(total / 256, m.stats.maxHp, d.hitClass, m.rng)) this.startMonsterMode(m, 'GH');
   }
 
-  private killMonster(m: MonsterUnit): void {
+  /** 몬스터 저항 + 저주 (Amplify Damage: damageresist −100) */
+  private monsterResists(m: MonsterUnit): { dm: number; fi: number; li: number; co: number; ma: number; po: number } {
+    const r = m.type.resist, st = m.states;
+    return {
+      dm: r.dm + st.stat('damageresist'), fi: r.fi + st.stat('fireresist'), li: r.li + st.stat('lightresist'),
+      co: r.co + st.stat('coldresist'), ma: r.ma + st.stat('magicresist'), po: r.po + st.stat('poisonresist'),
+    };
+  }
+
+  private killMonster(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player'): void {
     m.hp = 0;
     m.path = [];
     m.states.clear();
@@ -1266,7 +1860,8 @@ export class Game {
     m.deathFrame = this.tickCount;
     this.events.push({ type: 'monsterKilled', targetId: m.id, typeId: m.type.id });
     const c = this.character, cs = this.classStats, table = this.expTable;
-    if (c && cs && table) {
+    // 소환수가 죽인 몬스터도 주인이 경험치를 받는다. 혼란·가시 등 다른 원인도 플레이어 근처면 받음 (근사)
+    if (c && cs && table && (source !== 'other' || Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40)) {
       const exp = adjustedExperience(m.stats.exp, c.level, m.stats.level);
       const gained = addExperience(c, cs, table, exp);
       this.events.push({ type: 'experience', amount: exp });
@@ -1312,7 +1907,7 @@ export class Game {
     const p = this.player, c = this.character, data = this.data;
     if (!c || !data) return;
     const from = o.from ?? { x: p.x, y: p.y };
-    const speed = missileStep(def.vel + Math.trunc((lvl * def.velLev) / 8));
+    const speed = missileStep(o.velocity ?? def.vel + Math.trunc((lvl * def.velLev) / 8));
     let dx = tx - from.x, dy = ty - from.y;
     const len = Math.hypot(dx, dy) || 1;
     dx = (dx / len) * speed;
@@ -1328,9 +1923,11 @@ export class Game {
       ar = base + Math.trunc((base * pct) / 100);
     }
     const m: Missile = {
-      id: this.nextUnitId++, def, x: from.x, y: from.y, dx, dy, left: def.range + lvl * def.levRange, age: 0,
+      id: this.nextUnitId++, def, x: from.x, y: from.y, dx, dy, left: o.range ?? def.range + lvl * def.levRange, age: 0,
       owner: 'player', ownerId: p.id, ownerLevel: c.level, hitClass: def.hitClass || s.hitClass || 10, ar, roll, hit: new Set(),
-      homingTarget: o.homing ? targetId : undefined, wander: o.wander,
+      homingTarget: o.homing ? targetId : undefined, wander: o.wander, group: o.group, skill: s, lvl,
+      ...(o.chain ? { chain: o.chain } : {}),
+      ...(o.spiral ? { spiral: { cx: from.x, cy: from.y, a: Math.atan2(ty - from.y, tx - from.x), r: 0 } } : {}),
     };
     // 부속 미사일: Exploding Arrow 폭발(HitSubMissile1, 반경 sHitPar1), Poison Javelin 구름 자취(SubMissile1), Plague Javelin 구름(HitSubMissile1)
     const hitSub = def.hitSubMissile1 ? data.missiles.get(def.hitSubMissile1) : undefined;
@@ -1341,7 +1938,9 @@ export class Game {
       m.cloudBurst = { def: hitSub, count: 8, roll: this.missileDamageRoller(hitSub, s, lvl, { srcDam: 0, useSkillDamage: true }) };
     }
     const sub = def.subMissile1 ? data.missiles.get(def.subMissile1) : undefined;
-    if (sub) m.trail = { def: sub, every: Math.max(1, sub.params[0] || 2), roll: this.missileDamageRoller(sub, s, lvl, { srcDam: 0, useSkillDamage: true }) };
+    // 지면 불(Fire Wall)은 매 프레임, 독 구름은 Param1 프레임마다
+    if (sub && isGroundFire(sub)) m.groundTrail = { def: sub, roll: this.missileDamageRoller(sub, this.skillFor(sub) ?? s, lvl, { srcDam: 0, useSkillDamage: true }) };
+    else if (sub) m.trail = { def: sub, every: Math.max(1, sub.params[0] || 2), roll: this.missileDamageRoller(sub, s, lvl, { srcDam: 0, useSkillDamage: true }) };
     this.missiles.push(m);
   }
 
@@ -1373,6 +1972,7 @@ export class Game {
           d.phys *= 2;
           d.crit = true;
         }
+        if (o.srcDam === 128) this.addStatElemental(d);
       }
       if (skill && calc) {
         const min = calc.minPhys256(skill, lvl, own), max = calc.maxPhys256(skill, lvl, own);
@@ -1396,6 +1996,10 @@ export class Game {
       } else if (def.srvDmgFunc === 2) {
         d.freezeLen = Math.trunc((d.coldLen * Math.max(def.dmgParams[0] ?? 0, 0)) / 100);
         d.coldLen = 0;
+      } else if (def.srvDmgFunc === 4) {
+        // Ice Blast: 냉기 지속시간만큼 빙결. 출처: MISSMODE_SrvDmg04_IceBlast
+        d.freezeLen = d.coldLen;
+        d.coldLen = 0;
       }
       return d;
     };
@@ -1416,7 +2020,10 @@ export class Game {
       m.hitTick = t.hitTick;
       m.hitDone = !(mode === 'A1' || mode === 'A2');
       m.path = [];
-      if (mode === 'A1' || mode === 'A2') m.dir = dir64(this.player.x - m.x, this.player.y - m.y);
+      if (mode === 'A1' || mode === 'A2') {
+        const t = this.targetOf(m);
+        m.dir = dir64(t.x - m.x, t.y - m.y);
+      }
     }
   }
 
@@ -1444,6 +2051,7 @@ export class Game {
   private expireStates(): void {
     this.player.states.expire(this.tickCount);
     for (const m of this.monsters) m.states.expire(this.tickCount);
+    for (const m of this.pets) m.states.expire(this.tickCount);
   }
 
   private updateMonsters(): void {
@@ -1487,11 +2095,52 @@ export class Game {
       }
       if (this.tickCount >= m.nextThink && hasAi(m.type.ai)) {
         w.frame = this.tickCount;
+        this.chooseMonsterTarget(m, w);
         if (m.states.has('terror')) this.thinkTerror(w, m);
         else if (m.states.has('taunt')) this.thinkTaunt(w, m);
         else think(w, m);
       }
     }
+  }
+
+  /** 이 몬스터의 현재 공격 대상 위치 (소환수·혼란 대상 또는 플레이어) */
+  private targetOf(m: MonsterUnit): { x: number; y: number; unit?: MonsterUnit } {
+    if (m.targetId !== undefined) {
+      const u = this.pets.find((x) => x.id === m.targetId) ?? this.monsters.find((x) => x.id === m.targetId);
+      if (u && u.mode !== 'DT' && u.mode !== 'DD') return { x: u.x, y: u.y, unit: u };
+    }
+    return { x: this.player.x, y: this.player.y };
+  }
+
+  /**
+   * 몬스터 공격 대상 고르기: 플레이어와 소환수 중 가장 가까운 쪽 (aidist 안).
+   * Confuse 저주: 가장 가까운 다른 몬스터. Dim Vision 저주: 거리 4 밖은 보이지 않는다.
+   * 근사(원작 미확인): 원작 AI 의 대상 선택 가중치(AIUTIL 대상 탐색) 대신 거리만 비교
+   */
+  private chooseMonsterTarget(m: MonsterUnit, w: AiWorld): void {
+    const p = this.player;
+    const pDead = p.mode === 'DT' || p.mode === 'DD';
+    type Cand = { x: number; y: number; size: number; id?: number };
+    const cands: Cand[] = [];
+    if (m.states.has('confuse')) {
+      for (const o of this.monsters) if (o !== m && o.mode !== 'DT' && o.mode !== 'DD') cands.push({ x: o.x, y: o.y, size: o.type.sizeX, id: o.id });
+    } else {
+      if (!pDead) cands.push({ x: p.x, y: p.y, size: PLAYER_SIZE });
+      for (const pet of this.pets) if (pet.mode !== 'DT' && pet.mode !== 'DD' && pet.pet?.petType !== 'none') cands.push({ x: pet.x, y: pet.y, size: pet.type.sizeX, id: pet.id });
+    }
+    let best: Cand | undefined, bd = Infinity;
+    for (const c of cands) {
+      const d = aiDistance(m.x, m.y, c.x, c.y);
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+    const blind = m.states.has('dimvision') && bd > 4;
+    m.targetId = best?.id;
+    w.target = best && !blind
+      ? { x: best.x, y: best.y, size: best.size, dead: false, inTown: this.inTown && best.id === undefined }
+      : { x: p.x, y: p.y, size: PLAYER_SIZE, dead: true, inTown: this.inTown };
   }
 
   /**
@@ -1534,21 +2183,87 @@ export class Game {
         // Slow Missiles: skill_handofathena % 로 미사일 속도. 출처: MISSILES_CreateMissileFromParams (CanSlow + STATE_SLOWMISSILES)
         const slow = m.states.get('slowmissiles');
         if (slow) speed = (speed * (slow.stats.skill_handofathena ?? 100)) / 100;
-        const dx = this.player.x - m.x, dy = this.player.y - m.y;
+        const tp = this.targetOf(m);
+        const dx = tp.x - m.x, dy = tp.y - m.y;
         const d = Math.hypot(dx, dy) || 1;
         this.missiles.push({
           id: this.nextUnitId++, def: md, x: m.x, y: m.y, dx: (dx / d) * speed, dy: (dy / d) * speed, left: md.range, age: 0,
           owner: 'monster', ownerId: m.id, ownerLevel: m.stats.level,
           damage: { min: Math.floor((atk.min * md.srcDamagePct) / 128) + md.minDamage, max: Math.floor((atk.max * md.srcDamagePct) / 128) + md.maxDamage },
-          toHit: atk.toHit, hitClass: 10, hit: new Set(),
+          toHit: atk.toHit, hitClass: 10, hit: new Set(), lvl: 0,
         });
         return;
       }
     }
     if (m.mode === 'S2') return;
+    const tgt = this.targetOf(m);
+    if (tgt.unit) {
+      if (!isInMeleeRange(m.x, m.y, m.type.sizeX, m.type.meleeRange, tgt.unit.x, tgt.unit.y, tgt.unit.type.sizeX, 1)) return;
+      this.monsterHitsUnit(m, tgt.unit, atk);
+      return;
+    }
     const p = this.player;
     if (!isInMeleeRange(m.x, m.y, m.type.sizeX, m.type.meleeRange, p.x, p.y, PLAYER_SIZE, 1)) return;
-    this.hitPlayer(atk, m.stats.level, m.type.hitClass, false);
+    this.onAttackedInMelee(m);
+    this.hitPlayer(atk, m.stats.level, m.type.hitClass, false, m);
+  }
+
+  /** 몬스터가 소환수(또는 혼란으로 다른 몬스터)를 근접 공격. 출처: SUNITDMG_IsHitSuccessful (몬스터 AR vs 방어, 레벨 비교) */
+  private monsterHitsUnit(m: MonsterUnit, t: MonsterUnit, atk: { min: number; max: number; toHit: number }): void {
+    if (!rollPercent(hitChance(atk.toHit, this.monsterDefense(t, false), m.stats.level, t.stats.level), m.rng)) return;
+    const d = emptyDamage();
+    d.phys = rollDamage({ min: atk.min, max: atk.max }, m.rng) * 256;
+    d.hitClass = m.type.hitClass;
+    if (t.pet) this.damagePet(t, d);
+    else this.damageMonster(t, d, 'other');
+    this.ironMaiden(m, d.phys / 256);
+  }
+
+  /** Iron Maiden 저주: 저주받은 몬스터가 근접으로 준 피해의 calc1 % 를 자신이 받는다 (auraevent domeleedamage) */
+  private ironMaiden(m: MonsterUnit, dealt: number): void {
+    const st = m.states.get('ironmaiden');
+    const s = st?.skill ? this.skillRecord(st.skill.id) : undefined, calc = this.data?.skillCalc;
+    if (!st?.skill || !s || !calc || dealt <= 0 || m.mode === 'DT' || m.mode === 'DD') return;
+    const d = emptyDamage();
+    d.phys = Math.trunc((dealt * 256 * calc.calc(s, 1, st.skill.lvl, this.owner())) / 100);
+    d.hitClass = s.hitClass || 0x0d;
+    this.damageMonster(m, d, 'other');
+  }
+
+  /**
+   * 근접 피격 이벤트 (auraevent damagedinmelee): Frozen Armor — 공격자 빙결 (calc1 프레임).
+   * 출처: SKILLS_EventFunc02_FrozenArmor (물리 피해가 있을 때만)
+   */
+  private onDamagedInMelee(attacker: MonsterUnit, dmg = 0): void {
+    // Thorns: 근접 공격자에게 받은 피해의 thorns_percent % 를 물리 피해로 되돌림 (출처: itemstatcost.txt thorns_percent)
+    const thorns = this.playerStat('thorns_percent');
+    if (thorns > 0 && dmg > 0 && attacker.mode !== 'DT' && attacker.mode !== 'DD') {
+      const d = emptyDamage();
+      d.phys = Math.trunc((dmg * 256 * thorns) / 100);
+      d.hitClass = 0x0d;
+      this.damageMonster(attacker, d);
+    }
+    const st = this.player.states.get('frozenarmor');
+    const s = st?.skill ? this.skillRecord(st.skill.id) : undefined, calc = this.data?.skillCalc;
+    if (!st?.skill || !s || !calc || attacker.type.coldEffect >= 0) return;
+    const len = calc.calc(s, 1, st.skill.lvl, this.owner());
+    if (len > 0) attacker.states.set('freeze', this.tickCount + len);
+  }
+
+  /**
+   * 근접 공격받음 이벤트 (auraevent attackedinmelee): Shiver Armor — 공격자에게 냉기 피해.
+   * 출처: SKILLS_EventFunc03_ShiverArmor
+   */
+  private onAttackedInMelee(attacker: MonsterUnit): void {
+    const st = this.player.states.get('shiverarmor');
+    const s = st?.skill ? this.skillRecord(st.skill.id) : undefined;
+    if (!st?.skill || !s) return;
+    const el = this.skillElemental(s, st.skill.lvl);
+    if (!el) return;
+    const d = emptyDamage();
+    addElemental(d, el.eType, el.amount, el.len);
+    d.hitClass = 0x0d;
+    this.damageMonster(attacker, d);
   }
 
   /**
@@ -1556,7 +2271,7 @@ export class Game {
    * 출처: SUNITDMG_GetResultFlags — 달리는 플레이어는 항상 맞는다, 명중 후 막기(달리기 1/3) → 회피
    *       SUNITDMG_ApplyDodge — 걷기/달리기 중이면 Evade, 아니면 근접은 Dodge, 미사일은 Avoid
    */
-  private hitPlayer(atk: { min: number; max: number; toHit: number }, attackerLevel: number, hitClass: number, missile: boolean): void {
+  private hitPlayer(atk: { min: number; max: number; toHit: number }, attackerLevel: number, hitClass: number, missile: boolean, attacker?: MonsterUnit): void {
     const c = this.character, cs = this.classStats;
     const p = this.player;
     if (!c || !cs || p.mode === 'DT' || p.mode === 'DD') return;
@@ -1578,15 +2293,23 @@ export class Game {
       this.events.push({ type: 'playerAvoided', how: evadeStat });
       return;
     }
-    const dmg = rollDamage({ min: atk.min, max: atk.max }, this.rng);
+    let dmg = rollDamage({ min: atk.min, max: atk.max }, this.rng);
+    // Bone Armor: 근접 물리 피해를 흡수량(bonearmor, 1/256)이 남는 동안 흡수 (auraevent absorbdamage, EventFunc22)
+    const ba = missile ? undefined : this.player.states.get('bonearmor');
+    if (ba && (ba.stats.bonearmor ?? 0) > 0 && dmg > 0) {
+      const absorb = Math.min(dmg * 256, ba.stats.bonearmor ?? 0);
+      ba.stats.bonearmor = (ba.stats.bonearmor ?? 0) - absorb;
+      dmg -= absorb / 256;
+      if ((ba.stats.bonearmor ?? 0) <= 0) this.player.states.remove('bonearmor');
+    }
     c.life = Math.max(0, c.life - dmg);
     this.events.push({ type: 'playerHit', damage: dmg });
+    if (!missile && attacker && dmg > 0) {
+      this.onDamagedInMelee(attacker, dmg);
+      this.ironMaiden(attacker, dmg);
+    }
     if (c.life <= 0) {
-      p.path = [];
-      p.action = null;
-      p.cast = null;
-      this.setPlayerMode('DT');
-      this.events.push({ type: 'playerDied' });
+      this.playerDie();
       return;
     }
     // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
@@ -1595,6 +2318,205 @@ export class Game {
       this.setPlayerMode('GH');
     }
     void hitClass;
+  }
+
+  // ---------------------------------------------------------------- 소환수
+
+  /**
+   * 소환: 펫 레벨 = 스킬레벨 + 3 × 캐릭터레벨 / 4 (캐릭터 레벨 이하), MonLvl AC·TH 추가,
+   * 스킬 passivestat·aurastat 보너스, 최대 생명 × (100 + calc1)%. 같은 종류가 petmax 를 넘으면 가장 오래된 것이 사라진다.
+   * 출처: D2MOO D2GAME_SKILLS_SetSummonBaseStats / D2GAME_SetSummonPassiveStats / D2GAME_SummonPet (sub_6FC7D7A0)
+   */
+  private summonPet(s: SkillRecord, lvl: number, typeId: string, x: number, y: number, petType: string, extra: Partial<PetInfo> = {}): MonsterUnit | null {
+    const data = this.data, calc = data?.skillCalc, c = this.character;
+    // skills.txt summon 은 대소문자가 monstats Id 와 다를 수 있다 (ClayGolem ↔ claygolem)
+    const key = data ? [...data.monsters.types.keys()].find((k) => k.toLowerCase() === typeId.toLowerCase()) : undefined;
+    if (!data || !calc || !c || !key) return null;
+    const o = this.owner();
+    const spot = nearestWalkable(this.map, { x, y }, 5);
+    if (!spot) return null;
+    const type = data.monsters.get(key);
+    const petLvl = Math.max(1, Math.min(c.level, lvl + Math.trunc((3 * c.level) / 4)));
+    const rng = new Rng(Number(this.rng.next() & 0xffffffffn) || 1);
+    const stats = rollMonsterStats(data.monsters, type, rng, petLvl);
+    stats.defense += data.monsters.levelBase(petLvl, 'AC');
+    stats.a1.toHit += data.monsters.levelBase(petLvl, 'TH');
+    stats.a2.toHit += data.monsters.levelBase(petLvl, 'TH');
+    const info: PetInfo = { skillId: s.id, petType, expires: Infinity, missileLvl: 0, damagePct: 0, normalDamage: 0, slowPct: 0, ...extra };
+    const bonus = (stat: string, v: number) => {
+      if (stat === 'maxhp') stats.maxHp += v / 256;
+      else if (stat === 'item_normaldamage') info.normalDamage += v;
+      else if (stat === 'damagepercent') info.damagePct += v;
+      else if (stat === 'tohit') {
+        stats.a1.toHit += v;
+        stats.a2.toHit += v;
+      } else if (stat === 'armorclass') stats.defense += v;
+      else if (stat === 'item_slow') info.slowPct += v;
+    };
+    for (const ps of s.passiveStats) bonus(ps.stat, calc.eval(s, ps.calc, lvl, o));
+    for (const a of s.auraStats) bonus(a.stat, calc.eval(s, a.calc, lvl, o));
+    stats.maxHp += Math.trunc((stats.maxHp * calc.calc(s, 1, lvl, o)) / 100);
+    const id = this.nextUnitId++;
+    const pet: MonsterUnit = {
+      id, type, stats, x: spot.x + 0.5, y: spot.y + 0.5, hp: stats.maxHp, mode: 'NU', dir: 0, path: [], moveSpeed: 0,
+      nextThink: this.tickCount + 1, modeStart: this.tickCount, modeEnd: 0, hitTick: -1, hitDone: true,
+      rng, aggro: false, aiParam0: 0, command: 0, leaderId: id, deathFrame: -1, states: new StateList(), corpseUsed: true, pet: info,
+    };
+    const max = this.petMax(s, lvl);
+    const same = this.pets.filter((x) => x.pet?.skillId === s.id && x.mode !== 'DT' && x.mode !== 'DD');
+    while (same.length >= max && petType !== 'none') {
+      const old = same.shift() as MonsterUnit;
+      this.pets.splice(this.pets.indexOf(old), 1);
+    }
+    this.pets.push(pet);
+    this.events.push({ type: 'petSummoned', skill: s.id, typeId, petId: id });
+    return pet;
+  }
+
+  private petMax(s: SkillRecord, lvl: number): number {
+    const row = s.petMax;
+    const calc = this.data?.skillCalc;
+    return row && calc ? Math.max(1, calc.eval(s, row, lvl, this.owner())) : 1;
+  }
+
+  private warpPet(pet: MonsterUnit): void {
+    const spot = nearestWalkable(this.map, { x: this.player.x + 1, y: this.player.y + 1 }, 6);
+    if (!spot) return;
+    pet.x = spot.x + 0.5;
+    pet.y = spot.y + 0.5;
+    pet.path = [];
+    if (pet.mode === 'WL' || pet.mode === 'RN') pet.mode = 'NU';
+  }
+
+  /** 소환수 피해·사망 (시체는 남기지 않는다) */
+  private damagePet(pet: MonsterUnit, raw: DamagePacket): void {
+    if (pet.mode === 'DT' || pet.mode === 'DD') return;
+    const d = applyMonsterResists(raw, this.monsterResists(pet));
+    pet.hp -= totalDamage(d) / 256;
+    if (pet.hp <= 0) {
+      pet.hp = 0;
+      pet.path = [];
+      this.startMonsterMode(pet, 'DT');
+      this.events.push({ type: 'petDied', petId: pet.id });
+    }
+  }
+
+  /**
+   * 소환수 AI: 주인에게서 멀면 따라가고(25 넘으면 곁으로 이동), 가까운 적(12 이내)을 공격, 없으면 주인 곁에서 대기.
+   * 원거리(스켈레톤 메이지)는 10 이내 적에게 미사일.
+   * 근사(원작 미확인): 원작 NecroPet AI(AITHINK_Fn_NecroPet)의 세부 거리·확률 대신 위 규칙
+   */
+  private updatePets(): void {
+    const p = this.player;
+    for (let i = this.pets.length - 1; i >= 0; i--) {
+      const pet = this.pets[i] as MonsterUnit;
+      const info = pet.pet as PetInfo;
+      if (pet.mode === 'DD' || this.tickCount >= info.expires) {
+        this.pets.splice(i, 1);
+        continue;
+      }
+      if (pet.mode === 'DT') {
+        if (this.tickCount >= pet.modeEnd) pet.mode = 'DD';
+        continue;
+      }
+      if (info.petType === 'none') continue; // 뼈벽: 제자리
+      if (pet.states.has('freeze') || pet.states.has('stunned')) {
+        pet.modeEnd++;
+        continue;
+      }
+      if (pet.mode === 'A1' || pet.mode === 'A2' || pet.mode === 'GH') {
+        if (!pet.hitDone && this.tickCount - pet.modeStart >= pet.hitTick) {
+          pet.hitDone = true;
+          this.petAttack(pet);
+        }
+        if (this.tickCount < pet.modeEnd) continue;
+        pet.mode = 'NU';
+        pet.modeStart = this.tickCount;
+      }
+      if (pet.mode === 'WL' || pet.mode === 'RN') {
+        if (pet.path.length) {
+          this.advance(pet, (pet.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS * (100 + pet.states.stat('velocitypercent')) / 100, (d) => (pet.dir = d), pet.type.sizeX);
+          continue;
+        }
+        pet.mode = 'NU';
+        pet.modeStart = this.tickCount;
+      }
+      if (this.tickCount < pet.nextThink) continue;
+      pet.nextThink = this.tickCount + Math.max(3, Math.trunc(pet.type.aiDelay / 3));
+      const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
+      if (toOwner > 25) {
+        this.warpPet(pet);
+        continue;
+      }
+      const enemy = this.inTown ? undefined : this.monstersNear(pet.x, pet.y, 12).find((m) => Math.hypot(m.x - p.x, m.y - p.y) < 20);
+      if (enemy && toOwner < 15) {
+        pet.targetId = enemy.id;
+        const ranged = !!info.missile;
+        if (ranged ? Math.hypot(enemy.x - pet.x, enemy.y - pet.y) <= 10 : isInMeleeRange(pet.x, pet.y, pet.type.sizeX, pet.type.meleeRange, enemy.x, enemy.y, enemy.type.sizeX)) {
+          this.startMonsterMode(pet, !ranged && pet.type.modes.has('A2') && pet.rng.pick(2) ? 'A2' : 'A1');
+          pet.dir = dir64(enemy.x - pet.x, enemy.y - pet.y);
+        } else this.petMoveTo(pet, enemy.x, enemy.y, true);
+        continue;
+      }
+      pet.targetId = undefined;
+      if (toOwner > 5) this.petMoveTo(pet, p.x + (pet.rng.pick(5) - 2), p.y + (pet.rng.pick(5) - 2), toOwner > 8);
+    }
+  }
+
+  private petMoveTo(pet: MonsterUnit, x: number, y: number, run: boolean): void {
+    const t = nearestWalkable(this.map, { x, y }, 4);
+    const path = t ? findPath(this.map, pet, { x: t.x + 0.5, y: t.y + 0.5 }, 3000) : null;
+    if (!path || !path.length) return;
+    pet.path = path;
+    const mode = run ? 'RN' : 'WL';
+    if (pet.mode !== mode) pet.modeStart = this.tickCount;
+    pet.mode = mode;
+    pet.moveSpeed = run ? pet.type.run : pet.type.velocity;
+  }
+
+  /** 소환수 공격 판정: 근접은 명중 굴림 후 물리 (+ item_normaldamage, × damagepercent), 메이지는 원소 미사일 */
+  private petAttack(pet: MonsterUnit): void {
+    const info = pet.pet as PetInfo;
+    const t = pet.targetId !== undefined ? this.monsters.find((m) => m.id === pet.targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
+    if (!t) return;
+    if (info.missile) {
+      const def = this.data?.missiles.get(info.missile);
+      if (!def) return;
+      const d = Math.hypot(t.x - pet.x, t.y - pet.y) || 1, sp = missileStep(def.vel);
+      const lvl = info.missileLvl;
+      const roll = () => {
+        const pk = emptyDamage();
+        const sh = 2 ** def.hitShift;
+        const min = (def.eMin + levelDamageBonus(lvl, def.eMinLev)) * sh, max = (def.eMax + levelDamageBonus(lvl, def.eMaxLev)) * sh;
+        const lenLv = lvl <= 8 ? (def.eLevLen[0] ?? 0) * (lvl - 1) : lvl <= 16 ? 7 * (def.eLevLen[0] ?? 0) + (lvl - 8) * (def.eLevLen[1] ?? 0) : 7 * (def.eLevLen[0] ?? 0) + 8 * (def.eLevLen[1] ?? 0) + (lvl - 16) * (def.eLevLen[2] ?? 0);
+        addElemental(pk, def.eType, min + (max > min ? pet.rng.pick(max - min) : 0), def.eLen + lenLv);
+        return pk;
+      };
+      this.missiles.push({
+        id: this.nextUnitId++, def, x: pet.x, y: pet.y, dx: ((t.x - pet.x) / d) * sp, dy: ((t.y - pet.y) / d) * sp, left: def.range, age: 0,
+        owner: 'player', ownerId: pet.id, ownerLevel: pet.stats.level, hitClass: def.hitClass || 0x0d, roll, hit: new Set(), lvl,
+      });
+      return;
+    }
+    if (!isInMeleeRange(pet.x, pet.y, pet.type.sizeX, pet.type.meleeRange, t.x, t.y, t.type.sizeX, 1)) return;
+    const atk = pet.mode === 'A2' ? pet.stats.a2 : pet.stats.a1;
+    if (!rollPercent(hitChance(atk.toHit, this.monsterDefense(t, false), pet.stats.level, t.stats.level), pet.rng)) return;
+    const d = emptyDamage();
+    const base = rollDamage({ min: atk.min + info.normalDamage, max: atk.max + info.normalDamage }, pet.rng);
+    d.phys = Math.trunc((base * 256 * (100 + info.damagePct)) / 100);
+    d.hitClass = pet.type.hitClass;
+    this.damageMonster(t, d, 'pet');
+    // Clay Golem: 맞은 적 감속 (item_slow). 근사(원작 미확인): 지속 50 프레임
+    if (info.slowPct > 0 && t.mode !== 'DT') t.states.set('slowed', this.tickCount + 50, { velocitypercent: -info.slowPct });
+  }
+
+  private playerDie(): void {
+    const p = this.player;
+    p.path = [];
+    p.action = null;
+    p.cast = null;
+    this.setPlayerMode('DT');
+    this.events.push({ type: 'playerDied' });
   }
 
   // ---------------------------------------------------------------- 미사일 진행
@@ -1611,7 +2533,13 @@ export class Game {
         const blocked = !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
         const hit = Math.hypot(ms.x - p.x, ms.y - p.y) <= 1;
         if (hit && ms.damage) this.hitPlayer({ min: ms.damage.min, max: ms.damage.max, toHit: ms.toHit ?? 0 }, ms.ownerLevel, ms.hitClass, true);
-        if (hit || blocked || ms.left <= 0) this.missiles.splice(i, 1);
+        const petHit = hit ? undefined : this.pets.find((pt) => pt.mode !== 'DT' && pt.mode !== 'DD' && Math.hypot(ms.x - pt.x, ms.y - pt.y) <= 1 + pt.type.sizeX / 2);
+        if (petHit && ms.damage) {
+          const d = emptyDamage();
+          d.phys = rollDamage(ms.damage, this.rng) * 256;
+          this.damagePet(petHit, d);
+        }
+        if (hit || petHit || blocked || ms.left <= 0) this.missiles.splice(i, 1);
         continue;
       }
       if (this.updatePlayerMissile(ms)) this.missiles.splice(this.missiles.indexOf(ms), 1);
@@ -1635,34 +2563,89 @@ export class Game {
       }
     }
     if (ms.wander && ms.age % 3 === 0) {
-      // 근사(원작 미확인): Charged Strike 볼트의 불규칙 이동을 3프레임마다 무작위 방향 전환으로 근사
+      // 근사(원작 미확인): Charged Bolt / Charged Strike 볼트의 불규칙 경로(PATHTYPE_CHARGEDBOLT)를 3프레임마다 무작위 방향 전환으로 근사
       const sp = Math.hypot(ms.dx, ms.dy);
       const a = Math.atan2(ms.dy, ms.dx) + ((this.rng.pick(5) - 2) * Math.PI) / 8;
       ms.dx = Math.cos(a) * sp;
       ms.dy = Math.sin(a) * sp;
     }
+    if (ms.spiral) {
+      // 근사(원작 미확인): PATHTYPE_BLESSEDHAMMER 의 나선을 프레임당 각 0.12rad, 반지름 +0.07 서브타일로 근사 (Range 120 → 약 2바퀴, 반지름 8)
+      const sp = ms.spiral;
+      sp.a += 0.12;
+      sp.r += 0.07;
+      const nx = sp.cx + Math.cos(sp.a) * sp.r, ny = sp.cy + Math.sin(sp.a) * sp.r;
+      ms.dx = nx - ms.x;
+      ms.dy = ny - ms.y;
+    }
     ms.x += ms.dx;
     ms.y += ms.dy;
     if (ms.trail && ms.age % ms.trail.every === 0) this.spawnCloud(ms.trail.def, ms.x, ms.y, ms.trail.roll, ms);
+    if (ms.groundTrail) this.spawnGroundFire(ms.groundTrail.def, ms.x, ms.y, ms.groundTrail.roll, ms);
     const blocked = !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
     if (blocked || ms.left <= 0) {
       this.missileEnd(ms, undefined);
       return true;
     }
     const reach = (ms.def.size + 1) / 2;
+    // 지속 피해(Inferno 불꽃): 닿아 있는 적에게 매 프레임
+    if (isContinuous(ms.def)) {
+      for (const m of this.monsters) {
+        if (m.mode === 'DT' || m.mode === 'DD') continue;
+        if (Math.hypot(m.x - ms.x, m.y - ms.y) <= reach + m.type.sizeX / 2) this.missileHit(ms, m, false);
+      }
+      return false;
+    }
     for (const m of this.monsters) {
-      if (m.mode === 'DT' || m.mode === 'DD' || ms.hit.has(m.id)) continue;
+      if (m.mode === 'DT' || m.mode === 'DD' || ms.hit.has(m.id) || ms.group?.has(m.id)) continue;
       if (Math.hypot(m.x - ms.x, m.y - ms.y) > reach + m.type.sizeX / 2) continue;
+      // Holy Bolt: 언데드만 맞는다 (sHitPar2 = 1), 나머지는 통과. 출처: MISSMODE_SrvHit07_HolyBolt
+      if (ms.def.srvHitFunc === 7 && ms.def.hitParams[1] === 1 && !m.type.undead) continue;
       // Guided Arrow: 대상이 아닌 적은 통과. 출처: MISSMODE_SrvHit10_GuidedArrow
       if (ms.homingTarget !== undefined && m.id !== ms.homingTarget && this.monsters.some((x) => x.id === ms.homingTarget && x.mode !== 'DT' && x.mode !== 'DD')) continue;
       ms.hit.add(m.id);
-      this.missileHit(ms, m, true);
+      ms.group?.add(m.id);
+      this.onMissileCollide(ms, m);
       if (ms.def.collideKill) {
         this.missileEnd(ms, m);
         return true;
       }
     }
     return false;
+  }
+
+  /**
+   * 미사일이 적과 부딪힘: pSrvHitFunc 별 처리.
+   * 출처: D2MOO MissMode.cpp — SrvHit01(Fire Ball: 반경 sHitPar1 폭발), SrvHit12(Chain Lightning: aurarange 안 다른 적에게 다음 번개),
+   *       SrvHit13(Glacial Spike: aurarange 반경 폭발 + auralen 빙결)
+   */
+  private onMissileCollide(ms: Missile, m: MonsterUnit): void {
+    const def = ms.def, calc = this.data?.skillCalc, s = ms.skill;
+    if (def.srvHitFunc === 1 && ms.roll) {
+      const radius = def.hitParams[0] || (s && calc ? Math.max(calc.calc(s, 1, ms.lvl, this.owner()), 1) : 1);
+      for (const t of this.monstersNear(ms.x, ms.y, Math.max(radius, reachOf(def, m)))) this.damageMonster(t, ms.roll());
+      return;
+    }
+    if (def.srvHitFunc === 13 && ms.roll && s && calc) {
+      const o = this.owner();
+      const radius = def.hitParams[0] || Math.max(calc.eval(s, s.auraRangeCalc, ms.lvl, o), 1);
+      const len = def.hitParams[1] || calc.eval(s, s.auraLenCalc, ms.lvl, o);
+      for (const t of this.monstersNear(ms.x, ms.y, Math.max(radius, reachOf(def, m)))) {
+        const d = ms.roll();
+        if (len > 0) d.freezeLen = len;
+        this.damageMonster(t, d);
+      }
+      return;
+    }
+    this.missileHit(ms, m, true);
+    if (def.srvHitFunc === 12 && ms.chain && ms.chain.left > 1) {
+      const next = this.monstersNear(ms.x, ms.y, ms.chain.range).find((t) => t.id !== m.id);
+      if (next && s) {
+        this.spawnPlayerMissile(def, s, ms.lvl, next.x, next.y, next.id, {
+          from: { x: ms.x, y: ms.y }, srcDam: 0, useSkillDamage: true, chain: { left: ms.chain.left - 1, range: ms.chain.range },
+        });
+      }
+    }
   }
 
   private missileHit(ms: Missile, m: MonsterUnit, checkToHit: boolean): void {
@@ -1672,12 +2655,23 @@ export class Game {
       this.events.push({ type: 'miss', targetId: m.id });
       return;
     }
-    this.damageMonster(m, ms.roll());
+    const d = ms.roll();
+    if (ms.def.srvDmgFunc === 5) {
+      // Blessed Hammer: 언데드 +dParam1%, 악마 +dParam2%. 출처: MISSMODE_SrvDmg05_BlessedHammer
+      const base = d.mag;
+      if (m.type.undead) d.mag += Math.trunc((base * (ms.def.dmgParams[0] ?? 0)) / 100);
+      if (m.type.demon) d.mag += Math.trunc((base * (ms.def.dmgParams[1] ?? 0)) / 100);
+    }
+    this.damageMonster(m, d);
   }
 
-  /** 충돌·소멸: 폭발(Exploding Arrow), 구름(Plague Javelin) */
+  /** 충돌·소멸: 폭발(Exploding Arrow, 벽에 맞은 Fire Ball), 구름(Plague Javelin) */
   private missileEnd(ms: Missile, hitUnit: MonsterUnit | undefined): void {
     if (ms.explode) for (const m of this.monstersNear(ms.x, ms.y, ms.explode.radius)) this.damageMonster(m, ms.explode.roll());
+    if (!hitUnit && ms.roll && (ms.def.srvHitFunc === 1 || ms.def.srvHitFunc === 13) && ms.def.alwaysExplode) {
+      const any = this.monstersNear(ms.x, ms.y, 3)[0];
+      if (any) this.onMissileCollide(ms, any);
+    }
     if (ms.cloudBurst) {
       const b = ms.cloudBurst;
       const cx = hitUnit?.x ?? ms.x, cy = hitUnit?.y ?? ms.y;
@@ -1698,7 +2692,22 @@ export class Game {
     this.missiles.push({
       id: this.nextUnitId++, def, x, y, dx: 0, dy: 0, left: def.range, age: 0,
       owner: 'player', ownerId: parent.ownerId, ownerLevel: parent.ownerLevel, hitClass: def.hitClass || 0x50, roll, hit: new Set(),
-      cloud: { radius: Math.max(1, def.size), every: Math.max(1, def.params[1] || 4) },
+      cloud: { radius: Math.max(1, def.size), every: Math.max(1, def.params[1] || 4) }, lvl: parent.lvl, skill: parent.skill,
+    });
+  }
+
+  /**
+   * 지면 불 (Blaze·Fire Wall): 제자리에서 Range + LevRange×레벨 프레임 동안 닿는 적에게 매 프레임 화염.
+   * 같은 칸에 이미 불이 있으면 새로 만들지 않는다.
+   */
+  private spawnGroundFire(def: MissileDef, x: number, y: number, roll: () => DamagePacket, parent: { ownerId: number; ownerLevel: number; lvl: number; skill?: SkillRecord }): void {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    if (!this.map.walkable(cx, cy)) return;
+    if (this.missiles.some((o) => o.def === def && Math.floor(o.x) === cx && Math.floor(o.y) === cy)) return;
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: cx + 0.5, y: cy + 0.5, dx: 0, dy: 0, left: def.range + parent.lvl * def.levRange, age: 0,
+      owner: 'player', ownerId: parent.ownerId, ownerLevel: parent.ownerLevel, hitClass: def.hitClass || 0x20, roll, hit: new Set(),
+      lvl: parent.lvl, skill: parent.skill,
     });
   }
 
@@ -1724,7 +2733,9 @@ export class Game {
     }
     const c = this.character;
     if (c && this.player.mode !== 'DT' && this.player.mode !== 'DD' && c.mana < c.maxMana) {
-      c.mana = Math.min(c.maxMana, c.mana + ((256 * c.maxMana) / (25 * 120)) / 256);
+      // Warmth: manarecoverybonus % 만큼 마나 재생 증가 (출처: itemstatcost.txt manarecoverybonus)
+      const bonus = this.playerStat('manarecoverybonus');
+      c.mana = Math.min(c.maxMana, c.mana + (((256 * c.maxMana) / (25 * 120)) / 256) * (100 + bonus) / 100);
     }
   }
 }
@@ -1740,6 +2751,13 @@ interface MeleeSpec {
   /** 스킬 HitClass (0 = 무기) */
   hitClass: number;
   srcDam: number;
+  /** Smite: 무기 대신 방패 피해, 항상 명중, 기절 */
+  shield?: boolean;
+  stunLen?: number;
+  /** Vengeance: 무기 기본 피해의 % 를 원소 피해로 추가 (+ 냉기 지속) */
+  vengeance?: { fire: number; cold: number; ltng: number; coldLen: number };
+  /** Sacrifice: 준 물리 피해의 % 만큼 자신도 피해 */
+  selfDamagePct?: number;
 }
 
 interface PlayerMissileOpts {
@@ -1753,6 +2771,21 @@ interface PlayerMissileOpts {
   homing?: boolean;
   wander?: boolean;
   from?: Pt;
+  /** 수명(프레임) 지정 (Inferno: calc1) */
+  range?: number;
+  /** 속도 지정 (Nova: 미사일 속도 + calc1) */
+  velocity?: number;
+  group?: Set<number>;
+  chain?: { left: number; range: number };
+  /** Blessed Hammer 나선 경로 */
+  spiral?: boolean;
 }
+
+/** 미사일이 유닛에 닿는 거리 */
+const reachOf = (d: MissileDef, m: MonsterUnit): number => (d.size + 1) / 2 + m.type.sizeX / 2;
+/** 지면 불 미사일 (Blaze·Fire Wall: pSrvDmgFunc 3, 제자리에서 닿는 적에게 매 프레임 피해) */
+const isGroundFire = (d: MissileDef): boolean => d.srvDmgFunc === 3;
+/** 지속 피해 미사일 (Inferno 불꽃: DamageRate 가 있고 관통) */
+const isContinuous = (d: MissileDef): boolean => isGroundFire(d) || (d.damageRate > 0 && !d.collideKill);
 
 export { aiDistance };

@@ -1,8 +1,9 @@
 // 최소 메뉴 UI (DOM 오버레이): 메인메뉴 → 캐릭터 선택/생성. 원작 DC6 화면은 Phase 11 에서 교체.
 import type { HeroSummary } from '../engine/save';
 import { validHeroName } from '../engine/save';
+import { CLASSIC_CLASSES, type ClassName } from '../engine/player';
 
-export type MenuResult = { kind: 'new'; name: string } | { kind: 'load'; name: string };
+export type MenuResult = { kind: 'new'; name: string; cls: ClassName } | { kind: 'load'; name: string };
 
 const CSS = `
 .d2menu{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#000;color:#c7b377;font-family:serif}
@@ -76,21 +77,22 @@ export class Menu {
         const h = document.createElement('h1');
         h.textContent = 'Select Hero Class';
         this.root.append(h);
-        for (const cls of ['Amazon', 'Sorceress', 'Necromancer', 'Paladin']) this.button(cls, () => undefined, undefined, true);
         const input = document.createElement('input');
         input.id = 'hero-name';
         input.placeholder = 'Character Name';
         input.maxLength = 15;
         const err = document.createElement('div');
         err.className = 'err';
-        this.button('Barbarian', () => {
-          if (!validHeroName(input.value)) {
-            err.textContent = '이름: 2~15자 영문(첫 글자 영문), _ - 허용';
-            return;
-          }
-          resolve({ kind: 'new', name: input.value });
-        }, 'btn-barbarian');
         this.root.append(input, err);
+        for (const cls of CLASSIC_CLASSES) {
+          this.button(cls, () => {
+            if (!validHeroName(input.value)) {
+              err.textContent = '이름: 2~15자 영문(첫 글자 영문), _ - 허용';
+              return;
+            }
+            resolve({ kind: 'new', name: input.value, cls });
+          }, `btn-${cls.toLowerCase()}`);
+        }
         this.button('Cancel', () => void select());
       };
       main();

@@ -1,13 +1,13 @@
 import { expect, type Page } from '@playwright/test';
 
-/** 메인메뉴 → Single Player → Create New → Barbarian(이름) → 게임 시작 */
-export async function newHero(page: Page, name: string): Promise<void> {
+/** 메인메뉴 → Single Player → Create New → 클래스(이름) → 게임 시작 */
+export async function newHero(page: Page, name: string, cls = 'barbarian'): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   await page.click('#btn-single');
   await page.click('#btn-create');
   await page.fill('#hero-name', name);
-  await page.click('#btn-barbarian');
+  await page.click(`#btn-${cls}`);
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
   await expect(page.locator('#menu')).toBeHidden();
 }

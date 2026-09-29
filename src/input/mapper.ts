@@ -1,15 +1,26 @@
 // 입력 → 명령 매핑 (순수 함수). DOM 이벤트 처리는 input/dom.ts 가 담당.
-// 원작 조작: 좌클릭 = 이동/공격/줍기, Shift+좌클릭 = 제자리 공격, R = 달리기/걷기 전환
-// 출처: Diablo II 게임 매뉴얼 — Controls (좌클릭 이동·공격, Shift 제자리 공격, R 달리기 토글)
+// 원작 조작: 좌클릭 = 이동/공격/줍기, Shift+좌클릭 = 제자리 공격(왼쪽 스킬), 우클릭 = 오른쪽 스킬, R = 달리기/걷기 전환
+// 출처: Diablo II 게임 매뉴얼 — Controls (좌클릭 이동·공격, Shift 제자리 공격, 우클릭 스킬, R 달리기 토글)
 import type { Command } from '../engine/command';
 
-export type Hover = { kind: 'monster'; id: number } | { kind: 'item'; id: number } | null;
+export type Hover = { kind: 'monster' | 'item' | 'corpse'; id: number } | null;
 
-export interface PointerInput { worldX: number; worldY: number; shift: boolean; hover: Hover; run: boolean }
+export interface PointerInput {
+  worldX: number; worldY: number; shift: boolean; hover: Hover; run: boolean;
+  /** 왼쪽 버튼 스킬 Id (0 = Attack) */
+  leftSkill?: number;
+}
 
 export function mapLeftClick(p: PointerInput): Command | null {
   if (p.hover?.kind === 'monster') return { type: 'attack', targetId: p.hover.id, standStill: p.shift };
   if (p.hover?.kind === 'item') return { type: 'pickup', itemId: p.hover.id };
-  if (p.shift) return null;
+  // Shift + 바닥: 왼쪽 스킬을 그 지점에 (Attack 이면 아무 일 없음)
+  if (p.shift) return p.leftSkill ? { type: 'useSkill', skill: p.leftSkill, hand: 'left', x: p.worldX, y: p.worldY } : null;
   return { type: 'move', x: p.worldX, y: p.worldY, run: p.run };
+}
+
+/** 우클릭 = 오른쪽 스킬을 커서 위치(몬스터·시체 위면 그 대상)에 */
+export function mapRightClick(p: PointerInput & { rightSkill: number }): Command {
+  const target = p.hover && p.hover.kind !== 'item' ? p.hover.id : undefined;
+  return { type: 'useSkill', skill: p.rightSkill, hand: 'right', x: p.worldX, y: p.worldY, ...(target !== undefined ? { targetId: target } : {}) };
 }

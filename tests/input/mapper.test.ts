@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapLeftClick } from '../../src/input/mapper';
+import { mapLeftClick, mapRightClick } from '../../src/input/mapper';
 
 // 출처: Diablo II 매뉴얼 Controls — 좌클릭 이동/공격/줍기, Shift+좌클릭 제자리 공격
 describe('좌클릭 → 명령', () => {
@@ -15,5 +15,20 @@ describe('좌클릭 → 명령', () => {
   });
   it('Shift + 빈 바닥 → 명령 없음 (이동하지 않음)', () => {
     expect(mapLeftClick({ worldX: 1, worldY: 1, shift: true, hover: null, run: false })).toBeNull();
+  });
+});
+
+// 출처: Diablo II 매뉴얼 Controls — 우클릭 = 오른쪽 스킬, Shift+좌클릭 = 왼쪽 스킬 제자리 사용
+describe('우클릭·Shift 좌클릭 → 스킬', () => {
+  it('우클릭: 몬스터 위면 대상 지정, 바닥이면 지점', () => {
+    expect(mapRightClick({ worldX: 3, worldY: 4, shift: false, hover: { kind: 'monster', id: 9 }, run: false, rightSkill: 126 })).toEqual({ type: 'useSkill', skill: 126, hand: 'right', x: 3, y: 4, targetId: 9 });
+    expect(mapRightClick({ worldX: 3, worldY: 4, shift: false, hover: null, run: false, rightSkill: 130 })).toEqual({ type: 'useSkill', skill: 130, hand: 'right', x: 3, y: 4 });
+  });
+  it('우클릭: 시체 위면 시체 대상 (Find Potion), 아이템 위는 대상 아님', () => {
+    expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'corpse', id: 5 }, run: false, rightSkill: 131 })).toMatchObject({ targetId: 5 });
+    expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'item', id: 5 }, run: false, rightSkill: 131 })).not.toHaveProperty('targetId');
+  });
+  it('Shift + 바닥 좌클릭: 왼쪽 스킬이 Attack 이 아니면 그 지점에 사용', () => {
+    expect(mapLeftClick({ worldX: 1, worldY: 2, shift: true, hover: null, run: false, leftSkill: 132 })).toEqual({ type: 'useSkill', skill: 132, hand: 'left', x: 1, y: 2 });
   });
 });

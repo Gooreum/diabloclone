@@ -5,12 +5,13 @@ import type { MonsterDb } from '../engine/monster';
 import type { WorldSnapshot } from '../engine/game';
 import type { PickBox } from '../input/dom';
 import { toCanvas, type Camera } from './iso';
-import type { ItemGfx, UnitGfx } from './units';
+import type { ItemGfx, MissileGfx, UnitGfx } from './units';
 import type { DepthSprite } from './world';
 
 export interface SceneDeps {
   units: UnitGfx;
   items: ItemGfx;
+  missiles?: MissileGfx;
   anim: AnimData;
   monsters?: MonsterDb;
   itemDb?: ItemDb;
@@ -69,14 +70,30 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
         const p = toCanvas(cm, m.x, m.y);
         if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y);
         if (m.mode !== 'DT' && m.mode !== 'DD') picks.push({ kind: 'monster', id: m.id, x: p.x - 20, y: p.y - 70, w: 40, h: 75 });
+        // 시체: Find Potion / Find Item 대상 (발밑 낮은 상자)
+        else if (m.mode === 'DD') picks.push({ kind: 'corpse', id: m.id, x: p.x - 24, y: p.y - 20, w: 48, h: 26 });
+      },
+    });
+  }
+
+  for (const ms of s.missiles) {
+    if (!d.missiles || !ms.celFile || ms.celFile === 'null' || !onScreen(ms.x, ms.y)) continue;
+    out.push({
+      depth: ms.x + ms.y + 0.25,
+      draw: (ctx, cm) => {
+        const p = toCanvas(cm, ms.x, ms.y);
+        d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y);
       },
     });
   }
 
   const pm = s.player;
-  const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[pm.mode] ?? pm.mode : pm.mode;
+  // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
+  const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
+  const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
   const comp = d.units.get({ root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip });
-  const frame = animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, !(pm.mode === 'DT' || pm.mode === 'DD'));
+  const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
+  const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
   out.push({
     depth: pm.x + pm.y,
     draw: (ctx, cm) => {

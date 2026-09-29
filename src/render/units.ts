@@ -134,3 +134,46 @@ export class ItemGfx {
     return { w: hit.w, h: hit.h, x: x + hit.ox, y: y + hit.oy - hit.h };
   }
 }
+
+/**
+ * 미사일 그래픽: data\global\missiles\<CelFile>.dcc (missiles.txt CelFile).
+ * 출처: Phrozen Keep — Missiles.txt File Guide (CelFile = missiles 폴더의 DCC 이름)
+ * 근사(원작 미확인): 원작의 Trans(반투명/가산 혼합)·높이(zoffset)·광원은 아직 반영하지 않는다.
+ */
+export class MissileGfx {
+  private readonly assets: AsyncAssets;
+  private readonly pal: Palette;
+  private readonly cache = new Map<string, LayerGfx | null | 'loading'>();
+
+  constructor(assets: AsyncAssets, pal: Palette) {
+    this.assets = assets;
+    this.pal = pal;
+  }
+
+  draw(ctx: CanvasRenderingContext2D, celFile: string, dir64: number, frame: number, x: number, y: number): void {
+    const key = celFile.toLowerCase();
+    const hit = this.cache.get(key);
+    if (hit === undefined) {
+      this.cache.set(key, 'loading');
+      this.assets
+        .load(`data\\global\\missiles\\${celFile}.dcc`)
+        .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), canvases: new Map() } : null))
+        .catch(() => this.cache.set(key, null));
+      return;
+    }
+    if (!hit || hit === 'loading') return;
+    const d = dir64ToFile(dir64, hit.dcc.directions.length);
+    const dir = hit.dcc.directions[d];
+    if (!dir || !dir.frames.length) return;
+    const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
+    const fr = dir.frames[f];
+    if (!fr) return;
+    const k = d * 1000 + f;
+    let c = hit.canvases.get(k);
+    if (!c) {
+      c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
+      hit.canvases.set(k, c);
+    }
+    ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
+  }
+}

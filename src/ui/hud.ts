@@ -25,7 +25,14 @@ function orb(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, f
   ctx.textAlign = 'left';
 }
 
-export function drawHud(ctx: CanvasRenderingContext2D, s: Readonly<WorldSnapshot>, exp: ExpTable | undefined, levelName: string, dead: boolean): void {
+export interface HudExtra {
+  leftSkill: string;
+  rightSkill: string;
+  statPoints: number;
+  skillPoints: number;
+}
+
+export function drawHud(ctx: CanvasRenderingContext2D, s: Readonly<WorldSnapshot>, exp: ExpTable | undefined, levelName: string, dead: boolean, extra?: HudExtra): void {
   const W = ctx.canvas.width, H = ctx.canvas.height;
   const p = s.player;
   ctx.fillStyle = 'rgba(0,0,0,0.75)';
@@ -43,6 +50,22 @@ export function drawHud(ctx: CanvasRenderingContext2D, s: Readonly<WorldSnapshot
   ctx.fillStyle = '#e8d8a8';
   ctx.font = '14px serif';
   ctx.fillText(`Level ${p.level}   Experience ${p.experience}   Gold ${p.gold}   ${levelName}`, 115, H - 24);
+  if (extra) {
+    // 원작 컨트롤 패널: 생명 구체 옆 왼쪽 스킬, 마나 구체 옆 오른쪽 스킬, 포인트가 남으면 New Stats / New Skill 버튼
+    ctx.font = '13px serif';
+    ctx.fillStyle = '#e8d8a8';
+    ctx.fillText(`L: ${extra.leftSkill}`, 95, H - 60);
+    ctx.textAlign = 'right';
+    ctx.fillText(`R: ${extra.rightSkill}`, W - 95, H - 60);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffd700';
+    if (extra.statPoints > 0) ctx.fillText('New Stats (C)', 95, H - 78);
+    if (extra.skillPoints > 0) {
+      ctx.textAlign = 'right';
+      ctx.fillText('New Skill (T)', W - 95, H - 78);
+      ctx.textAlign = 'left';
+    }
+  }
   if (dead) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, W, H);

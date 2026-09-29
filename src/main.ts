@@ -5,28 +5,30 @@ import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
 import { act1SlicePaths, buildSliceWorld, townDt1Paths } from './data/act1';
 import type { GameTables } from './data/tables';
-import { Game, type GameData } from './engine/game';
+import { CLASS_TOKEN, Game, type GameData } from './engine/game';
 import { ENGINE_FPS } from './engine/index';
 import { nearestWalkable } from './engine/path';
-import { classStats, createCharacter, expTable } from './engine/player';
+import { classStats, createCharacter, expTable, type ClassName } from './engine/player';
 import { QUALITY, type ItemInstance } from './engine/treasure';
 import { Rng } from './engine/rng';
 import { makeSave, type CharacterSave } from './engine/save';
 import { WorldRenderer } from './render/world';
 import { type Camera } from './render/iso';
-import { ItemGfx, UnitGfx } from './render/units';
+import { ItemGfx, MissileGfx, UnitGfx } from './render/units';
 import { buildScene } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
 import { drawHud } from './ui/hud';
 import { Panels } from './ui/panels';
+import { SkillPanels } from './ui/skillpanel';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
 const ANIMDATA = 'data\\global\\AnimData.d2';
-// 바바리안 외형 (방어구 없음 = lit). 무기/방패 레이어는 장착 아이템 코드로 결정
-const BARB_BODY = { HD: 'lit', TR: 'lit', LG: 'lit', RA: 'lit', LA: 'lit', S1: 'lit', S2: 'lit' };
+// 캐릭터 외형 (방어구 없음 = lit). 무기/방패 레이어는 장착 아이템 코드로 결정
+// 출처: Phrozen Keep COF 문서 — 레이어 HD 머리, TR 몸통, LG 다리, RA/LA 팔, RH 오른손 무기, LH 왼손(활), SH 방패, S1/S2 어깨
+const BODY = { HD: 'lit', TR: 'lit', LG: 'lit', RA: 'lit', LA: 'lit', S1: 'lit', S2: 'lit' };
 const LEVEL_NAMES: Record<string, string> = { town: 'Rogue Encampment', bloodmoor: 'Blood Moor' };
 
 declare global {
@@ -64,20 +66,23 @@ async function boot(): Promise<void> {
     window.__menuReady = false;
     menu.hide();
     const save = choice.kind === 'load' ? await HeroStore.load(choice.name) : null;
-    await play(shared, choice.name, save);
+    const cls: ClassName = save?.character.cls ?? (choice.kind === 'new' ? choice.cls : 'Barbarian');
+    await play(shared, choice.name, cls, save);
   }
 }
 
 /** 한 판 진행. Save and Exit 하면 resolve */
-function play(sh: Shared, name: string, save: CharacterSave | null): Promise<void> {
+function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null): Promise<void> {
   const { data, tables, assets, pal, anim, canvas, ctx, host } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   const world = buildSliceWorld(assets, tables, data, seed);
   const renderers: Record<string, WorldRenderer> = { town: new WorldRenderer(world.town, pal), bloodmoor: new WorldRenderer(world.bloodMoor, pal) };
   const units = new UnitGfx(assets, pal);
   const itemGfx = new ItemGfx(assets, pal);
-  const cs = classStats(tables.table('charstats'), 'Barbarian');
-  const table = expTable(tables.table('experience'), 'Barbarian');
+  const missileGfx = new MissileGfx(assets, pal);
+  const cs = classStats(tables.table('charstats'), cls);
+  const table = expTable(tables.table('experience'), cls);
+  const token = CLASS_TOKEN[cls];
   const itemRng = new Rng(seed ^ 7);
 
   let equipment: Record<string, ItemInstance>, inventory: ItemInstance[];
@@ -86,7 +91,7 @@ function play(sh: Shared, name: string, save: CharacterSave | null): Promise<voi
     inventory = save.inventory;
     data.treasure.reserveIds(Math.max(0, ...[...inventory, ...Object.values(equipment)].map((i) => i.id)));
   } else {
-    // 출처: charstats.txt 바바리안 시작 장비 (hax 오른손, buc 왼손, hp1 ×4, 두루마리)
+    // 출처: charstats.txt 클래스별 시작 장비 (예: 바바리안 hax 오른손·buc 왼손, 아마존 jav·buc, 소서리스 sst …, hp1 ×4, 두루마리)
     equipment = {};
     inventory = [];
     for (const si of cs.startItems) {
@@ -105,25 +110,53 @@ function play(sh: Shared, name: string, save: CharacterSave | null): Promise<voi
   });
 
   const cam: Camera = { x: world.start.x, y: world.start.y, width: WIDTH, height: HEIGHT };
-  const input = new InputController(canvas, () => cam, (c) => game.enqueue(c));
+  const ch = game.character!;
+  const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
   const nameOf = (code: string) => tables.string(data.items.base(code)?.namestr ?? code);
+  const skillName = (id: number) => data.skills?.byId.get(id)?.displayName ?? 'Attack';
+  // 무기 레이어: 활·석궁은 왼손(LH), 그 외 무기는 오른손(RH). 왼손 슬롯의 방패는 SH, 화살통은 그리지 않는다.
+  const layerFor = (it: { code: string } | undefined, slot: 'rarm' | 'larm'): Record<string, string> => {
+    const b = it ? data.items.base(it.code) : undefined;
+    if (!it || !b) return {};
+    if (data.items.isType(b, 'bow') || data.items.isType(b, 'xbow')) return { LH: it.code };
+    if (data.items.isType(b, 'misl')) return {};
+    if (slot === 'larm') return data.items.isType(b, 'shld') ? { SH: it.code } : { LH: it.code };
+    return { RH: it.code };
+  };
 
   return new Promise((resolve) => {
     let running = true;
     const panels = new Panels(host, nameOf, () => void saveAndExit());
+    const skillPanels = data.skills
+      ? new SkillPanels(host, {
+          db: data.skills,
+          character: () => ch,
+          learn: (id) => game.enqueue({ type: 'spendSkill', skill: id }),
+          setSkill: (hand, id) => game.enqueue({ type: 'setSkill', hand, skill: id }),
+          canSelect: (s, hand) => game.canSelectSkill(s, hand),
+          spendStat: (stat) => game.enqueue({ type: 'spendStat', stat }),
+        })
+      : null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (game.isDead) {
           const p = nearestWalkable(world.town.collision, world.start, 10) ?? world.start;
           game.respawn('town', p.x + 0.5, p.y + 0.5);
+        } else if (skillPanels?.open) {
+          if (skillPanels.skills.style.display === 'block') skillPanels.toggleSkills();
+          else skillPanels.toggleChar();
         } else panels.toggleMenu();
       } else if (e.key === 'i' || e.key === 'I') panels.toggleInventory();
+      // 원작 단축키: T 스킬 트리, C 캐릭터
+      else if (e.key === 't' || e.key === 'T') skillPanels?.toggleSkills();
+      else if (e.key === 'c' || e.key === 'C') skillPanels?.toggleChar();
     };
     async function saveAndExit(): Promise<void> {
       await HeroStore.save(makeSave(name, game.character!, game.gold, game.inventory, game.equipment));
       running = false;
       input.dispose();
       panels.dispose();
+      skillPanels?.dispose();
       window.removeEventListener('keydown', onKey);
       if (import.meta.env.DEV) delete window.__game;
       resolve();
@@ -149,14 +182,17 @@ function play(sh: Shared, name: string, save: CharacterSave | null): Promise<voi
       cam.y = s.player.y;
       const rarm = game.equipment.rarm, larm = game.equipment.larm;
       const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
-      const equip: Record<string, string> = { ...BARB_BODY, ...(rarm ? { RH: rarm.code } : {}), ...(larm ? { SH: larm.code } : {}) };
+      const equip: Record<string, string> = { ...BODY, ...layerFor(rarm, 'rarm'), ...layerFor(larm, 'larm') };
       (renderers[game.levelId] as WorldRenderer).render(
         ctx,
         cam,
-        buildScene(s, cam, { units, items: itemGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: 'BA', playerWclass: wclass, playerEquip: equip, inTown: game.inTown }, input.pickBoxes),
+        buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, inTown: game.inTown }, input.pickBoxes),
       );
-      drawHud(ctx, s, table, LEVEL_NAMES[game.levelId] ?? '', game.isDead);
+      drawHud(ctx, s, table, LEVEL_NAMES[game.levelId] ?? '', game.isDead, {
+        leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
+      });
       panels.renderInventory(s.inventory, game.equipment, s.player.gold);
+      skillPanels?.render();
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);

@@ -8,7 +8,7 @@ import { Rng } from './rng';
 import type { AnimData } from '../formats/animdata';
 import { actionFrame } from '../formats/animdata';
 import type { ItemBase, ItemDb } from './items';
-import type { ItemInstance, TreasureDb } from './treasure';
+import { QUALITY, type ItemInstance, type TreasureDb } from './treasure';
 import type { MonsterDb } from './monster';
 import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } from './monster';
 import { escape, hasAi, idle, think, walkToTarget, type AiWorld, type MonMode, type MonsterUnit, type PetInfo } from './ai';
@@ -19,6 +19,8 @@ import { StateList } from './states';
 import { ItemStore } from './itemstore';
 import { computeDerived, type Derived } from './charstats';
 import { gemStats } from './itemgen';
+import type { TxtRow } from '../formats/txt';
+import type { NpcPrice } from './price';
 import type { Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
@@ -58,6 +60,11 @@ export interface GameData {
   /** DifficultyLevels.txt Normal MonsterColdDivisor / MonsterFreezeDivisor */
   coldDivisor?: number;
   freezeDivisor?: number;
+  /** DifficultyLevels.txt 행 (Normal, Nightmare, Hell) */
+  difficultyRows?: TxtRow[];
+  /** npc.txt 가격 배수, books.txt 책 충전 가격 */
+  npcPrices?: Map<string, NpcPrice>;
+  bookCharge?: Map<string, number>;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -79,6 +86,12 @@ export interface GameInit {
   stash?: Placed[];
   belt?: (ItemInstance | null)[];
   gold?: number;
+  /** 창고 골드 */
+  stashGold?: number;
+  /** 난이도 0 Normal / 1 Nightmare / 2 Hell (DifficultyLevels.txt 행) */
+  difficulty?: 0 | 1 | 2;
+  /** 저장된 시체 (게임을 나갔다 들어오면 시작 위치 옆에 놓인다) */
+  corpse?: Record<string, ItemInstance>;
   /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
   levels?: LevelDef[];
 }
@@ -118,8 +131,11 @@ export interface MonsterSnapshot {
 }
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number }
+/** 플레이어 시체 (죽을 때 장착 아이템이 남는다) */
+export interface CorpseSnapshot { x: number; y: number; dir: number; items: ItemInstance[] }
 export interface WorldSnapshot {
   tick: number;
+  corpse: CorpseSnapshot | null;
   player: PlayerSnapshot;
   monsters: MonsterSnapshot[];
   items: GroundItemSnapshot[];
@@ -129,7 +145,8 @@ export interface WorldSnapshot {
 
 type PlayerAction =
   | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean }
-  | { kind: 'pickup'; itemId: number };
+  | { kind: 'pickup'; itemId: number }
+  | { kind: 'corpse' };
 
 /** 진행 중인 스킬 사용 (애니메이션 + 판정 시점) */
 interface Cast {
@@ -224,6 +241,15 @@ export class Game {
   private derivedCache: Derived | null = null;
   private derivedKey = '';
   gold = 0;
+  stashGold = 0;
+  readonly difficulty: 0 | 1 | 2;
+  /**
+   * 플레이어 시체: 장착·커서 아이템과 되찾을 경험치(잃은 경험치의 75%).
+   * 출처: D2MOO PlrModes.cpp D2GAME_CORPSE_Handler_6FC7FBD0
+   */
+  corpse: { levelId: string; x: number; y: number; dir: number; items: Partial<Record<string, ItemInstance>>; exp: number } | null = null;
+  /** 이번 죽음에서 잃은 경험치 (시체를 만들 때 75% 가 시체에 저장) */
+  private expLoss = 0;
   private tickCount = 0;
   private readonly queue: Command[] = [];
   private readonly player: PlayerState;
@@ -261,12 +287,18 @@ export class Game {
       this.store.store(it);
     }
     this.gold = init.gold ?? 0;
+    this.stashGold = init.stashGold ?? 0;
+    this.difficulty = init.difficulty ?? 0;
     const p = init.player;
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
       walkVelocity: p.walkVelocity, runVelocity: p.runVelocity,
       modeEnd: 0, modeStart: 0, action: null, cast: null, repathAt: 0, states: new StateList(), holdUntil: 0,
     };
+    // 근사(원작 세부 미확인): 저장된 시체는 시작 위치 바로 옆에 놓는다
+    if (init.corpse && Object.keys(init.corpse).length) {
+      this.corpse = { levelId: this.level.def.id, x: p.x + 1, y: p.y + 1, dir: 0, items: { ...init.corpse }, exp: 0 };
+    }
   }
 
   get frame(): number {
@@ -325,11 +357,12 @@ export class Game {
   }
 
   /**
-   * 사망 후 부활: 마을에서 생명·마나 가득 찬 상태로 다시 시작.
-   * 근사(원작 차이): 원작은 시체에 장비를 남기고 골드 일부를 잃는다 — Phase 7(아이템)에서 구현.
+   * 사망 후 부활: 죽은 자리에 시체(장착 아이템)를 남기고, 마을에서 생명·마나 가득 찬 상태로 다시 시작.
+   * 출처: D2MOO PlrModes.cpp — 부활 시 PLRMODE_DEATH 면 D2GAME_CORPSE_Handler 로 시체 생성
    */
   respawn(levelId: string, x: number, y: number): void {
     const p = this.player;
+    if (p.mode === 'DT' || p.mode === 'DD') this.makeCorpse();
     p.mode = 'NU';
     p.modeStart = this.tickCount;
     p.states.clear();
@@ -338,6 +371,53 @@ export class Game {
       this.character.mana = this.maxMana();
     }
     this.changeLevel(levelId, x, y);
+  }
+
+  /**
+   * 시체 만들기: 커서·장착 아이템(bodyloc −1 ~ 12)을 시체로 옮기고, 잃은 경험치의 75% 를 시체에 저장.
+   * 이미 시체가 있으면 원작은 여러 개를 두지만(최대 15) 여기서는 이전 시체 아이템을 합친다 (근사).
+   * 출처: D2GAME_CORPSE_Handler_6FC7FBD0 — STAT_EXPERIENCE = 75 × expLoss / 100
+   */
+  private makeCorpse(): void {
+    const p = this.player;
+    const items: Partial<Record<string, ItemInstance>> = { ...(this.corpse?.items ?? {}) };
+    const st = this.store;
+    let extra = 0;
+    for (const slot of Object.keys(st.equipment) as (keyof typeof st.equipment)[]) {
+      const it = st.equipment[slot];
+      if (!it) continue;
+      items[items[slot] ? `${slot}#${extra++}` : slot] = it;
+      delete st.equipment[slot];
+    }
+    if (st.cursor) {
+      items[`cursor#${extra++}`] = st.cursor;
+      st.cursor = null;
+    }
+    this.corpse = { levelId: this.level.def.id, x: p.x, y: p.y, dir: p.dir, items, exp: (this.corpse?.exp ?? 0) + Math.trunc((75 * this.expLoss) / 100) };
+    this.expLoss = 0;
+    this.statsDirty = true;
+  }
+
+  /**
+   * 시체 줍기: 시체 아이템을 원래 장착 칸으로 (칸이 차 있으면 인벤토리, 자리가 없으면 땅), 시체 경험치를 되찾는다.
+   * 출처: PlrModes.cpp — 시체의 STAT_EXPERIENCE 를 SUNITDMG_AddExperience 로 돌려주고 INVENTORY_FreeCorpse
+   */
+  takeCorpse(): boolean {
+    const cp = this.corpse, p = this.player;
+    if (!cp || cp.levelId !== this.level.def.id || this.isDead) return false;
+    if (Math.hypot(cp.x - p.x, cp.y - p.y) > 3) return false;
+    const st = this.store;
+    for (const [key, it] of Object.entries(cp.items)) {
+      if (!it) continue;
+      const slot = key.split('#')[0] as keyof typeof st.equipment;
+      if (slot in { head: 1, neck: 1, tors: 1, rarm: 1, larm: 1, rrin: 1, lrin: 1, belt: 1, feet: 1, glov: 1 } && !st.equipment[slot]) st.equipment[slot] = it;
+      else if (!st.inv.autoAdd(it)) this.dropItem(it, p.x, p.y);
+    }
+    if (cp.exp > 0) this.gainExperience(cp.exp);
+    this.corpse = null;
+    this.statsDirty = true;
+    this.events.push({ type: 'corpseTaken' });
+    return true;
   }
 
   get isDead(): boolean {
@@ -393,8 +473,10 @@ export class Game {
 
   snapshot(): Readonly<WorldSnapshot> {
     const p = this.player, c = this.character;
+    const cp = this.corpse;
     return {
       tick: this.tickCount,
+      corpse: cp && cp.levelId === this.level.def.id ? { x: cp.x, y: cp.y, dir: cp.dir, items: Object.values(cp.items).filter((x): x is ItemInstance => !!x) } : null,
       player: {
         id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir, modeTick: this.tickCount - p.modeStart, anim: this.seqAnim(),
         life: c?.life ?? 0, maxLife: this.maxLife(), mana: c?.mana ?? 0, maxMana: this.maxMana(),
@@ -426,6 +508,27 @@ export class Game {
     };
     this.monsters.push(m);
     return m;
+  }
+
+  /** 경험치 얻기 (레벨업 이벤트 포함) */
+  private gainExperience(exp: number): void {
+    const c = this.character, cs = this.classStats, table = this.expTable;
+    if (!c || !cs || !table) return;
+    const gained = addExperience(c, cs, table, exp);
+    this.events.push({ type: 'experience', amount: exp });
+    if (gained > 0) {
+      this.passiveCache = null;
+      this.events.push({ type: 'levelUp', level: c.level });
+    }
+  }
+
+  /** 골드 더미 떨어뜨리기 */
+  private dropGold(amount: number, x: number, y: number): void {
+    const b = this.data?.items.base('gld');
+    if (!b || !this.data) return;
+    const it = this.data.treasure.createItem(b, 1, this.rng, QUALITY.NORMAL);
+    it.quantity = amount;
+    this.dropItem(it, x, y);
   }
 
   dropItem(item: ItemInstance, x: number, y: number): void {
@@ -470,6 +573,10 @@ export class Game {
         p.action = { kind: 'pickup', itemId: cmd.itemId };
         return;
       }
+      case 'takeCorpse': {
+        if (this.corpse?.levelId === this.level.def.id) p.action = { kind: 'corpse' };
+        return;
+      }
       case 'spendStat': {
         if (c && this.classStats && spendStat(c, this.classStats, cmd.stat)) this.events.push({ type: 'statSpent', stat: cmd.stat });
         return;
@@ -510,7 +617,7 @@ export class Game {
         return;
       }
       case 'useItem': {
-        this.useItem(cmd.itemId);
+        this.useItem(cmd.itemId, cmd.targetId);
         return;
       }
       case 'setSkill': {
@@ -689,6 +796,17 @@ export class Game {
     if (act?.kind === 'skill') {
       this.driveSkillAction(act);
       if (p.cast) return;
+    } else if (act?.kind === 'corpse') {
+      const cp = this.corpse;
+      if (!cp) p.action = null;
+      else if (Math.hypot(cp.x - p.x, cp.y - p.y) <= 3) {
+        p.path = [];
+        this.takeCorpse();
+        p.action = null;
+      } else if (this.tickCount >= p.repathAt) {
+        this.pathPlayerTo(cp.x, cp.y, p.running);
+        p.repathAt = this.tickCount + 10;
+      }
     } else if (act?.kind === 'pickup') {
       const g = this.ground.find((x) => x.item.id === act.itemId);
       if (!g) {
@@ -828,12 +946,23 @@ export class Game {
    *       SKILLITEM_pSpell05_RejuvPotion — 최대치의 calc % 즉시 회복 (ITEMS_GetBonusLife/ManaBasedOnClass)
    * 근사(원작 미확인): 두루마리(Town Portal·Identify)의 효과는 Phase 8(포털)·Phase 7 Step 3(감정)에서 연결 — 지금은 사용만 거부
    */
-  private useItem(id: number): void {
+  private useItem(id: number, targetId?: number): void {
     const c = this.character, data = this.data;
     const found = this.store.find(id);
     if (!c || !data || !found || this.isDead) return;
     const b = data.items.base(found.item.code);
     if (!b?.useable) return;
+    // 감정 두루마리(isc) / 감정의 책(ibk): 대상 미감정 아이템을 감정. 책은 충전 1 소모, 두루마리는 사라짐 (근사: 원작 커서 모드 처리 미확인)
+    if (b.code === 'isc' || b.code === 'ibk') {
+      const target = targetId !== undefined ? this.store.find(targetId)?.item : undefined;
+      if (!target || target.identified || (b.code === 'ibk' && found.item.quantity <= 0)) return;
+      target.identified = true;
+      this.statsDirty = true;
+      if (b.code === 'ibk') found.item.quantity--;
+      else this.store.consume(id);
+      this.events.push({ type: 'itemIdentified', itemId: target.id });
+      return;
+    }
     const cls = c.cls;
     const lifeBonus = (v: number) => (cls === 'Barbarian' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
     const manaBonus = (v: number) => (cls === 'Sorceress' || cls === 'Necromancer' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
@@ -1946,6 +2075,7 @@ export class Game {
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
     this.damageMonster(m, d);
+    if (!spec.shield) this.wearWeapon();
     // 생명·마나 흡수: 준 물리 피해의 lifedrainmindam / manadrainmindam % (Normal LifeStealDivisor 1). 출처: itemstatcost.txt, DifficultyLevels.txt
     const dvl = this.derived();
     if (dvl) {
@@ -2048,13 +2178,7 @@ export class Game {
     const c = this.character, cs = this.classStats, table = this.expTable;
     // 소환수가 죽인 몬스터도 주인이 경험치를 받는다. 혼란·가시 등 다른 원인도 플레이어 근처면 받음 (근사)
     if (c && cs && table && (source !== 'other' || Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40)) {
-      const exp = adjustedExperience(m.stats.exp, c.level, m.stats.level);
-      const gained = addExperience(c, cs, table, exp);
-      this.events.push({ type: 'experience', amount: exp });
-      if (gained > 0) {
-        this.passiveCache = null;
-        this.events.push({ type: 'levelUp', level: c.level });
-      }
+      this.gainExperience(adjustedExperience(m.stats.exp, c.level, m.stats.level));
     }
     const data = this.data;
     const tc = m.type.treasure[0];
@@ -2483,6 +2607,7 @@ export class Game {
       this.events.push({ type: 'playerAvoided', how: evadeStat });
       return;
     }
+    if (!missile) this.wearArmor();
     let dmg = rollDamage({ min: atk.min, max: atk.max }, this.rng);
     // Bone Armor: 근접 물리 피해를 흡수량(bonearmor, 1/256)이 남는 동안 흡수 (auraevent absorbdamage, EventFunc22)
     const ba = missile ? undefined : this.player.states.get('bonearmor');
@@ -2508,6 +2633,68 @@ export class Game {
       this.setPlayerMode('GH');
     }
     void hitClass;
+  }
+
+  // ---------------------------------------------------------------- 내구도
+
+  /**
+   * 내구도 1 감소 판정: 방어구 10%, 무기 4%, 클래식 투척 무기는 닳지 않는다. 0 이 되면 부서짐(스탯 미적용).
+   * 출처: D2MOO ITEMS/Items.cpp ITEMS_UpdateDurability (nChance 4 / 10, bExpansion 아니면 투척 무기 return)
+   */
+  private wearItem(it: ItemInstance): void {
+    const items = this.data?.items;
+    const b = items?.base(it.code);
+    if (!items || !b || b.noDurability || !b.durability || it.maxDurability <= 0 || it.durability <= 0) return;
+    const armor = items.isType(b, 'armo'), weapon = items.isType(b, 'weap');
+    if (!armor && !weapon) return;
+    if (!armor && items.types.get(b.type)?.throwable) return;
+    if (this.rng.pick(100) >= (armor ? 10 : 4)) return;
+    it.durability--;
+    if (it.durability <= 0) {
+      it.durability = 0;
+      this.statsDirty = true;
+      this.events.push({ type: 'itemBroken', itemId: it.id, code: it.code });
+    }
+  }
+
+  /** 근접 공격 성공 시 무기 (출처: SUNITDMG_DrainItemDurability — 공격자가 플레이어면 무기) */
+  private wearWeapon(): void {
+    const items = this.data?.items;
+    if (!items) return;
+    const w = [this.equipment.rarm, this.equipment.larm].find((it) => { const b = it && items.base(it.code); return !!b && items.isType(b, 'weap'); });
+    if (w) this.wearItem(w);
+  }
+
+  /**
+   * 근접 공격을 맞으면 방어구 하나: 부위 가중치 머리 3 · 몸통 5 · 오른손 4 · 왼손 4 · 벨트 2 · 신발 2 · 장갑 2,
+   * 임의 시작 부위에서 가중치를 빼 나가며 고른다.
+   * 출처: SUNITDMG_DrainItemDurability sgDurabilityLossWeights
+   */
+  private wearArmor(): void {
+    const items = this.data?.items;
+    if (!items) return;
+    const W: [keyof typeof this.store.equipment, number][] = [['head', 3], ['tors', 5], ['rarm', 4], ['larm', 4], ['belt', 2], ['feet', 2], ['glov', 2]];
+    const slots = W.map(([slot]) => {
+      const it = this.equipment[slot];
+      const b = it && items.base(it.code);
+      return b && items.isType(b, 'armo') ? it : undefined;
+    });
+    const total = W.reduce((a, [, w], i) => a + (slots[i] ? w : 0), 0);
+    if (total <= 0) return;
+    let i = this.rng.pick(W.length);
+    let weight = this.rng.pick(total);
+    for (;;) {
+      const it = slots[i];
+      if (it) {
+        const w = (W[i] as [string, number])[1];
+        if (weight < w) {
+          this.wearItem(it);
+          return;
+        }
+        weight -= w;
+      }
+      i = (i + 1) % W.length;
+    }
   }
 
   // ---------------------------------------------------------------- 소환수
@@ -2706,7 +2893,39 @@ export class Game {
     p.action = null;
     p.cast = null;
     this.setPlayerMode('DT');
+    this.applyDeathPenalty();
     this.events.push({ type: 'playerDied' });
+  }
+
+  /**
+   * 죽음 벌칙 (몬스터에게 죽었을 때).
+   * 골드: (인벤토리 + 창고) × min(레벨, 20)% 를 잃는다. 벌칙이 인벤토리 골드 이하면 나머지는 땅에 떨어뜨리고,
+   *       넘치면 창고에서 모자란 만큼 뺀다. 인벤토리 골드는 0.
+   * 경험치: (현재 레벨 경험치 구간) × DeathExpPenalty% (Normal 0 / Nightmare 5 / Hell 10), 레벨 아래로는 안 내려감.
+   * 출처: D2MOO PLAYER/Player.cpp PLAYER_ApplyDeathPenalty, DifficultyLevels.txt DeathExpPenalty
+   */
+  private applyDeathPenalty(): void {
+    const c = this.character;
+    if (!c) return;
+    const inv = this.gold, total = inv + this.stashGold;
+    const penalty = Math.trunc((total * Math.min(c.level, 20)) / 100);
+    if (penalty > inv) this.stashGold = total - penalty;
+    else if (inv - penalty > 0) this.dropGold(inv - penalty, this.player.x, this.player.y);
+    this.gold = 0;
+    this.events.push({ type: 'goldLost', amount: penalty });
+    const et = this.expTable;
+    const pct = Number(this.data?.difficultyRows?.[this.difficulty]?.DeathExpPenalty ?? 0);
+    if (c.level > 1 && et && pct > 0) {
+      const prev = et.threshold(c.level - 1), cur = et.threshold(c.level);
+      let loss = Math.trunc(((cur - prev) * pct) / 100);
+      let next = c.experience - loss;
+      if (next <= prev) {
+        loss = Math.max(0, loss + next - prev);
+        next = prev + 1;
+      }
+      this.expLoss = loss;
+      c.experience = next;
+    }
   }
 
   // ---------------------------------------------------------------- 미사일 진행

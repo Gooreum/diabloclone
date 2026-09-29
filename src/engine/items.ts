@@ -78,6 +78,8 @@ export interface ItemTypeDef {
   classCode: string; storePage: string;
   /** 지팡이 스킬 클래스 (itemtypes StaffMods: staf → sor, wand → nec, scep → pal) */
   staffMods: string;
+  /** 수리 가능 (itemtypes Repair) */
+  repair: boolean;
 }
 
 export class ItemDb {
@@ -91,7 +93,7 @@ export class ItemDb {
         code: r.Code, name: r.ItemType ?? '', equiv: [r.Equiv1, r.Equiv2].filter((x): x is string => !!x),
         normal: n(r.Normal) === 1, magic: n(r.Magic) === 1, rare: n(r.Rare) === 1,
         treasureClass: n(r.TreasureClass) === 1, throwable: n(r.Throwable) === 1,
-        shoots: r.Shoots ?? '', quiver: r.Quiver ?? '',
+        shoots: r.Shoots ?? '', quiver: r.Quiver ?? '', repair: r.Repair === '1',
         body: n(r.Body) === 1, bodyLoc1: r.BodyLoc1 ?? '', bodyLoc2: r.BodyLoc2 ?? '', beltable: n(r.Beltable) === 1,
         maxSock: [n(r.MaxSock1), n(r.MaxSock25), n(r.MaxSock40)],
         classCode: r.Class ?? '', storePage: r.StorePage ?? '', staffMods: r.StaffMods ?? '',

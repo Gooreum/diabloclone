@@ -28,13 +28,15 @@ export interface MagicAffix {
   level: number; maxLevel: number; levelReq: number;
   classSpecific: string;
   frequency: number; group: number;
+  /** 가격 (magicprefix/suffix add, multiply) */
+  costAdd: number; costMult: number;
   mods: Mod[];
   itypes: string[]; etypes: string[];
 }
 
 export interface RareAffix { idx: number; name: string; itypes: string[]; etypes: string[] }
-export interface UniqueDef { idx: number; name: string; enabled: boolean; ladder: boolean; rarity: number; noLimit: boolean; lvl: number; lvlReq: number; code: string; mods: Mod[]; invFile: string }
-export interface SetItemDef { idx: number; name: string; set: string; code: string; rarity: number; lvl: number; lvlReq: number; mods: Mod[]; partial: Mod[][]; addFunc: number; invFile: string }
+export interface UniqueDef { idx: number; name: string; costAdd: number; costMult: number; enabled: boolean; ladder: boolean; rarity: number; noLimit: boolean; lvl: number; lvlReq: number; code: string; mods: Mod[]; invFile: string }
+export interface SetItemDef { idx: number; name: string; costAdd: number; costMult: number; set: string; code: string; rarity: number; lvl: number; lvlReq: number; mods: Mod[]; partial: Mod[][]; addFunc: number; invFile: string }
 export interface SetDef { name: string; partial: Mod[][]; full: Mod[] }
 interface QualityItemDef { mods: Mod[]; armor: boolean; weapon: boolean; shield: boolean; scepter: boolean; wand: boolean; staff: boolean; bow: boolean; boots: boolean; gloves: boolean; belt: boolean }
 interface PropBlock { set: number; val: number; func: number; stat: string }
@@ -77,6 +79,10 @@ export class ItemGen {
   private readonly props = new Map<string, PropBlock[]>();
   /** 스탯 이름 → itemstatcost ValShift (값 저장 시 시프트 — maxhp 등은 1/256 로 저장) */
   readonly valShift = new Map<string, number>();
+  /** 스탯 가격 (itemstatcost Add, Multiply, Encode) */
+  readonly statCost = new Map<string, { add: number; mult: number; encode: number }>();
+  /** 스킬 가격 (skills.txt cost add, cost mult) */
+  readonly skillCost = new Map<number, { add: number; mult: number }>();
   /** 클래스 스킬 시작 Id (staffmods) */
   private readonly classFirstSkill = new Map<string, number>();
   private readonly skillRows: TxtRow[];
@@ -88,7 +94,7 @@ export class ItemGen {
       rows.map((r, idx) => ({
         idx, prefix, name: r.Name ?? '', spawnable: n(r.spawnable) === 1, rare: n(r.rare) === 1,
         level: n(r.level), maxLevel: n(r.maxlevel), levelReq: n(r.levelreq), classSpecific: r.classspecific ?? '',
-        frequency: n(r.frequency), group: n(r.group),
+        frequency: n(r.frequency), group: n(r.group), costAdd: n(r.add), costMult: n(r.multiply),
         mods: mods(r, 'mod#code', 'mod#param', 'mod#min', 'mod#max', 3),
         itypes: [1, 2, 3, 4, 5, 6, 7].map((i) => r[`itype${i}`] ?? '').filter(Boolean),
         etypes: [1, 2, 3, 4, 5].map((i) => r[`etype${i}`] ?? '').filter(Boolean),
@@ -106,7 +112,7 @@ export class ItemGen {
     this.rarePrefixes = rare(t.rareprefix);
     this.rareSuffixes = rare(t.raresuffix);
     this.uniques = t.uniqueitems.map((r, idx) => ({
-      idx, name: r.index ?? '', enabled: n(r.enabled) === 1 && CLASSIC(r.version), ladder: n(r.ladder) === 1, rarity: n(r.rarity),
+      idx, name: r.index ?? '', costAdd: n(r['cost add']), costMult: n(r['cost mult']), enabled: n(r.enabled) === 1 && CLASSIC(r.version), ladder: n(r.ladder) === 1, rarity: n(r.rarity),
       noLimit: n(r.nolimit) === 1, lvl: n(r.lvl), lvlReq: n(r['lvl req']), code: r.code ?? '',
       mods: mods(r, 'prop#', 'par#', 'min#', 'max#', 12), invFile: r.invfile ?? '',
     }));
@@ -118,7 +124,7 @@ export class ItemGen {
       this.sets.set(r.index, { name: r.name ?? r.index, partial, full: mods(r, 'FCode#', 'FParam#', 'FMin#', 'FMax#', 8) });
     }
     this.setItems = t.setitems.map((r, idx) => ({
-      idx, name: r.index ?? '', set: r.set ?? '', code: r.item ?? '', rarity: n(r.rarity), lvl: n(r.lvl), lvlReq: n(r['lvl req']),
+      idx, name: r.index ?? '', costAdd: n(r['cost add']), costMult: n(r['cost mult']), set: r.set ?? '', code: r.item ?? '', rarity: n(r.rarity), lvl: n(r.lvl), lvlReq: n(r['lvl req']),
       mods: mods(r, 'prop#', 'par#', 'min#', 'max#', 9), addFunc: n(r['add func']), invFile: r.invfile ?? '',
       partial: [1, 2, 3, 4, 5].map((k) => [...mods(r, `aprop${k}a`, `apar${k}a`, `amin${k}a`, `amax${k}a`, 1), ...mods(r, `aprop${k}b`, `apar${k}b`, `amin${k}b`, `amax${k}b`, 1)]),
       ...(CLASSIC(setVersion.get(r.set ?? '')) && r.item ? {} : { rarity: -1 }),
@@ -135,7 +141,12 @@ export class ItemGen {
       for (let i = 1; i <= 7; i++) if (r[`func${i}`]) blocks.push({ set: n(r[`set${i}`]), val: n(r[`val${i}`]), func: n(r[`func${i}`]), stat: r[`stat${i}`] ?? '' });
       this.props.set(r.code, blocks);
     }
-    for (const r of t.itemstatcost) if (r.Stat) this.valShift.set(r.Stat, n(r.ValShift));
+    for (const r of t.itemstatcost) {
+      if (!r.Stat) continue;
+      this.valShift.set(r.Stat, n(r.ValShift));
+      this.statCost.set(r.Stat, { add: n(r.Add), mult: n(r.Multiply), encode: n(r.Encode) });
+    }
+    for (const r of t.skills) if (r.Id) this.skillCost.set(n(r.Id), { add: n(r['cost add']), mult: n(r['cost mult']) });
     this.skillRows = t.skills;
     for (const r of t.gems ?? []) {
       if (!r.code) continue;

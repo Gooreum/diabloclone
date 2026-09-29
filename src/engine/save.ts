@@ -20,6 +20,8 @@ export interface CharacterSave {
   equipment: Record<string, ItemInstance>;
   /** 창고 골드 */
   stashGold: number;
+  /** 줍지 않은 시체의 아이템 (다음 게임 시작 위치 옆에 시체로) */
+  corpse: Record<string, ItemInstance>;
   savedAt: number;
 }
 
@@ -31,6 +33,7 @@ export interface SaveItems {
   belt?: (ItemInstance | null)[];
   equipment: Record<string, ItemInstance>;
   stashGold?: number;
+  corpse?: Record<string, ItemInstance>;
 }
 
 export function makeSave(name: string, character: Character, gold: number, items: SaveItems, now = Date.now()): CharacterSave {
@@ -44,6 +47,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     belt: structuredClone(items.belt ?? []),
     equipment: structuredClone(items.equipment),
     stashGold: items.stashGold ?? 0,
+    corpse: structuredClone(items.corpse ?? {}),
     savedAt: now,
   };
 }
@@ -91,6 +95,8 @@ export function parseSave(text: string): CharacterSave {
   s.stash ??= [];
   s.belt ??= [];
   s.stashGold ??= 0;
+  s.corpse ??= {};
+  for (const it of Object.values(s.corpse)) normalizeItem(it);
   return s as CharacterSave;
 }
 

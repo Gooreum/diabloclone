@@ -3,7 +3,7 @@ import type { Command } from '../engine/command';
 import { fromCanvas, type Camera } from '../render/iso';
 import { mapLeftClick, mapRightClick, type Hover } from './mapper';
 
-export interface PickBox { kind: 'monster' | 'item' | 'corpse'; id: number; x: number; y: number; w: number; h: number }
+export interface PickBox { kind: 'monster' | 'item' | 'corpse' | 'body'; id: number; x: number; y: number; w: number; h: number }
 
 /** 현재 버튼 스킬 (Game 캐릭터에서 읽음) */
 export interface SkillButtons { left: number; right: number }

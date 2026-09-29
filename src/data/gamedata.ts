@@ -6,6 +6,7 @@ import { TreasureDb } from '../engine/treasure';
 import { parseMissiles } from '../engine/missiles';
 import { SkillDb } from '../engine/skills/db';
 import { SkillCalc } from '../engine/skills/formulas';
+import { parseBookCharges, parseNpcPrices } from '../engine/price';
 import { ItemGen } from '../engine/itemgen';
 import type { GameData } from '../engine/game';
 import { GameTables, type AssetSource } from './tables';
@@ -33,5 +34,6 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
   return {
     items, treasure, monsters, anim: AnimData.parse(animBytes), hitClassIndex, missiles,
     skills, skillCalc: new SkillCalc(skills), coldDivisor: n(normal?.MonsterColdDivisor) || 1, freezeDivisor: n(normal?.MonsterFreezeDivisor) || 1,
+    difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
   };
 }

@@ -176,6 +176,9 @@ describe.skipIf(!hasGameData)('아이템 생성 (출처: D2MOO ItemsMagic.cpp / 
     const gnasher = make('hax', 7, QUALITY.UNIQUE, 3);
     const bonnet = make('cap', 4, QUALITY.UNIQUE, 1);
     expect(gen.uniques[bonnet.uniqueIdx!]!.name).toBe('War Bonnet');
+    // 출처: The Arreat Summit — 미감정 아이템은 마법 속성이 적용되지 않는다
+    expect(computeDerived(ch, cs, { rarm: gnasher, head: bonnet }, data.items, gen).str).toBe(ch.str);
+    gnasher.identified = bonnet.identified = true;
     const d = computeDerived(ch, cs, { rarm: gnasher, head: bonnet }, data.items, gen);
     expect(d.str).toBe(ch.str + 8);
     expect(d.maxLife).toBe(ch.maxLife + 15);

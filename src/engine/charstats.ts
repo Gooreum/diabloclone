@@ -4,6 +4,7 @@
 //       Maxroll — Defense: 아이템 방어 = 기본 × (1 + ED%) + 추가 방어, 캐릭터 방어 = 아이템 합 + 추가 방어 + 민첩/4
 //       The Arreat Summit — Resistances: 최대 75% (+ 최대 저항 증가), Normal 난이도 저항 감소 없음
 //       itemstatcost.txt 스탯 이름
+import { isBroken } from './price';
 import type { ItemBase, ItemDb } from './items';
 import type { Character, ClassStats } from './player';
 import type { ItemInstance } from './treasure';
@@ -112,12 +113,14 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
   let block = 0;
   for (const [slot, it] of Object.entries(equipment)) {
     const b = items.base(it.code);
-    if (!b) continue;
+    // 부서진 아이템(내구 0)은 아무 효과가 없다 (출처: D2MOO ITEMS_UpdateDurability → IFLAG_BROKEN, 스탯 목록 비활성)
+    if (!b || isBroken(it)) continue;
     const isWeapon = items.isType(b, 'weap');
     const isArmor = items.isType(b, 'armo');
     if (isArmor) defense += armorDefense(it);
     if (items.isType(b, 'shld')) block += b.block;
-    for (const s of it.stats) {
+    // 미감정 아이템은 기본 수치(방어·피해)만, 마법 속성은 감정 후 (근사: 원작 스탯 레이어 처리 미확인)
+    for (const s of it.identified ? it.stats : []) {
       if (s.param !== 0) continue;
       if (isWeapon && WEAPON_LOCAL.has(s.stat)) continue;
       if (isArmor && ARMOR_LOCAL.has(s.stat)) continue;
@@ -131,7 +134,7 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
       weaponMax = d.max;
     }
   }
-  for (const s of setBonusStats(equipped, gen, items)) if (s.param === 0) add(s.stat, s.value);
+  for (const s of setBonusStats(equipped.filter((it) => !isBroken(it) && it.identified), gen, items)) if (s.param === 0) add(s.stat, s.value);
   const get = (s: string) => sums.get(s) ?? 0;
   const str = ch.str + get('strength'), dex = ch.dex + get('dexterity'), vit = ch.vit + get('vitality'), ene = ch.ene + get('energy');
   // itemstatcost maxhp/maxmana 는 ValShift 8 (1/256) 이지만 여기서는 속성 값(정수) 그대로 저장한다

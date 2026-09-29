@@ -19,8 +19,10 @@ export type Command =
   | { type: 'useBelt'; slot: number }
   | { type: 'moveItem'; itemId: number; to: ItemLocation }
   /** 인벤토리·벨트 아이템 사용 (물약 마시기, 두루마리 읽기 — 원작 우클릭) */
-  | { type: 'useItem'; itemId: number }
+  | { type: 'useItem'; itemId: number; targetId?: number }
   | { type: 'spendStat'; stat: 'str' | 'dex' | 'vit' | 'ene' }
   | { type: 'spendSkill'; skill: number }
   | { type: 'setSkill'; hand: 'left' | 'right'; skill: number }
+  /** 자기 시체 줍기 (걸어가서 장비를 되찾음) */
+  | { type: 'takeCorpse' }
   | { type: 'saveAndExit' };

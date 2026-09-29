@@ -3,7 +3,8 @@
 // 출처: Diablo II 게임 매뉴얼 — Controls (좌클릭 이동·공격, Shift 제자리 공격, 우클릭 스킬, R 달리기 토글)
 import type { Command } from '../engine/command';
 
-export type Hover = { kind: 'monster' | 'item' | 'corpse'; id: number } | null;
+/** body = 플레이어 자신의 시체 */
+export type Hover = { kind: 'monster' | 'item' | 'corpse' | 'body'; id: number } | null;
 
 export interface PointerInput {
   worldX: number; worldY: number; shift: boolean; hover: Hover; run: boolean;
@@ -14,6 +15,8 @@ export interface PointerInput {
 export function mapLeftClick(p: PointerInput): Command | null {
   if (p.hover?.kind === 'monster') return { type: 'attack', targetId: p.hover.id, standStill: p.shift };
   if (p.hover?.kind === 'item') return { type: 'pickup', itemId: p.hover.id };
+  // 원작: 자기 시체를 클릭하면 걸어가서 장비를 되찾는다
+  if (p.hover?.kind === 'body') return { type: 'takeCorpse' };
   // Shift + 바닥: 왼쪽 스킬을 그 지점에 (Attack 이면 아무 일 없음)
   if (p.shift) return p.leftSkill ? { type: 'useSkill', skill: p.leftSkill, hand: 'left', x: p.worldX, y: p.worldY } : null;
   return { type: 'move', x: p.worldX, y: p.worldY, run: p.run };

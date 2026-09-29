@@ -116,6 +116,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const game = new Game({
     map: world.town.collision, levels: world.levels, player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse,
   });
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
@@ -126,13 +127,21 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const ch = game.character!;
   const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
+  let identifyWith: number | null = null;
   input.intercept = (x, y, button) => {
     const store = game.store;
     const hit = invPanel.hit(x, y);
     if (hit) {
+      const it = invPanel.itemAt(store, x, y);
       if (button === 2) {
-        const it = invPanel.itemAt(store, x, y);
-        if (it) game.enqueue({ type: 'useItem', itemId: it.id });
+        // 감정 두루마리·책은 우클릭 후 감정할 아이템을 좌클릭 (원작 감정 커서)
+        if (it && (it.code === 'isc' || it.code === 'ibk')) identifyWith = it.id;
+        else if (it) game.enqueue({ type: 'useItem', itemId: it.id });
+        return true;
+      }
+      if (identifyWith !== null) {
+        if (it && !it.identified) game.enqueue({ type: 'useItem', itemId: identifyWith, targetId: it.id });
+        identifyWith = null;
         return true;
       }
       const cur = store.cursor;
@@ -199,7 +208,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     };
     async function saveAndExit(): Promise<void> {
       const st = game.store;
-      await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment }));
+      await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment,
+        stashGold: game.stashGold, corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
+      }));
       running = false;
       input.dispose();
       panels.dispose();
@@ -231,10 +242,14 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
       void larm;
       const equip: Record<string, string> = { ...BODY, ...playerLayers(data.items, game.equipment) };
+      const cpItems = game.corpse?.items;
+      const corpseLook = cpItems
+        ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: ((cpItems.rarm ? data.items.base(cpItems.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase() }
+        : undefined;
       (renderers[game.levelId] as WorldRenderer).render(
         ctx,
         cam,
-        buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, inTown: game.inTown }, input.pickBoxes),
+        buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown }, input.pickBoxes),
       );
       drawHud(ctx, s, table, LEVEL_NAMES[game.levelId] ?? '', game.isDead, {
         leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
@@ -243,6 +258,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const reqCtx = { level: ch.level, str: game.effStat('str'), dex: game.effStat('dex'), cls: ch.cls };
       invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx);
       invPanel.drawCursor(ctx, game.store, input.mouse);
+      // 감정 커서 (근사: 원작 커서 그림 대신 글자)
+      if (identifyWith !== null && input.mouse) {
+        ctx.fillStyle = '#c7b377';
+        ctx.font = '13px serif';
+        ctx.fillText('Identify', input.mouse.x + 12, input.mouse.y + 4);
+      }
       skillPanels?.render();
       requestAnimationFrame(frame);
     };

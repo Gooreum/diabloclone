@@ -18,6 +18,8 @@ export interface SceneDeps {
   playerToken: string;
   playerWclass: string;
   playerEquip: Record<string, string>;
+  /** 플레이어 시체 외형 (장착 레이어·무기 클래스) */
+  corpseLook?: { equip: Record<string, string>; wclass: string };
   inTown: boolean;
 }
 
@@ -85,6 +87,21 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (ctx, cm) => {
         const p = toCanvas(cm, ms.x, ms.y);
         d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y);
+      },
+    });
+  }
+
+  // 플레이어 시체: 죽은 모습(DD) + 시체가 가진 장비 외형
+  const cp = s.corpse;
+  if (cp && d.corpseLook && onScreen(cp.x, cp.y)) {
+    const look = d.corpseLook;
+    const cc = d.units.get({ root: 'CHARS', token: d.playerToken, mode: 'DD', wclass: look.wclass, equip: look.equip });
+    out.push({
+      depth: cp.x + cp.y - 0.25,
+      draw: (ctx, cm) => {
+        const p = toCanvas(cm, cp.x, cp.y);
+        if (cc) d.units.draw(ctx, cc, cp.dir, 0, p.x, p.y);
+        picks.push({ kind: 'body', id: 0, x: p.x - 30, y: p.y - 24, w: 60, h: 30 });
       },
     });
   }

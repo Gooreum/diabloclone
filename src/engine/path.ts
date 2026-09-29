@@ -3,12 +3,15 @@
 import type { CollisionMap } from './collision';
 import type { Pt } from './geom';
 
+/** 경로 탐색이 쓰는 맵 인터페이스 (유닛 점유를 덧씌운 맵도 넘길 수 있게) */
+export type WalkMap = Pick<CollisionMap, 'width' | 'height' | 'walkable'>;
+
 const DIRS: [number, number, number][] = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
   [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ];
 
-export function findPath(map: CollisionMap, from: Pt, to: Pt, maxNodes = 20000): Pt[] | null {
+export function findPath(map: WalkMap, from: Pt, to: Pt, maxNodes = 20000): Pt[] | null {
   const sx = Math.floor(from.x), sy = Math.floor(from.y), tx = Math.floor(to.x), ty = Math.floor(to.y);
   if (!map.walkable(tx, ty)) return null;
   if (sx === tx && sy === ty) return [];
@@ -58,7 +61,7 @@ export function findPath(map: CollisionMap, from: Pt, to: Pt, maxNodes = 20000):
 }
 
 /** 목표가 막혀 있으면 가장 가까운 이동 가능 서브타일 (반경 탐색) */
-export function nearestWalkable(map: CollisionMap, p: Pt, radius = 10): Pt | null {
+export function nearestWalkable(map: WalkMap, p: Pt, radius = 10): Pt | null {
   const cx = Math.floor(p.x), cy = Math.floor(p.y);
   if (map.walkable(cx, cy)) return { x: cx, y: cy };
   for (let r = 1; r <= radius; r++) {

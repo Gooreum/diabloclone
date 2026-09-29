@@ -37,6 +37,8 @@ export interface MonsterType {
   meleeRange: number;
   hitClass: number;
   resist: { dm: number; ma: number; fi: number; li: number; co: number; po: number };
+  /** 냉기 효과 % (음수 = 감속, 0 이상 = 냉기 면역) — monstats coldeffect (Normal) */
+  coldEffect: number;
   modes: Set<string>;
   /** monstats2 레이어별 외형 변형 (예: TR → ['lit','med','hvy']) */
   layers: Record<string, string[]>;
@@ -73,6 +75,7 @@ export class MonsterDb {
         treasure: [r.TreasureClass1 ?? '', r.TreasureClass2 ?? '', r.TreasureClass3 ?? '', r.TreasureClass4 ?? ''],
         sizeX: n(r2.SizeX) || 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
         resist: { dm: n(r.ResDm), ma: n(r.ResMa), fi: n(r.ResFi), li: n(r.ResLi), co: n(r.ResCo), po: n(r.ResPo) },
+        coldEffect: r.coldeffect === undefined || r.coldeffect === '' ? -50 : n(r.coldeffect),
         modes, layers, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
       });
     }

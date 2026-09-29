@@ -28,6 +28,10 @@ export interface ItemBase {
   noDurability: boolean;
   minDam: number; maxDam: number;
   twoHandMinDam: number; twoHandMaxDam: number;
+  /** 던지기 피해 (weapons.txt minmisdam/maxmisdam) */
+  throwMinDam: number; throwMaxDam: number;
+  /** 던지거나 쏠 때 생성할 미사일 (weapons.txt missiletype = missiles.txt Id) */
+  missileType: number;
   twoHanded: boolean;
   strBonus: number; dexBonus: number;
   speed: number;
@@ -38,12 +42,16 @@ export interface ItemBase {
   twoHandedWclass: string;
   hitClass: string;
   stackable: boolean;
-  minStack: number; maxStack: number;
+  minStack: number; maxStack: number; spawnStack: number;
   quest: boolean;
   unique: boolean;
 }
 
-export interface ItemTypeDef { code: string; name: string; equiv: string[]; normal: boolean; magic: boolean; rare: boolean; treasureClass: boolean; throwable: boolean }
+export interface ItemTypeDef {
+  code: string; name: string; equiv: string[]; normal: boolean; magic: boolean; rare: boolean; treasureClass: boolean; throwable: boolean;
+  /** 이 타입이 쏘는 탄약 타입 (bow → bowq), 탄약 타입이 채우는 무기 타입 (bowq → bow) */
+  shoots: string; quiver: string;
+}
 
 export class ItemDb {
   readonly bases = new Map<string, ItemBase>();
@@ -56,6 +64,7 @@ export class ItemDb {
         code: r.Code, name: r.ItemType ?? '', equiv: [r.Equiv1, r.Equiv2].filter((x): x is string => !!x),
         normal: n(r.Normal) === 1, magic: n(r.Magic) === 1, rare: n(r.Rare) === 1,
         treasureClass: n(r.TreasureClass) === 1, throwable: n(r.Throwable) === 1,
+        shoots: r.Shoots ?? '', quiver: r.Quiver ?? '',
       });
     }
     const add = (rows: TxtRow[], category: ItemCategory) => {
@@ -68,12 +77,13 @@ export class ItemDb {
           invWidth: n(r.invwidth) || 1, invHeight: n(r.invheight) || 1, invFile: r.invfile ?? '', flippyFile: r.flippyfile ?? '', cost: n(r.cost),
           durability: n(r.durability), noDurability: n(r.nodurability) === 1,
           minDam: n(r.mindam), maxDam: n(r.maxdam), twoHandMinDam: n(r['2handmindam']), twoHandMaxDam: n(r['2handmaxdam']),
+          throwMinDam: n(r.minmisdam), throwMaxDam: n(r.maxmisdam), missileType: n(r.missiletype),
           twoHanded: n(r['2handed']) === 1,
           strBonus: n(r.StrBonus), dexBonus: n(r.DexBonus), speed: n(r.speed),
           minAc: n(r.minac), maxAc: n(r.maxac), block: n(r.block),
           reqStr: n(r.reqstr), reqDex: n(r.reqdex),
           wclass: r.wclass ?? '', twoHandedWclass: r['2handedwclass'] ?? '', hitClass: r['hit class'] ?? '',
-          stackable: n(r.stackable) === 1, minStack: n(r.minstack), maxStack: n(r.maxstack),
+          stackable: n(r.stackable) === 1, minStack: n(r.minstack), maxStack: n(r.maxstack), spawnStack: n(r.spawnstack),
           quest: n(r.quest) > 0, unique: n(r.unique) === 1,
         });
       }

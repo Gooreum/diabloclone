@@ -8,10 +8,22 @@
 //   무기 기본 피해 × (1 + (무기 외 +% 피해 + 스탯 보너스) / 100), 스탯 보너스 = Str × StrBonus/100 (+ Dex × DexBonus/100)
 import type { Rng } from './rng';
 
+/**
+ * 명중률 % (정수). 출처: D2MOO SUNITDMG_IsHitSuccessful — factor = 100 × AR / (AR + DEF) (정수), 확률 = 2 × ALVL × factor / (ALVL + DLVL),
+ * 5~95 로 제한. 방어가 음수면 AR 에 더하고, AR 이 음수면 방어에 더한다.
+ */
 export function hitChance(ar: number, def: number, alvl: number, dlvl: number): number {
-  const a = Math.max(0, ar), d = Math.max(0, def);
-  const raw = a + d === 0 ? 100 : 200 * (a / (a + d)) * (alvl / (alvl + dlvl));
-  return Math.min(95, Math.max(5, raw));
+  let a = Math.trunc(ar), d = Math.trunc(def);
+  if (d < 0) {
+    a -= d;
+    d = 0;
+  }
+  if (a < 0) {
+    d -= a;
+    a = 0;
+  }
+  const factor = a + d ? Math.trunc((100 * a) / (a + d)) : 100;
+  return Math.min(95, Math.max(5, Math.trunc((2 * alvl * factor) / (dlvl + alvl))));
 }
 
 export const playerAttackRating = (dex: number, toHitFactor: number, bonus = 0): number => (dex - 7) * 5 + toHitFactor + bonus;

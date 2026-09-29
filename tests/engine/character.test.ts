@@ -12,8 +12,9 @@ describe('전투 공식 (출처: Maxroll Hit Chance / Block / Damage Mechanics)'
     expect(hitChance(1, 1000, 1, 50)).toBe(5);
     expect(hitChance(10000, 1, 50, 1)).toBe(95);
   });
-  it('레벨 보정: 공격자 레벨이 높으면 명중 상승 (200% × 1/2 × 20/30)', () => {
-    expect(hitChance(100, 100, 20, 10)).toBeCloseTo(66.667, 2);
+  // 출처: D2MOO SUNITDMG_IsHitSuccessful — 정수 연산: factor 50, 2 × 20 × 50 / 30 = 66
+  it('레벨 보정: 공격자 레벨이 높으면 명중 상승 (정수: 2 × 20 × 50 / 30 = 66)', () => {
+    expect(hitChance(100, 100, 20, 10)).toBe(66);
   });
   it('플레이어 AR = (Dex-7)×5 + ToHitFactor, 방어 = Dex/4', () => {
     expect(playerAttackRating(20, 20)).toBe(85);

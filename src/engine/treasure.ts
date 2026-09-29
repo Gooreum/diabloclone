@@ -236,7 +236,11 @@ export class TreasureDb {
       item.durability = Math.min(rng.pick(half) + half, 255);
     }
     if (base.category === 'armor') item.defense = base.minAc + rng.pick(base.maxAc - base.minAc + 1);
-    if (base.stackable) item.quantity = Math.max(base.minStack + rng.pick(base.maxStack - base.minStack), 1);
+    // 출처: D2MOO D2Game ITEMS/Items.cpp — 수량 = rand(spawnstack − minstack) + minstack (spawnstack 이 없거나 작으면 max(minstack, maxstack))
+    if (base.stackable) {
+      const spawn = base.spawnStack < base.minStack || !base.spawnStack ? Math.max(base.minStack, base.maxStack) : base.spawnStack;
+      item.quantity = Math.max(base.minStack + rng.pick(spawn - base.minStack), 1);
+    }
     return item;
   }
 }

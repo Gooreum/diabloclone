@@ -3,6 +3,9 @@ import { AnimData } from '../formats/animdata';
 import { ItemDb } from '../engine/items';
 import { MonsterDb } from '../engine/monster';
 import { TreasureDb } from '../engine/treasure';
+import { parseMissiles } from '../engine/missiles';
+import { SkillDb } from '../engine/skills/db';
+import { SkillCalc } from '../engine/skills/formulas';
 import type { GameData } from '../engine/game';
 import { GameTables, type AssetSource } from './tables';
 
@@ -16,10 +19,12 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
   if (!animBytes) throw new Error('AnimData.d2 not found');
   const hitClassIndex = new Map<string, number>();
   tables.table('HitClass').forEach((r, i) => r.Code && hitClassIndex.set(r.Code, i));
-  const missiles = new Map<string, { vel: number; range: number; size: number; srcDamagePct: number; minDamage: number; maxDamage: number }>();
-  for (const r of tables.table('Missiles')) {
-    if (!r.Missile) continue;
-    missiles.set(r.Missile, { vel: n(r.Vel), range: n(r.Range), size: n(r.Size), srcDamagePct: n(r.SrcDamage), minDamage: n(r.MinDamage), maxDamage: n(r.MaxDamage) });
-  }
-  return { items, treasure, monsters, anim: AnimData.parse(animBytes), hitClassIndex, missiles };
+  const missiles = parseMissiles(tables.table('Missiles'));
+  const skills = new SkillDb(tables.table('skills'), tables.table('skilldesc'), (k) => tables.string(k));
+  // 출처: DifficultyLevels.txt Normal 행 — MonsterColdDivisor / MonsterFreezeDivisor
+  const normal = tables.table('DifficultyLevels').find((r) => r.Name === 'Normal');
+  return {
+    items, treasure, monsters, anim: AnimData.parse(animBytes), hitClassIndex, missiles,
+    skills, skillCalc: new SkillCalc(skills), coldDivisor: n(normal?.MonsterColdDivisor) || 1, freezeDivisor: n(normal?.MonsterFreezeDivisor) || 1,
+  };
 }

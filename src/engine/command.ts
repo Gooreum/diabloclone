@@ -17,4 +17,5 @@ export type Command =
   | { type: 'moveItem'; itemId: number; to: ItemLocation }
   | { type: 'spendStat'; stat: 'str' | 'dex' | 'vit' | 'ene' }
   | { type: 'spendSkill'; skill: number }
+  | { type: 'setSkill'; hand: 'left' | 'right'; skill: number }
   | { type: 'saveAndExit' };

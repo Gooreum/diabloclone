@@ -8,6 +8,7 @@ import type { MonsterStats, MonsterType } from '../monster';
 import { aiDistance, isInMeleeRange } from '../monster';
 import type { Pt } from '../geom';
 import type { Rng } from '../rng';
+import type { StateList } from '../states';
 
 export type MonMode = 'NU' | 'WL' | 'RN' | 'A1' | 'A2' | 'S2' | 'GH' | 'DT' | 'DD';
 
@@ -37,6 +38,10 @@ export interface MonsterUnit {
   command: number;
   leaderId: number;
   deathFrame: number;
+  /** 상태 (냉기·독·기절·빙결·공포·도발·함성 저주 …) */
+  states: StateList;
+  /** 시체에 Find Potion / Find Item 을 이미 사용함 (원작 STATE_CORPSE_NOSELECT) */
+  corpseUsed: boolean;
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean }

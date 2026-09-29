@@ -50,6 +50,11 @@ export interface Character {
   /** 기본 최대치 (장비 보너스 제외). 소수 허용, 표시 시 내림 */
   maxLife: number; maxMana: number; maxStamina: number;
   life: number; mana: number; stamina: number;
+  /** 스킬 Id → 하드 포인트 (배운 클래스 스킬만) */
+  skills: Record<number, number>;
+  /** 마우스 왼쪽/오른쪽 버튼 스킬 Id (0 = Attack) */
+  leftSkill: number;
+  rightSkill: number;
 }
 
 /** 시작 생명 = vit + hpadd, 마나 = 에너지, 스태미나 = stamina 컬럼 (예: 바바리안 55/10/92) */
@@ -59,6 +64,7 @@ export function createCharacter(cs: ClassStats): Character {
     cls: cs.cls, level: 1, experience: 0,
     str: cs.str, dex: cs.dex, vit: cs.vit, ene: cs.ene, statPoints: 0, skillPoints: 0,
     maxLife, maxMana, maxStamina, life: maxLife, mana: maxMana, stamina: maxStamina,
+    skills: {}, leftSkill: 0, rightSkill: 0,
   };
 }
 

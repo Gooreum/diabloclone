@@ -38,6 +38,10 @@ export function parseSave(text: string): CharacterSave {
   const s = JSON.parse(text) as Partial<CharacterSave>;
   if (s.version !== SAVE_VERSION) throw new Error(`save version mismatch: ${s.version}`);
   if (!s.name || !s.character || typeof s.gold !== 'number' || !Array.isArray(s.inventory) || !s.equipment) throw new Error('save corrupt');
+  // Phase 5 에 만든 저장(스킬 필드 없음) 호환
+  s.character.skills ??= {};
+  s.character.leftSkill ??= 0;
+  s.character.rightSkill ??= 0;
   return s as CharacterSave;
 }
 

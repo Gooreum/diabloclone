@@ -1,15 +1,18 @@
 import { expect, type Page } from '@playwright/test';
 
-/** 메인메뉴 → Single Player → Create New → 클래스(이름) → 게임 시작 */
+/** 메인메뉴 → Single Player → Create New Character → 클래스 고르기 → 이름 → OK → 게임 시작 (원작 프런트엔드 순서) */
 export async function newHero(page: Page, name: string, cls = 'barbarian'): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   await page.click('#btn-single');
   await page.click('#btn-create');
-  await page.fill('#hero-name', name);
   await page.click(`#btn-${cls}`);
+  await page.fill('#hero-name', name);
+  await page.click('#btn-ok');
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   await expect(page.locator('#menu')).toBeHidden();
+  // 첫 게임 틱이 돌아 마을 NPC·몬스터가 놓일 때까지
+  await page.waitForFunction(() => (window.__game?.game.snapshot().tick ?? 0) > 1 && window.__game!.game.npcs.length > 0, undefined, { timeout: 30_000 });
 }
 
 /** 마을의 Blood Moor 출구 안쪽 걷기 가능한 칸 근처로 옮긴 뒤 출구로 걸어가 Blood Moor 진입 (출구 판정은 엔진 규칙 그대로).
@@ -39,3 +42,10 @@ export async function walkToBloodMoor(page: Page): Promise<void> {
 }
 
 export const uniqueName = (prefix: string) => `${prefix}${Math.random().toString(36).replace(/[^a-z]/g, '').slice(0, 6)}`;
+
+/** 캐릭터 선택 화면에서 영웅 고르기 → OK (원작: 칸 클릭 = 선택, OK/두 번 클릭 = 시작) */
+export async function loadHero(page: Page, name: string): Promise<void> {
+  await page.click('#btn-single');
+  await page.click(`#hero-${name}`);
+  await page.click('#btn-select-ok');
+}

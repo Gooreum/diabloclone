@@ -212,7 +212,8 @@ export class MissileGfx {
     if (hit === undefined) {
       this.cache.set(key, 'loading');
       this.assets
-        .load(`data\\global\\missiles\\${celFile}.dcc`)
+        // 상태 오버레이는 엔진이 'overlays\<Filename>' 으로 보낸다 (data\global\overlays, 출처: overlay.txt Filename)
+        .load(celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
         .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), canvases: new Map() } : null))
         .catch(() => this.cache.set(key, null));
       return;

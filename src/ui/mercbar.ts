@@ -1,10 +1,11 @@
 // 왼쪽 위 용병 초상·생명 막대 (캔버스). 원작 DC6: data\global\ui\HIREABLES\rogueicon.dc6 (46×41, Act 1 Rogue)
-// 근사(원작 미확인): 초상 위치(10, 10)·막대 크기와 색(생명 비율에 따라 초록 → 노랑 → 빨강), 이름 글꼴(캔버스 serif)
+// 근사(원작 미확인): 초상 위치(10, 10)·막대 크기와 색(생명 비율에 따라 초록 → 노랑 → 빨강), 이름 위치(글꼴은 원작 font16 금색)
 import { parseDc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from '../render/sprites';
 import type { AsyncAssets } from '../render/units';
 import type { MercSnapshot } from '../engine/game';
+import { drawText } from './text';
 
 export const MERC_BAR = { x: 10, y: 10, w: 46, h: 41, barH: 5 } as const;
 
@@ -35,10 +36,6 @@ export class MercBar {
     ctx.fillRect(B.x, B.y + B.h + 2, B.w, B.barH);
     ctx.fillStyle = frac > 0.5 ? '#18c018' : frac > 0.25 ? '#d0c018' : '#c01818';
     ctx.fillRect(B.x, B.y + B.h + 2, Math.round(B.w * frac), B.barH);
-    ctx.save();
-    ctx.font = '12px serif';
-    ctx.fillStyle = '#c7b377';
-    ctx.fillText(name, B.x + B.w + 6, B.y + 14);
-    ctx.restore();
+    drawText(ctx, name, B.x + B.w + 6, B.y + 4, { color: 'gold' });
   }
 }

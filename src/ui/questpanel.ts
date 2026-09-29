@@ -2,7 +2,7 @@
 // questtabs.dc6 (액트 I~IV 탭 — 프레임 쌍), a1q1.dc6 ~ a1q6.dc6 (퀘스트 아이콘 72×86, 27 프레임: 0 진행 중, 1~24 완료 불꽃 애니메이션,
 // 24 완료(회색), 26 시작 전(어두움)), questlast.dc6 (마지막 퀘스트 단추).
 // 출처: string.tbl qsts "Quest Status", qstsa1q1~6 (퀘스트 이름), qstsa1q<퀘스트><상태> (설명), qstsComplete
-// 근사(원작 미확인): 아이콘 줄·칸 위치(3개 × 2줄), 설명 글자 위치·줄바꿈, 프레임 25(금테) 미사용, 글꼴(원작 font16 대신 캔버스 serif),
+// 근사(원작 미확인): 아이콘 줄·칸 위치(3개 × 2줄), 설명 글자 위치·줄바꿈, 프레임 25(금테) 미사용, 글꼴 원작 font16,
 //   완료 애니메이션 속도(25fps 로 한 번), 탭 프레임 짝(선택/비선택), 패널 위치(웨이포인트 패널과 같은 왼쪽 패널 자리)
 import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
@@ -10,6 +10,7 @@ import type { QuestLogEntry } from '../engine/quests/act1';
 import { questLogKey } from '../engine/quests/messages';
 import { indexedToCanvas, type Drawable } from '../render/sprites';
 import type { AsyncAssets } from '../render/units';
+import { d2text, drawText } from './text';
 
 type Str = (k: string) => string;
 
@@ -109,23 +110,15 @@ export class QuestPanel {
     if (last) ctx.drawImage(last as CanvasImageSource, P.x + LAST.x, P.y + LAST.y);
     // 고른 퀘스트: 이름 + 설명
     const sel = entries.find((e) => e.quest === this.selected);
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = '16px serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(str(`qstsa1q${this.selected}`), P.x + TEXT.x, P.y + TEXT.y);
+    drawText(ctx, str(`qstsa1q${this.selected}`), P.x + TEXT.x, P.y + TEXT.y - 8, { align: 'center', color: 'white' });
     if (sel) {
       const lines = this.description(sel, str);
-      ctx.font = '14px serif';
-      ctx.fillStyle = '#c7b377';
-      let y = P.y + TEXT.y + 26;
-      for (const para of lines) for (const l of wrap(ctx, para, TEXT.w)) {
-        ctx.fillText(l, P.x + TEXT.x, y);
+      let y = P.y + TEXT.y + 26 - 8;
+      for (const para of lines) for (const l of d2text.wrap(para, TEXT.w)) {
+        drawText(ctx, l, P.x + TEXT.x, y, { align: 'center', color: 'gold' });
         y += TEXT.line;
       }
     }
-    ctx.restore();
   }
 
   /** 설명 줄: 상태 문자열 (Den 상태 4 는 남은 몬스터 수, 1 마리면 qstsa1q140) */
@@ -155,18 +148,4 @@ export class QuestPanel {
     });
     return 'panel';
   }
-}
-
-function wrap(ctx: CanvasRenderingContext2D, text: string, w: number): string[] {
-  const out: string[] = [];
-  let cur = '';
-  for (const word of text.split(/\s+/)) {
-    const t = cur ? `${cur} ${word}` : word;
-    if (ctx.measureText(t).width > w && cur) {
-      out.push(cur);
-      cur = word;
-    } else cur = t;
-  }
-  if (cur) out.push(cur);
-  return out;
 }

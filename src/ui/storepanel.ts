@@ -2,7 +2,7 @@
 // buyselltabs.dc6 (페이지 탭 79×31 — 4 칸 × 2 상태), buysellbtn.dc6 (32×32 버튼: 2/3 사기, 4/5 팔기, 6/7 수리, 18/19 모두 수리, 0 빈 칸).
 // 출처: inventory.txt "Monster2" 행 — 패널 (80,60)~(401,502), 격자 10×10 (96,123) 칸 29
 // 출처: string.tbl strBSArmor / strBSWeapons / strBSMagic / strBSMisc (탭), cost "Cost: ", Sell "Sell value: ", Repair "Repair cost: "
-// 근사(원작 미확인): 탭 프레임 짝(0~3 선택 / 4~7 비선택)·버튼 칸 위치(패널 기준 x 114/166/218/270, y 383)·골드 칸 글자, 글꼴(원작 font16 대신 캔버스 serif)
+// 근사(원작 미확인): 탭 프레임 짝(0~3 선택 / 4~7 비선택)·버튼 칸 위치(패널 기준 x 114/166/218/270, y 383)·골드 칸 글자, 글꼴 원작 font16
 import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from '../render/sprites';
@@ -12,6 +12,7 @@ import type { ItemInstance } from '../engine/treasure';
 import type { ItemIcons } from './invpanel';
 import { drawTooltip } from './invpanel';
 import type { TextLine } from './itemtext';
+import { drawText } from './text';
 
 export const STORE_PANEL = { x: 80, y: 60, w: 321, h: 442 } as const;
 const GRID = { l: 96, t: 123, box: 29, cols: 10, rows: 10 } as const;
@@ -162,15 +163,11 @@ export class StorePanel {
     const tabs = this.frames.get('buyselltabs');
     const labels = this.gamble ? [str('gamble')] : [str('strBSArmor'), str('strBSWeapons'), str('strBSMagic'), str('strBSMisc')];
     ctx.save();
-    ctx.font = '13px serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     for (const pg of this.pages()) {
       const f = tabs?.[pg === this.page ? pg : pg + 4];
       const tx = P.x + TAB.x + pg * TAB.w, ty = P.y + TAB.y;
       if (f) ctx.drawImage(f as CanvasImageSource, tx, ty);
-      ctx.fillStyle = pg === this.page ? '#ffffff' : '#a09070';
-      ctx.fillText((labels[pg] ?? '').toUpperCase(), tx + TAB.w / 2, ty + TAB.h / 2 + 1);
+      drawText(ctx, labels[pg] ?? '', tx + TAB.w / 2, ty + TAB.h / 2 - 7, { align: 'center', color: pg === this.page ? 'white' : 'grey' });
     }
     // 아이템
     for (const s of this.items) {
@@ -187,9 +184,7 @@ export class StorePanel {
       if (f) ctx.drawImage(f as CanvasImageSource, P.x + (BTN.xs[i] ?? 0), P.y + BTN.y);
     });
     // 골드
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#c7b377';
-    ctx.fillText(`${str('strGoldLabel')}: ${gold}`, P.x + GOLD.x + 6, P.y + GOLD.y + GOLD.h / 2 + 1);
+    drawText(ctx, `${str('strGoldLabel')}: ${gold}`, P.x + GOLD.x + 6, P.y + GOLD.y + GOLD.h / 2 - 7, { color: 'gold' });
     ctx.restore();
     // 툴팁 + 가격 (원작 "Cost: N")
     if (mouse) {

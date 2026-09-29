@@ -1,11 +1,12 @@
 // 웨이포인트 목록 패널 (캔버스). 원작 DC6: data\global\ui\menu\waygatebackground.dc6 (256+64 × 256+176, 4조각),
 // waygatetabs.dc6 (액트 I~IV 탭 — 프레임 쌍), waygateicons.dc6 (웨이포인트 아이콘).
 // 출처: 원작 panel 배치 inventory.txt 800×600 왼쪽 패널 (x 80~401, y 60~) — 오른쪽 인벤토리(400~720)의 거울 위치
-// 근사(원작 미확인): 탭 프레임 짝(선택/비선택)·아이콘 프레임(0 활성, 3 비활성) 의미, 줄 간격 36px·글자 위치, 글꼴(원작 font16 대신 캔버스 serif)
+// 근사(원작 미확인): 탭 프레임 짝(선택/비선택)·아이콘 프레임(0 활성, 3 비활성) 의미, 줄 간격 36px·글자 위치, 글꼴 원작 font16
 import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from '../render/sprites';
 import type { AsyncAssets } from '../render/units';
+import { drawText } from './text';
 
 export interface WaypointRow { no: number; levelKey: string; name: string; active: boolean; current: boolean }
 
@@ -56,16 +57,12 @@ export class WaypointPanel {
       if (f) ctx.drawImage(f as CanvasImageSource, P.x + TAB.x + a * TAB.w, P.y + TAB.y);
     }
     const icons = this.frames.get('waygateicons');
-    ctx.font = '15px serif';
-    ctx.textBaseline = 'middle';
     this.rows.forEach((r, i) => {
       const y = P.y + ROW.iconY + i * ROW.step;
       const ic = icons?.[r.active ? 0 : 3];
       if (ic) ctx.drawImage(ic as CanvasImageSource, P.x + ROW.iconX, y);
-      ctx.fillStyle = r.current ? '#6f8fff' : r.active ? '#c7b377' : '#6d6250';
-      ctx.fillText(r.name, P.x + ROW.textX, y + 15);
+      drawText(ctx, r.name, P.x + ROW.textX, y + 8, { color: r.current ? 'blue' : r.active ? 'gold' : 'grey' });
     });
-    ctx.textBaseline = 'alphabetic';
   }
 
   /** 클릭 → 이동할 레벨 키 / 'close' / 'panel'(패널 안 다른 곳) / null(패널 밖) */

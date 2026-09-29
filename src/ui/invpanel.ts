@@ -1,5 +1,8 @@
-// 인벤토리 패널 (캔버스): 원작 inventory.txt 800×600 좌표(<클래스>2 행)에 장착 칸·10×4 격자, 아이템은 원작 DC6 인벤토리 그림.
-// 원작 패널 배경(DC6 invchar6)은 Phase 11 에서 입힌다 — 지금은 칸 윤곽만.
+// 인벤토리 패널 (캔버스): 원작 data\\global\\ui\\PANEL\\invchar.dc6 프레임 4~7 (320×432, 오른쪽 패널 자리 400,60),
+// 칸 좌표는 원작 inventory.txt 800×600 좌표(<클래스>2 행: 장착 칸·10×4 격자 419,315 칸 29), 아이템은 원작 DC6 인벤토리 그림.
+// 출처(그림 측정): 금화 단추 goldcoinbtn.dc6 (20×18) 칸 (84,392), 금액 칸 (106,392,91,18), 닫기 칸 (18,385,32,32) — buysellbtn.dc6 프레임 10
+// 출처(문자열): string.tbl GoldMax "Gold Max: %d"
+// 근사(원작 미확인): 아이템 뒤 반투명 파랑(쓸 수 없으면 빨강) 바탕 색·투명도
 // 조작(원작): 왼쪽 클릭 = 집기/놓기(겹치면 교환), 오른쪽 클릭 = 사용(물약), 커서에 든 채 바깥(월드) 클릭 = 땅에 떨어뜨리기
 import type { TxtRow } from '../formats/txt';
 import type { Palette } from '../formats/palette';
@@ -11,6 +14,14 @@ import type { ItemStore } from '../engine/itemstore';
 import type { BodyLoc } from '../engine/inventory';
 import { QUALITY, type ItemInstance } from '../engine/treasure';
 import type { ItemText, TextLine } from './itemtext';
+import { UI, type UiArt } from './art';
+import { d2text, drawText } from './text';
+
+const INVCHAR = `${UI}PANEL\\invchar.dc6`;
+const GOLDBTN = `${UI}PANEL\\goldcoinbtn.dc6`;
+const CLOSEBTN = `${UI}PANEL\\buysellbtn.dc6`;
+const GOLD = { btnX: 84, btnY: 392, x: 106, y: 392, w: 91, h: 18 } as const;
+const CLOSE = { x: 18, y: 385, w: 32, h: 32 } as const;
 
 export interface Rect { l: number; t: number; r: number; b: number }
 export interface InvLayout {
@@ -49,6 +60,10 @@ export class ItemIcons {
     this.items = items;
   }
 
+  get db(): ItemDb {
+    return this.items;
+  }
+
   fileOf(item: ItemInstance): string {
     const b = this.items.base(item.code);
     if (!b) return '';
@@ -76,18 +91,23 @@ export class ItemIcons {
   }
 }
 
-export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'panel' } | null;
+export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'close' } | { kind: 'panel' } | null;
 
 export class InventoryPanel {
   readonly layout: InvLayout;
   private readonly icons: ItemIcons;
   private readonly text: ItemText;
+  private readonly art: UiArt | null;
   open = false;
+  /** 쓸 수 있는 아이템인가 (요구치) — 아니면 빨간 바탕 */
+  usable: ((it: ItemInstance) => boolean) | null = null;
 
-  constructor(layout: InvLayout, icons: ItemIcons, text: ItemText) {
+  constructor(layout: InvLayout, icons: ItemIcons, text: ItemText, art: UiArt | null = null) {
     this.layout = layout;
     this.icons = icons;
     this.text = text;
+    this.art = art;
+    void art?.preload([INVCHAR, GOLDBTN, CLOSEBTN]);
   }
 
   hit(x: number, y: number): PanelHit {
@@ -95,6 +115,7 @@ export class InventoryPanel {
     const L = this.layout;
     const inR = (r: Rect) => x >= r.l && x < r.r && y >= r.t && y < r.b;
     if (!inR(L.panel)) return null;
+    if (inR({ l: L.panel.l + CLOSE.x, t: L.panel.t + CLOSE.y, r: L.panel.l + CLOSE.x + CLOSE.w, b: L.panel.t + CLOSE.y + CLOSE.h })) return { kind: 'close' };
     const g = L.grid;
     if (x >= g.l && y >= g.t && x < g.l + g.cols * g.box && y < g.t + g.rows * g.box) {
       return { kind: 'inventory', x: Math.floor((x - g.l) / g.box), y: Math.floor((y - g.t) / g.box) };
@@ -123,37 +144,34 @@ export class InventoryPanel {
   /** 툴팁 아래에 붙일 줄 (상점: 팔 값·수리비) */
   priceLine: ((it: ItemInstance) => TextLine | null) | null = null;
 
-  draw(ctx: CanvasRenderingContext2D, store: ItemStore, gold: number, goldMax: number, mouse: { x: number; y: number } | null, reqCtx: { level: number; str: number; dex: number; cls: string }): void {
+  draw(ctx: CanvasRenderingContext2D, store: ItemStore, gold: number, goldMax: number, mouse: { x: number; y: number } | null, reqCtx: { level: number; str: number; dex: number; cls: string }, str: (k: string) => string = (k) => k): void {
     if (!this.open) return;
-    const L = this.layout, g = L.grid;
+    const L = this.layout, g = L.grid, P = L.panel;
     ctx.save();
-    ctx.fillStyle = 'rgba(12,10,8,0.94)';
-    ctx.fillRect(L.panel.l, L.panel.t, L.panel.r - L.panel.l, L.panel.b - L.panel.t);
-    ctx.strokeStyle = '#6b5a3a';
-    ctx.strokeRect(L.panel.l + 0.5, L.panel.t + 0.5, L.panel.r - L.panel.l - 1, L.panel.b - L.panel.t - 1);
+    if (!this.art?.drawPanel(ctx, INVCHAR, P.l, P.t, 4)) {
+      ctx.fillStyle = 'rgba(12,10,8,0.94)';
+      ctx.fillRect(P.l, P.t, P.r - P.l, P.b - P.t);
+    }
+    const back = (it: ItemInstance, x: number, y: number, w: number, h: number) => {
+      ctx.fillStyle = this.usable && !this.usable(it) ? 'rgba(160,20,20,0.35)' : 'rgba(20,40,120,0.3)';
+      ctx.fillRect(x, y, w, h);
+    };
     // 장착 칸
     for (const [slot, r] of Object.entries(L.slots)) {
-      ctx.fillStyle = '#1a1510';
-      ctx.fillRect(r.l, r.t, r.r - r.l, r.b - r.t);
-      ctx.strokeStyle = '#4a3f2c';
-      ctx.strokeRect(r.l + 0.5, r.t + 0.5, r.r - r.l - 1, r.b - r.t - 1);
       const it = store.equipment[slot as BodyLoc];
-      if (it) this.drawItem(ctx, it, (r.l + r.r) / 2, (r.t + r.b) / 2, true);
+      if (!it) continue;
+      back(it, r.l, r.t, r.r - r.l, r.b - r.t);
+      this.drawItem(ctx, it, (r.l + r.r) / 2, (r.t + r.b) / 2, true);
     }
     // 격자
-    for (let y = 0; y < g.rows; y++)
-      for (let x = 0; x < g.cols; x++) {
-        ctx.fillStyle = '#15110c';
-        ctx.fillRect(g.l + x * g.box, g.t + y * g.box, g.box - 1, g.box - 1);
-      }
     for (const p of store.inv.items) {
-      ctx.fillStyle = p.item.quality === QUALITY.UNIQUE ? 'rgba(90,70,30,0.5)' : p.item.quality === QUALITY.SET ? 'rgba(20,80,20,0.5)' : 'rgba(40,40,70,0.35)';
-      ctx.fillRect(g.l + p.x * g.box, g.t + p.y * g.box, p.item.invW * g.box - 1, p.item.invH * g.box - 1);
+      back(p.item, g.l + p.x * g.box, g.t + p.y * g.box, p.item.invW * g.box - 1, p.item.invH * g.box - 1);
       this.drawItem(ctx, p.item, g.l + (p.x + p.item.invW / 2) * g.box, g.t + (p.y + p.item.invH / 2) * g.box, false);
     }
-    ctx.fillStyle = '#c7b377';
-    ctx.font = '13px serif';
-    ctx.fillText(`Gold: ${gold} / ${goldMax}`, g.l, g.t + g.rows * g.box + 18);
+    // 금화 단추·금액, 닫기 단추
+    this.art?.draw(ctx, GOLDBTN, 0, P.l + GOLD.btnX, P.t + GOLD.btnY);
+    drawText(ctx, String(gold), P.l + GOLD.x + GOLD.w / 2, P.t + GOLD.y + 2, { align: 'center' });
+    this.art?.draw(ctx, CLOSEBTN, 10, P.l + CLOSE.x, P.t + CLOSE.y);
     ctx.restore();
     // 툴팁
     if (mouse && !store.cursor) {
@@ -161,6 +179,8 @@ export class InventoryPanel {
       if (it) {
         const extra = this.priceLine?.(it);
         drawTooltip(ctx, extra ? [...this.text.lines(it, reqCtx), extra] : this.text.lines(it, reqCtx), mouse.x, mouse.y);
+      } else if (mouse.x >= P.l + GOLD.x && mouse.y >= P.t + GOLD.y && mouse.x < P.l + GOLD.x + GOLD.w && mouse.y < P.t + GOLD.y + GOLD.h) {
+        drawTooltip(ctx, [{ text: str('GoldMax').replace('%d', String(goldMax)), color: '#ffffff' }], mouse.x, mouse.y);
       }
     }
   }
@@ -178,20 +198,21 @@ export class InventoryPanel {
   }
 }
 
+/**
+ * 아이템 툴팁 (원작: 반투명 검은 상자, font16 가운데 맞춤, 줄마다 원작 글자 색). 상자는 마우스 위쪽, 화면 밖이면 아래로.
+ * 근사(원작 미확인): 상자 여백·투명도
+ */
 export function drawTooltip(ctx: CanvasRenderingContext2D, lines: TextLine[], x: number, y: number): void {
-  ctx.save();
-  ctx.font = '14px serif';
-  const w = Math.max(...lines.map((l) => ctx.measureText(l.text).width)) + 16;
-  const h = lines.length * 16 + 8;
-  let bx = Math.round(x - w / 2), by = Math.round(y - h - 12);
+  if (!lines.length) return;
+  const lh = d2text.lineHeight('font16');
+  const w = Math.max(...lines.map((l) => d2text.width(l.text))) + 14;
+  const h = lines.length * lh + 6;
+  let bx = Math.round(x - w / 2), by = Math.round(y - h - 20);
   bx = Math.max(2, Math.min(ctx.canvas.width - w - 2, bx));
-  if (by < 2) by = y + 20;
-  ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  if (by < 2) by = Math.min(ctx.canvas.height - h - 2, y + 24);
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
   ctx.fillRect(bx, by, w, h);
-  ctx.textAlign = 'center';
-  lines.forEach((l, i) => {
-    ctx.fillStyle = l.color;
-    ctx.fillText(l.text, bx + w / 2, by + 18 + i * 16);
-  });
   ctx.restore();
+  lines.forEach((l, i) => drawText(ctx, l.text, bx + w / 2, by + 3 + i * lh, { align: 'center', color: l.color as `#${string}` }));
 }

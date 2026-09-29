@@ -16,13 +16,20 @@ test('아마존 생성 → Jab 배우고 오른쪽 버튼에 지정 → 우클�
   await page.evaluate(() => (window.__game!.game.character!.skillPoints = 1));
   await page.keyboard.press('t');
   await expect(page.locator('#skilltree')).toBeVisible();
-  await expect(page.locator('#skilltree [data-skill]')).toHaveCount(32); // 클래스 30 + Attack, Throw
-  await page.click('[data-learn="10"]'); // Jab
+  await expect(page.locator('#skilltree [data-skill]')).toHaveCount(30); // 클래스 스킬 30 (원작 트리 3탭)
+  await page.click('#skilltab-3'); // Jab = 3쪽 (Javelin and Spear)
+  await page.click('[data-learn="10"]'); // 원작: 트리에서 아이콘 클릭 = 포인트 투자
   await expect.poll(() => page.evaluate(() => window.__game!.game.character!.skills[10] ?? 0)).toBe(1);
-  await page.click('#skill-10');
-  await expect.poll(() => page.evaluate(() => window.__game!.game.character!.rightSkill)).toBe(10);
   await page.keyboard.press('t');
   await expect(page.locator('#skilltree')).toBeHidden();
+  // 원작: 오른쪽 스킬 버튼을 누르면 쓸 수 있는 스킬 아이콘이 늘어서고, 고르면 지정된다
+  const cv = (await page.locator('#game').boundingBox())!;
+  const rb = await page.evaluate(() => window.__game!.ui!.hud.center('rskill'));
+  await page.mouse.click(cv.x + rb.x, cv.y + rb.y);
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.hud.menuCenter(10))).not.toBeNull();
+  const jb = (await page.evaluate(() => window.__game!.ui!.hud.menuCenter(10)))!;
+  await page.mouse.click(cv.x + jb.x, cv.y + jb.y);
+  await expect.poll(() => page.evaluate(() => window.__game!.game.character!.rightSkill)).toBe(10);
 
   await walkToBloodMoor(page);
   await page.evaluate(() => {
@@ -77,10 +84,16 @@ test('소서리스 Fire Bolt 미사일과 네크로맨서 스켈레톤이 원작
     ch.skills[36] = 1; // Fire Bolt
     ch.rightSkill = 36;
     const p = g.snapshot().player;
+    // 파이어 볼트가 보이는 동안 게임 틱을 멈춰 폴링 사이에 사라지지 않게 한다
+    const tick = g.tick.bind(g);
+    const w = window as unknown as { __holdFirebolt?: boolean };
+    w.__holdFirebolt = true;
+    g.tick = () => (w.__holdFirebolt && g.snapshot().missiles.some((m) => m.name === 'firebolt') ? [] : tick());
     g.enqueue({ type: 'useSkill', skill: 36, hand: 'right', x: p.x + 10, y: p.y });
   });
   await expect.poll(() => page.evaluate(() => window.__game!.game.snapshot().missiles.some((m) => m.name === 'firebolt'))).toBe(true);
   await page.screenshot({ path: 'test-results/sorceress-firebolt.png' });
+  await page.evaluate(() => ((window as unknown as { __holdFirebolt?: boolean }).__holdFirebolt = false));
   await page.evaluate(() => window.__game!.save!());
   await page.waitForFunction(() => window.__menuReady === true);
 

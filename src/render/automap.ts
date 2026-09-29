@@ -9,6 +9,7 @@ import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from './sprites';
 import type { AsyncAssets } from './units';
+import { drawText } from '../ui/text';
 
 export type AutomapMode = 'off' | 'full' | 'mini';
 
@@ -103,12 +104,10 @@ export class AutomapRenderer {
     for (const w of level.walls) if (w.orientation < 15) put(w.tileIndex, w.x, w.y);
     ctx.globalCompositeOperation = 'source-over';
     // 표시
-    ctx.font = `${mode === 'mini' ? 9 : 11}px serif`;
-    ctx.textAlign = 'center';
+    // 출구 이름: 원작 글꼴 (근사: 전체 지도 font16, 미니 지도 font6, 흰색)
     for (const e of mk.exits) {
       const p = toMap(e.x, e.y);
-      ctx.fillStyle = '#c7b377';
-      ctx.fillText(e.label, p.x, p.y);
+      drawText(ctx, e.label, p.x, p.y - (mode === 'mini' ? 8 : 12), { align: 'center', font: mode === 'mini' ? 'font6' : 'font16', color: 'white' });
     }
     for (const w of mk.waypoints) {
       const p = toMap(w.x, w.y);

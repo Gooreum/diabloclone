@@ -1,159 +1,171 @@
-// 최소 스킬 트리(T)·캐릭터(C) 패널 (DOM). 원작 DC6 패널은 Phase 11 에서 교체.
-// 원작 조작: 스킬 트리에서 + 로 포인트 투자, 스킬 선택은 원작의 S(스킬 선택) 대신 여기서 클릭 = 오른쪽, Shift+클릭 = 왼쪽.
-import type { Character, StatName } from '../engine/player';
+// 스킬 트리 (T): 원작 data\global\ui\SPELLS\skltree_<a|s|n|p|b>_back.dc6 (16조각 = 4조각 × 4: 0~3 탭 기둥·남은 포인트 칸, 4~7 첫째 탭, 8~11 둘째, 12~15 셋째),
+// 스킬 아이콘 SPELLS\<Am|So|Ne|Pa|Ba>Skillicon.dc6 (skilldesc IconCel), 닫기 단추 buysellbtn.dc6 프레임 10. 오른쪽 패널 자리 (400,60).
+// 출처(배치): skilldesc.txt SkillPage/SkillRow/SkillColumn — 그림의 아이콘 칸 모양과 일치(바바리안: 1쪽 Bash 1행 2열 …),
+//   선택된 탭 그림이 이어지는 위치: 1쪽 = 아래 탭(y 322~432), 2쪽 = 가운데(215~322), 3쪽 = 위(107~215), 탭 기둥 x 230~320 (원작 그림 측정)
+//   아이콘 간격 가로 69 · 세로 68 (그림의 칸 간격 측정, OpenDiablo2 skilltree.go skillIconDistX/Y 와 같음)
+// 출처(문자열): string.tbl StrSklTree1~3 "Skill" "Choices" "Remaining", 탭 이름 StrSklTree4~25 (예: 바바리안 "Combat"+"Skills", "Combat"+"Masteries", "Warcries"),
+//   skilldesc str name / str long, skilldesc3 "Required Level : ", StrSkill2 "Current Skill Level: "
+// 근사(원작 미확인): 첫 아이콘 위치 (15,15), 레벨 숫자 위치(아이콘 칸 오른쪽 아래 계단), 배울 수 없는 스킬은 어둡게, 툴팁은 이름·설명·요구 레벨·현재 레벨만
+//   (원작의 레벨별 피해·마나 줄은 생략)
+import type { Character } from '../engine/player';
 import type { SkillDb, SkillRecord } from '../engine/skills/db';
 import { learnError } from '../engine/skills/rules';
+import { UI, type UiArt } from './art';
+import { CLOSE_BTN } from './charpanel';
+import { skillIconPath } from './hud';
+import { HotLayer, type HRect } from './hotspot';
+import { d2text, drawText } from './text';
 
-const CSS = `
-.d2skills{position:absolute;top:20px;left:20px;width:620px;background:rgba(10,8,6,.94);border:1px solid #6b5a3a;color:#c7b377;font:13px serif;padding:10px;display:none}
-.d2skills h2{margin:0 0 6px;font-size:18px;color:#e8d8a8}
-.d2skills .cols{display:flex;gap:8px}
-.d2skills .col{flex:1}
-.d2skills .col h3{margin:4px 0;font-size:14px;color:#e8d8a8}
-.d2skills .sk{display:flex;align-items:center;gap:4px;padding:2px 3px;cursor:pointer;border:1px solid transparent}
-.d2skills .sk:hover{border-color:#6b5a3a}
-.d2skills .sk.off{color:#6d6250}
-.d2skills .sk .nm{flex:1}
-.d2skills .sk .mk{color:#ffd700;font-size:11px;min-width:20px}
-.d2skills button{background:#1a1410;border:1px solid #6b5a3a;color:#c7b377;font:13px serif;padding:0 6px;cursor:pointer}
-.d2skills button:disabled{opacity:.3;cursor:default}
-.d2char{position:absolute;top:20px;left:20px;width:300px;background:rgba(10,8,6,.94);border:1px solid #6b5a3a;color:#c7b377;font:14px serif;padding:10px;display:none}
-.d2char h2{margin:0 0 6px;font-size:18px;color:#e8d8a8}
-.d2char .row{display:flex;justify-content:space-between;align-items:center;margin:3px 0}
-.d2char button{background:#1a1410;border:1px solid #6b5a3a;color:#c7b377;font:13px serif;padding:0 6px;cursor:pointer}
-`;
+export const RIGHT_PANEL = { x: 400, y: 60, w: 320, h: 432 } as const;
+const ICON = { x0: 15, y0: 15, dx: 69, dy: 68 } as const;
+const TAB_TOP: Record<number, number> = { 1: 322, 2: 215, 3: 107 };
+const TAB = { x: 230, w: 90, h: 107 } as const;
+/** 닫기 칸 (탭별 그림 위치가 다르다: 원작 그림 측정) */
+const CLOSE: Record<number, { x: number; y: number }> = { 1: { x: 171, y: 385 }, 2: { x: 15, y: 385 }, 3: { x: 171, y: 385 } };
 
-// 원작 스킬 트리 탭 이름 (skilldesc SkillPage 1~3). 출처: The Arreat Summit 클래스별 스킬 트리
-const TABS: Record<string, [string, string, string]> = {
-  ama: ['Bow and Crossbow', 'Passive and Magic', 'Javelin and Spear'],
-  sor: ['Fire Spells', 'Lightning Spells', 'Cold Spells'],
-  nec: ['Curses', 'Poison and Bone', 'Summoning'],
-  pal: ['Combat Skills', 'Offensive Auras', 'Defensive Auras'],
-  bar: ['Combat Skills', 'Combat Masteries', 'Warcries'],
+const TREE_LETTER: Record<string, string> = { ama: 'a', sor: 's', nec: 'n', pal: 'p', bar: 'b' };
+/** 탭 이름 (string.tbl StrSklTreeN) — 쪽 번호 순 */
+const TAB_STR: Record<string, [string[], string[], string[]]> = {
+  ama: [['StrSklTree10', 'StrSklTree11'], ['StrSklTree8', 'StrSklTree9'], ['StrSklTree6', 'StrSklTree7']],
+  sor: [['StrSklTree25', 'StrSklTree5'], ['StrSklTree24', 'StrSklTree5'], ['StrSklTree23', 'StrSklTree5']],
+  nec: [['StrSklTree19'], ['StrSklTree17', 'StrSklTree18'], ['StrSklTree16', 'StrSklTree5']],
+  pal: [['StrSklTree15', 'StrSklTree4'], ['StrSklTree14', 'StrSklTree13'], ['StrSklTree12', 'StrSklTree13']],
+  bar: [['StrSklTree21', 'StrSklTree4'], ['StrSklTree21', 'StrSklTree22'], ['StrSklTree20']],
 };
 
 export interface SkillPanelDeps {
   db: SkillDb;
   character: () => Character;
   learn: (id: number) => void;
-  setSkill: (hand: 'left' | 'right', id: number) => void;
-  canSelect: (s: SkillRecord, hand: 'left' | 'right') => boolean;
-  spendStat: (stat: StatName) => void;
+  str: (k: string) => string;
+  /** skilldesc str long (설명) */
+  describe: (s: SkillRecord) => string;
+  onClose: () => void;
 }
 
-export class SkillPanels {
-  readonly skills: HTMLElement;
-  readonly char: HTMLElement;
+export class SkillTree {
+  page = 1;
+  private readonly art: UiArt;
   private readonly deps: SkillPanelDeps;
-  private lastSkills = '';
-  private lastChar = '';
+  readonly layer: HotLayer;
 
-  constructor(host: HTMLElement, deps: SkillPanelDeps) {
+  constructor(stage: HTMLElement, art: UiArt, deps: SkillPanelDeps) {
+    this.art = art;
     this.deps = deps;
-    if (!document.getElementById('d2skills-css')) {
-      const st = document.createElement('style');
-      st.id = 'd2skills-css';
-      st.textContent = CSS;
-      document.head.append(st);
-    }
-    this.skills = document.createElement('div');
-    this.skills.className = 'd2skills';
-    this.skills.id = 'skilltree';
-    this.char = document.createElement('div');
-    this.char.className = 'd2char';
-    this.char.id = 'charpanel';
-    this.skills.addEventListener('click', (e) => this.onSkillClick(e));
-    this.char.addEventListener('click', (e) => {
-      const stat = (e.target as HTMLElement).closest<HTMLElement>('[data-stat]')?.dataset.stat;
-      if (stat) this.deps.spendStat(stat as StatName);
-    });
-    host.append(this.skills, this.char);
+    this.layer = new HotLayer(stage, 'skilltree', RIGHT_PANEL);
   }
 
   get open(): boolean {
-    return this.skills.style.display === 'block' || this.char.style.display === 'block';
+    return this.layer.visible;
   }
 
-  toggleSkills(): void {
-    const show = this.skills.style.display !== 'block';
-    this.skills.style.display = show ? 'block' : 'none';
-    if (show) this.char.style.display = 'none';
-    this.lastSkills = '';
+  set open(v: boolean) {
+    this.layer.visible = v;
   }
 
-  toggleChar(): void {
-    const show = this.char.style.display !== 'block';
-    this.char.style.display = show ? 'block' : 'none';
-    if (show) this.skills.style.display = 'none';
-    this.lastChar = '';
+  toggle(): void {
+    this.open = !this.open;
   }
 
-  private onSkillClick(e: MouseEvent): void {
-    const el = e.target as HTMLElement;
-    const learn = el.closest<HTMLElement>('[data-learn]')?.dataset.learn;
-    if (learn) {
-      this.deps.learn(Number(learn));
-      return;
+  private code(): string {
+    return this.deps.db.classSkills(this.deps.character().cls)[0]?.charclass ?? '';
+  }
+
+  /** 스킬 아이콘 칸 (화면 좌표) */
+  iconRect(s: SkillRecord): HRect {
+    return { x: RIGHT_PANEL.x + ICON.x0 + (s.column - 1) * ICON.dx, y: RIGHT_PANEL.y + ICON.y0 + (s.row - 1) * ICON.dy, w: 48, h: 48 };
+  }
+
+  tabRect(page: number): HRect {
+    return { x: RIGHT_PANEL.x + TAB.x, y: RIGHT_PANEL.y + (TAB_TOP[page] ?? 0), w: TAB.w, h: TAB.h };
+  }
+
+  private syncHotspots(list: SkillRecord[]): void {
+    const keys = new Set<string>();
+    // 모든 탭의 스킬 단추를 두되 현재 탭이 아니면 숨긴다 (e2e: data-skill 30개)
+    for (const s of list) {
+      const k = `s${s.id}`;
+      keys.add(k);
+      const el = this.layer.button(k, this.iconRect(s), () => this.deps.learn(s.id), { id: `skill-${s.id}`, 'data-skill': String(s.id), 'data-learn': String(s.id) }, s.displayName);
+      if (s.page !== this.page) el.style.display = 'none';
     }
-    const pick = el.closest<HTMLElement>('[data-skill]')?.dataset.skill;
-    if (pick === undefined) return;
-    const s = this.deps.db.byId.get(Number(pick));
-    const hand = e.shiftKey ? 'left' : 'right';
-    if (s && this.deps.canSelect(s, hand)) this.deps.setSkill(hand, s.id);
+    for (const p of [1, 2, 3]) {
+      keys.add(`t${p}`);
+      this.layer.button(`t${p}`, this.tabRect(p), () => (this.page = p), { id: `skilltab-${p}` }, `Tab ${p}`);
+    }
+    const c = CLOSE[this.page] ?? CLOSE[1]!;
+    keys.add('close');
+    this.layer.button('close', { x: RIGHT_PANEL.x + c.x, y: RIGHT_PANEL.y + c.y, w: 32, h: 32 }, () => this.deps.onClose(), { id: 'skilltree-close' }, 'Close');
+    this.layer.only(keys);
   }
 
-  render(): void {
-    const ch = this.deps.character();
-    if (this.skills.style.display === 'block') {
-      const key = JSON.stringify([ch.skills, ch.skillPoints, ch.level, ch.leftSkill, ch.rightSkill]);
-      if (key !== this.lastSkills) {
-        this.lastSkills = key;
-        this.skills.innerHTML = this.skillsHtml(ch);
+  draw(ctx: CanvasRenderingContext2D, mouse: { x: number; y: number } | null): void {
+    if (!this.open) return;
+    const d = this.deps, ch = d.character(), code = this.code(), P = RIGHT_PANEL;
+    const list = d.db.classSkills(ch.cls);
+    this.syncHotspots(list);
+    const bg = `${UI}SPELLS\\skltree_${TREE_LETTER[code] ?? 'a'}_back.dc6`;
+    const ok = this.art.drawPanel(ctx, bg, P.x, P.y, 0);
+    this.art.drawPanel(ctx, bg, P.x, P.y, 4 * this.page);
+    if (!ok) {
+      ctx.fillStyle = 'rgba(12,10,8,0.94)';
+      ctx.fillRect(P.x, P.y, P.w, P.h);
+    }
+    const s = d.str;
+    // 남은 스킬 포인트 (위 칸)
+    drawText(ctx, `${s('StrSklTree1')}\n${s('StrSklTree2')}\n${s('StrSklTree3')}`, P.x + 276, P.y + 8, { align: 'center', font: 'font16', lineHeight: 14 });
+    drawText(ctx, String(ch.skillPoints), P.x + 274, P.y + 60, { align: 'center', font: 'font16' });
+    // 탭 이름
+    const names = TAB_STR[code] ?? [[], [], []];
+    for (const p of [1, 2, 3]) {
+      const r = this.tabRect(p);
+      const text = (names[p - 1] ?? []).map((k) => s(k)).join('\n');
+      const lines = text.split('\n').length;
+      drawText(ctx, text, r.x + r.w / 2 + 2, r.y + r.h / 2 - (lines * 14) / 2, { align: 'center', font: 'font16', lineHeight: 14, color: p === this.page ? 'white' : 'grey' });
+    }
+    // 아이콘·레벨
+    const iconFile = skillIconPath(code);
+    let hover: SkillRecord | null = null;
+    for (const sk of list) {
+      if (sk.page !== this.page) continue;
+      const r = this.iconRect(sk);
+      const lvl = ch.skills[sk.id] ?? 0;
+      const f = this.art.frame(iconFile, sk.iconCel);
+      if (f) ctx.drawImage(f.img as CanvasImageSource, r.x, r.y);
+      const err = learnError(ch, sk, d.db);
+      // 근사: 배우지 않았고 지금 배울 수도 없으면 어둡게
+      if (!lvl && err && err !== 'points') {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(r.x, r.y, 48, 48);
       }
+      // 레벨 숫자: 아이콘 칸 오른쪽 아래 계단 칸 (그림 측정: 아이콘 기준 x 41~58, y 47~62)
+      if (lvl) drawText(ctx, String(lvl), r.x + 50, r.y + 47, { align: 'center', font: 'font16' });
+      if (mouse && mouse.x >= r.x && mouse.y >= r.y && mouse.x < r.x + r.w && mouse.y < r.y + r.h) hover = sk;
     }
-    if (this.char.style.display === 'block') {
-      const key = JSON.stringify([ch.str, ch.dex, ch.vit, ch.ene, ch.statPoints, ch.level, Math.floor(ch.life), Math.floor(ch.mana), ch.experience]);
-      if (key !== this.lastChar) {
-        this.lastChar = key;
-        this.char.innerHTML = this.charHtml(ch);
-      }
-    }
+    // 닫기 단추
+    const c = CLOSE[this.page] ?? CLOSE[1]!;
+    this.art.draw(ctx, CLOSE_BTN, 10, P.x + c.x, P.y + c.y);
+    if (hover && mouse) this.tooltip(ctx, hover, ch, mouse);
   }
 
-  private skillsHtml(ch: Character): string {
-    const db = this.deps.db;
-    const list = db.classSkills(ch.cls);
-    const code = list[0]?.charclass ?? '';
-    const general = [0, 2].map((id) => db.byId.get(id)).filter((s): s is SkillRecord => !!s);
-    const row = (s: SkillRecord) => {
-      const lvl = s.id <= 5 ? 1 : (ch.skills[s.id] ?? 0);
-      const err = s.id <= 5 ? 'general' : learnError(ch, s, db);
-      const mk = `${ch.leftSkill === s.id ? 'L' : ''}${ch.rightSkill === s.id ? 'R' : ''}`;
-      const plus = s.id > 5 ? `<button data-learn="${s.id}" ${err ? 'disabled' : ''} title="${err ?? ''}">+</button>` : '';
-      return `<div class="sk${lvl ? '' : ' off'}" data-skill="${s.id}" id="skill-${s.id}"><span class="mk">${mk}</span><span class="nm">${s.displayName}${s.passive ? ' (P)' : ''}</span><span>${s.id > 5 ? `${lvl} / Lv${s.reqLevel}` : ''}</span>${plus}</div>`;
-    };
-    const cols = [1, 2, 3]
-      .map((page, i) => `<div class="col"><h3>${TABS[code]?.[i] ?? `Tab ${page}`}</h3>${list.filter((s) => s.page === page).map(row).join('')}</div>`)
-      .join('');
-    return `<h2>Skills — Points: <span id="skill-points">${ch.skillPoints}</span></h2><div style="margin-bottom:4px">클릭 = 오른쪽 버튼, Shift+클릭 = 왼쪽 버튼</div>${general.map(row).join('')}<div class="cols">${cols}</div>`;
-  }
-
-  private charHtml(ch: Character): string {
-    const stat = (label: string, key: StatName, v: number) =>
-      `<div class="row"><span>${label}</span><span>${v} ${ch.statPoints > 0 ? `<button data-stat="${key}" id="stat-${key}">+</button>` : ''}</span></div>`;
-    return (
-      `<h2>${ch.cls} — Level ${ch.level}</h2>` +
-      `<div class="row"><span>Experience</span><span>${ch.experience}</span></div>` +
-      stat('Strength', 'str', ch.str) + stat('Dexterity', 'dex', ch.dex) + stat('Vitality', 'vit', ch.vit) + stat('Energy', 'ene', ch.ene) +
-      `<div class="row"><span>Stat Points</span><span id="stat-points">${ch.statPoints}</span></div>` +
-      `<div class="row"><span>Life</span><span>${Math.floor(ch.life)} / ${Math.floor(ch.maxLife)}</span></div>` +
-      `<div class="row"><span>Mana</span><span>${Math.floor(ch.mana)} / ${Math.floor(ch.maxMana)}</span></div>` +
-      `<div class="row"><span>Stamina</span><span>${Math.floor(ch.stamina)} / ${Math.floor(ch.maxStamina)}</span></div>`
-    );
+  private tooltip(ctx: CanvasRenderingContext2D, sk: SkillRecord, ch: Character, mouse: { x: number; y: number }): void {
+    const s = this.deps.str;
+    const lvl = ch.skills[sk.id] ?? 0;
+    const desc = this.deps.describe(sk);
+    const lines: { text: string; color: 'green' | 'white' | 'red' }[] = [{ text: sk.displayName, color: 'green' }];
+    // 원작 string.tbl 설명은 줄 순서가 아래→위로 저장돼 있다 (예: skillld126 "to enemies…\npowerful blow…")
+    for (const l of desc.split('\n').reverse()) if (l.trim()) lines.push({ text: l, color: 'white' });
+    lines.push({ text: `${s('skilldesc3')}${sk.reqLevel}`, color: ch.level < sk.reqLevel ? 'red' : 'white' });
+    if (lvl) lines.push({ text: `${s('StrSkill2')}${lvl}`, color: 'white' });
+    const lh = d2text.lineHeight('font16');
+    const w = Math.max(...lines.map((l) => d2text.width(l.text))) + 12, h = lines.length * lh + 6;
+    const x = Math.max(2, Math.min(798 - w, mouse.x - w - 10)), y = Math.max(2, Math.min(598 - h, mouse.y - h / 2));
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(x, y, w, h);
+    lines.forEach((l, i) => drawText(ctx, l.text, x + w / 2, y + 3 + i * lh, { align: 'center', color: l.color }));
   }
 
   dispose(): void {
-    this.skills.remove();
-    this.char.remove();
+    this.layer.dispose();
   }
 }

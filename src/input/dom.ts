@@ -40,7 +40,8 @@ export class InputController {
       this.holding = false;
       this.holdCommand = null;
     });
-    on(canvas, 'mousemove', (e) => (this.mouse = this.local(e)));
+    // 캔버스 위에 겹친 투명 UI 단추 위에서도 마우스 위치를 알도록 창 전체에서 받는다
+    on(window, 'mousemove', (e) => (this.mouse = this.local(e)));
     on(canvas, 'contextmenu', (e) => e.preventDefault());
     on(window, 'keydown', (e) => {
       if (this.enabled && (e.key === 'r' || e.key === 'R')) this.run = !this.run;

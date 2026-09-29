@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { newHero, uniqueName } from './helpers';
+import { loadHero, newHero, uniqueName } from './helpers';
 
 // Phase 7: 인벤토리 패널(I) — 원작 inventory.txt 좌표, 원작 아이템 그림, 집기/놓기/장착, 벨트 1~4, 저장 후 위치 유지
 test('인벤토리: 투구를 집어 머리 칸에 장착, 벨트 물약 사용, 저장 후 위치 유지', async ({ page }) => {
@@ -53,8 +53,7 @@ test('인벤토리: 투구를 집어 머리 칸에 장착, 벨트 물약 사용,
   await page.waitForFunction(() => window.__menuReady === true);
   await page.reload();
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
-  await page.click('#btn-single');
-  await page.click(`#hero-${name}`);
+  await loadHero(page, name);
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
   const after = await page.evaluate(() => ({
     head: window.__game!.game.store.equipment.head?.code,

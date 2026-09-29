@@ -19,12 +19,16 @@ import { buildScene } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
-import { drawHud } from './ui/hud';
+import { ControlPanel, type HudAction, type HudState } from './ui/hud';
 import { Panels } from './ui/panels';
-import { SkillPanels } from './ui/skillpanel';
+import { SkillTree } from './ui/skillpanel';
+import { CharPanel } from './ui/charpanel';
+import { StashPanel } from './ui/stashpanel';
+import { UiArt } from './ui/art';
+import { d2text, drawText } from './ui/text';
 import { ItemText } from './ui/itemtext';
 import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
-import { drawBelt } from './ui/hud';
+import { requirements } from './engine/inventory';
 import { playerLayers } from './render/appearance';
 import type { Placed } from './engine/inventory';
 import { AutomapTable } from './engine/automap';
@@ -32,11 +36,13 @@ import { SUBCLASS } from './engine/objects';
 import { waypointLevels } from './engine/waypoints';
 import { AutomapRenderer, type AutomapMode } from './render/automap';
 import { WaypointPanel } from './ui/waypanel';
-import { drawMonsterBar, MonsterNamer } from './ui/monbar';
+import { drawMonsterBar, drawNameBar, MonsterNamer } from './ui/monbar';
 import { StorePanel } from './ui/storepanel';
 import { HirePanel, NpcMenu, pickGossip, stripSpeed, TalkBox } from './ui/npcpanel';
 import { QuestPanel } from './ui/questpanel';
 import { MercBar } from './ui/mercbar';
+import { attachSound } from './audio/sound';
+import { sound } from './audio/sound';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
@@ -56,13 +62,17 @@ declare global {
         store: StorePanel; npcMenu: NpcMenu; hire: HirePanel; talk: TalkBox; mercBar: MercBar; inventory: InventoryPanel;
         /** e2e: 퀘스트 로그 패널 (Q) */
         quest: QuestPanel;
+        /** e2e: 원작 DC6 컨트롤 패널·캐릭터(C)·스킬 트리(T)·보관함·게임 메뉴 */
+        hud: ControlPanel; charPanel: CharPanel; skillTree: SkillTree; stash: StashPanel; gameMenu: Panels; art: UiArt;
       };
     };
     __menuReady?: boolean;
+    /** e2e: 프런트엔드 그림을 다 읽었는가 */
+    __menuArtReady?: () => boolean;
   }
 }
 
-interface Shared { assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement }
+interface Shared { assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt }
 
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
@@ -70,7 +80,13 @@ async function boot(): Promise<void> {
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   canvas.id = 'game';
-  host.replaceChildren(canvas);
+  // 캔버스와 그 위의 투명 UI 단추 층을 같은 800×600 무대에 둔다
+  const stage = document.createElement('div');
+  stage.id = 'stage';
+  Object.assign(stage.style, { position: 'relative', width: `${WIDTH}px`, height: `${HEIGHT}px` });
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+  stage.append(canvas);
+  host.replaceChildren(stage);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   ctx.fillStyle = '#c7b377';
   ctx.font = '16px serif';
@@ -81,12 +97,33 @@ async function boot(): Promise<void> {
   const { data, tables } = await loadGameData(assets);
   // Act 1 오버월드 DRLG 가 읽는 원작 DS1/DT1 (LvlPrest·LvlSub·LvlTypes)
   await assets.preload(act1WorldPaths(assets, tables));
-  const shared: Shared = { assets, data, tables, pal: parsePalette(assets.read(PALETTE) as Uint8Array), anim: AnimData.parse(assets.read(ANIMDATA) as Uint8Array), canvas, ctx, host };
+  const gamePal = parsePalette(assets.read(PALETTE) as Uint8Array);
+  // 원작 글꼴 (DC6 + .tbl) 과 글자 색 표 (Pal.PL2), 프런트엔드 팔레트 (타이틀·캐릭터 선택 = Sky, 캐릭터 만들기 = fechar)
+  const [skyPal, fecharPal] = await Promise.all(['Sky', 'fechar'].map(async (d) => {
+    const b = await assets.load(`data\\global\\palette\\${d}\\pal.dat`);
+    return b ? parsePalette(b) : gamePal;
+  })) as [Palette, Palette];
+  await d2text.load(assets, gamePal);
+  const shared: Shared = { assets, data, tables, pal: gamePal, anim: AnimData.parse(assets.read(ANIMDATA) as Uint8Array), canvas, ctx, host, stage, art: new UiArt(assets, gamePal) };
 
-  const menu = new Menu(host);
+  const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
+  window.__menuArtReady = () => menu.ready;
+  // 프런트엔드 소리: 메뉴 음악 (sounds.txt music_options = music\common\options.wav), 클래스 고르기 소리 (cursor_<클래스>_select)
+  let inMenu = true, soundReady = false;
+  menu.onSound = (n) => void sound.play(n);
+  sound.bindUnlock();
+  void sound.init({ assets, tables, data, cls: '' }).then(() => {
+    soundReady = true;
+    if (inMenu) sound.setMusic('music_options');
+  }).catch(() => undefined);
+  if (import.meta.env.DEV) window.__audio = sound;
   for (;;) {
     window.__menuReady = true;
+    inMenu = true;
+    // 표를 읽기 전에 부르면 이름만 남고 재생되지 않으므로 준비된 뒤에만
+    if (soundReady) sound.setMusic('music_options');
     const choice = await menu.run(() => HeroStore.list());
+    inMenu = false;
     window.__menuReady = false;
     menu.hide();
     const save = choice.kind === 'load' ? await HeroStore.load(choice.name) : null;
@@ -97,7 +134,7 @@ async function boot(): Promise<void> {
 
 /** 한 판 진행. Save and Exit 하면 resolve */
 function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null): Promise<void> {
-  const { data, tables, assets, pal, anim, canvas, ctx, host } = sh;
+  const { data, tables, assets, pal, anim, canvas, ctx, stage, art } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   // 원작 DRLG 이식: 게임 시드로 Act 1 오버월드 생성 (출처: D2MOO DRLG_AllocDrlg)
   const world = buildAct1World(assets, tables, data, seed);
@@ -145,6 +182,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
     stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints, merc: save?.merc ?? null, quests: save?.quests, ...(save?.questFlags ? { questFlags: save.questFlags } : {}),
   });
+  // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)
+  const detachSound = attachSound(game, { assets, tables, data, cls });
   // 웨이포인트 패널·자동 지도·신전 메시지
   const wpPanel = new WaypointPanel(assets, pal);
   const automap = new AutomapRenderer(assets, pal, new AutomapTable(tables.table('AutoMap')));
@@ -164,7 +203,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
   const icons = new ItemIcons(assets, pal, data.items);
-  const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText);
+  const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art);
+  // 요구치를 못 채운 아이템은 빨간 바탕 (원작)
+  invPanel.usable = (it) => {
+    const r = requirements(data.items, it), c = game.character;
+    return !c || (c.level >= r.level && game.effStat('str') >= r.str && game.effStat('dex') >= r.dex);
+  };
+  // 원작 DC6 컨트롤 패널 (HUD)·보관함
+  const hud = new ControlPanel(art, icons, data.skills);
+  const stashPanel = new StashPanel(art, icons);
   // NPC: 메뉴·대사·상점(원작 buysell.dc6)·고용 목록, 왼쪽 위 용병 초상 (원작 rogueicon.dc6)
   const storePanel = new StorePanel(assets, pal, icons);
   const npcMenu = new NpcMenu();
@@ -188,7 +235,34 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
   let identifyWith: number | null = null;
+  // 컨트롤 패널 상태·동작 (아래 게임 루프 준비에서 채운다)
+  let hudState: () => HudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str: (k) => k, canSelect: () => false, mouse: input.mouse });
+  let onHud: (a: HudAction, button: number, cur: ItemInstance | null) => void = () => undefined;
   input.intercept = (x, y, button, shift) => {
+    // 컨트롤 패널 (원작: 패널 위 클릭은 월드로 가지 않는다)
+    const cur0 = game.store.cursor;
+    const ha = hud.click(x, y, hudState(), button);
+    if (ha) {
+      onHud(ha, button, cur0);
+      return true;
+    }
+    // 보관함 (원작: 왼쪽 클릭 = 집기/놓기)
+    const sh = stashPanel.hit(x, y);
+    if (sh) {
+      if (sh.kind === 'close') stashPanel.open = false;
+      else if (sh.kind === 'cell' && button === 0) {
+        if (cur0) game.enqueue({ type: 'moveItem', itemId: cur0.id, to: { kind: 'stash', ...stashPanel.placeAt(cur0, x, y) } });
+        else {
+          const it = game.store.stash.at(sh.x, sh.y)?.item;
+          if (it) game.enqueue({ type: 'moveItem', itemId: it.id, to: { kind: 'cursor' } });
+        }
+      }
+      return true;
+    }
+    if (stashPanel.open && !invPanel.hit(x, y)) {
+      // 근사(원작 미확인): 보관함이 열린 채 바깥 클릭 = 닫고 이동
+      stashPanel.open = false;
+    }
     // 퀘스트 로그 패널 (원작: 열린 동안 아이콘 클릭 = 고르기, 닫기 단추)
     const qp = questPanel.click(x, y);
     if (qp === 'close') {
@@ -263,6 +337,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     if (wpPanel.open) wpPanel.open = false;
     const store = game.store;
     const hit = invPanel.hit(x, y);
+    if (hit?.kind === 'close') {
+      invPanel.open = false;
+      return true;
+    }
     if (hit) {
       const it = invPanel.itemAt(store, x, y);
       if (button === 2) {
@@ -305,7 +383,6 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     }
     return false;
   };
-  const nameOf = (code: string) => tables.string(data.items.base(code)?.namestr ?? code);
   // 화면 위 몬스터 이름·생명 막대 (마우스를 올린 몬스터)
   const namer = new MonsterNamer(data.monsters, data.uniques, (k) => tables.string(k));
   let hoverMonster: { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null = null;
@@ -314,17 +391,42 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
 
   return new Promise((resolve) => {
     let running = true;
-    const panels = new Panels(host, nameOf, () => void saveAndExit());
+    const panels = new Panels(stage, art, () => void saveAndExit(), { get: (k) => sound.settings[k], set: (k, v) => sound.setVolume(k, v) });
+    // 캐릭터 패널(C, 왼쪽)·스킬 트리(T, 오른쪽) — 원작 DC6, 투명 단추 층 #charpanel / #skilltree
+    const charPanel = new CharPanel(stage, art, {
+      character: () => ch, heroName: name, derived: () => game.derived(), classStats: cs, exp: table,
+      weapon: () => (game.equipment.rarm ? data.items.base(game.equipment.rarm.code) : undefined),
+      skillName, str, spendStat: (stat) => game.enqueue({ type: 'spendStat', stat }), onClose: () => (charPanel.open = false),
+    });
+    const skilldesc = new Map(tables.table('skilldesc').map((r) => [r.skilldesc ?? '', r]));
+    const skillsRows = new Map(tables.table('skills').map((r) => [Number(r.Id), r]));
     const skillPanels = data.skills
-      ? new SkillPanels(host, {
+      ? new SkillTree(stage, art, {
           db: data.skills,
           character: () => ch,
           learn: (id) => game.enqueue({ type: 'spendSkill', skill: id }),
-          setSkill: (hand, id) => game.enqueue({ type: 'setSkill', hand, skill: id }),
-          canSelect: (s, hand) => game.canSelectSkill(s, hand),
-          spendStat: (stat) => game.enqueue({ type: 'spendStat', stat }),
+          str,
+          describe: (s) => {
+            const key = skilldesc.get(skillsRows.get(s.id)?.skilldesc ?? '')?.['str long'];
+            return key ? str(key) : '';
+          },
+          onClose: () => (skillPanels ? (skillPanels.open = false) : undefined),
         })
       : null;
+    // 원작: 왼쪽 패널 자리(캐릭터·퀘스트·웨이포인트·보관함·상점) 와 오른쪽(인벤토리·스킬 트리)은 하나씩만
+    const openLeft = (which: 'char' | 'quest' | 'stash' | null) => {
+      charPanel.open = which === 'char';
+      if (which !== 'quest') questPanel.open = false;
+      stashPanel.open = which === 'stash';
+      if (which) wpPanel.open = false;
+    };
+    const openRight = (which: 'inv' | 'tree' | null) => {
+      invPanel.open = which === 'inv';
+      if (skillPanels) skillPanels.open = which === 'tree';
+    };
+    const toggleChar = () => openLeft(charPanel.open ? null : 'char');
+    const toggleTree = () => openRight(skillPanels?.open ? null : 'tree');
+    const toggleInv = () => openRight(invPanel.open ? null : 'inv');
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
         // 원작: Tab = 자동 지도 켜기/끄기, V = 미니 지도 모드 전환
@@ -337,16 +439,27 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         if (automapMode !== 'off') automapMode = automapStyle;
         return;
       }
-      if (e.key === 'Escape' && wpPanel.open) {
-        wpPanel.open = false;
+      // 게임 메뉴가 열려 있으면 위·아래·Enter·Esc 만
+      if (panels.menuOpen) {
+        if (e.key === 'Escape') panels.back();
+        else panels.key(e.key);
         return;
       }
-      if (e.key === 'Escape' && questPanel.open) {
+      if (e.key === 'Escape' && hud.skillMenu) {
+        hud.skillMenu = null;
+        return;
+      }
+      // 원작: Esc 는 열린 패널부터 모두 닫는다
+      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || stashPanel.open || invPanel.open || skillPanels?.open)) {
+        wpPanel.open = false;
         questPanel.open = false;
+        openLeft(null);
+        openRight(null);
         return;
       }
       // 원작 단축키: Q 퀘스트 로그
       if (e.key === 'q' || e.key === 'Q') {
+        if (!questPanel.open) openLeft('quest');
         questPanel.toggle(game.snapshot().quests);
         return;
       }
@@ -358,16 +471,42 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         if (game.isDead) {
           const p = nearestWalkable(townMap, world.start, 10) ?? world.start;
           game.respawn('town', p.x + 0.5, p.y + 0.5);
-        } else if (skillPanels?.open) {
-          if (skillPanels.skills.style.display === 'block') skillPanels.toggleSkills();
-          else skillPanels.toggleChar();
         } else panels.toggleMenu();
-      } else if (e.key === 'i' || e.key === 'I') invPanel.open = !invPanel.open;
+      } else if (e.key === 'i' || e.key === 'I') toggleInv();
       // 원작 벨트 단축키 1~4 (아래 줄)
       else if (e.key >= '1' && e.key <= '4') game.enqueue({ type: 'useBelt', slot: Number(e.key) - 1 });
       // 원작 단축키: T 스킬 트리, C 캐릭터
-      else if (e.key === 't' || e.key === 'T') skillPanels?.toggleSkills();
-      else if (e.key === 'c' || e.key === 'C') skillPanels?.toggleChar();
+      else if (e.key === 't' || e.key === 'T') toggleTree();
+      else if (e.key === 'c' || e.key === 'C') toggleChar();
+      // 원작: R = 달리기/걷기 (InputController 가 바꾼다), S = 스킬 고르기 (오른쪽)
+      else if (e.key === 's' || e.key === 'S') hud.skillMenu = hud.skillMenu ? null : 'right';
+    };
+    // 컨트롤 패널 동작 (클릭)
+    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand) => game.canSelectSkill(s, hand), mouse: input.mouse });
+    onHud = (a: HudAction, button: number, cur: ItemInstance | null) => {
+      if (a.kind === 'run') input.run = !input.run;
+      else if (a.kind === 'minipanel') hud.miniOpen = !hud.miniOpen;
+      else if (a.kind === 'newStats') {
+        openLeft('char');
+      } else if (a.kind === 'newSkill') openRight('tree');
+      else if (a.kind === 'skillMenu') hud.skillMenu = hud.skillMenu === a.hand ? null : a.hand;
+      else if (a.kind === 'setSkill') game.enqueue({ type: 'setSkill', hand: a.hand, skill: a.id });
+      else if (a.kind === 'mini') {
+        if (a.button === 'char') toggleChar();
+        else if (a.button === 'inv') toggleInv();
+        else if (a.button === 'tree') toggleTree();
+        else if (a.button === 'automap') automapMode = automapMode === 'off' ? automapStyle : 'off';
+        else if (a.button === 'quest') {
+          if (!questPanel.open) openLeft('quest');
+          questPanel.toggle(game.snapshot().quests);
+        } else if (a.button === 'menu') panels.toggleMenu(true);
+      } else if (a.kind === 'belt') {
+        // 원작: 벨트 칸 오른쪽 클릭 = 마시기, 왼쪽 = 집기/놓기
+        const it = game.store.belt[a.slot];
+        if (button === 2) game.enqueue({ type: 'useBelt', slot: a.slot });
+        else if (cur) game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'belt', slot: a.slot } });
+        else if (it) game.enqueue({ type: 'moveItem', itemId: it.id, to: { kind: 'cursor' } });
+      }
     };
     async function saveAndExit(): Promise<void> {
       const st = game.store;
@@ -375,9 +514,11 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         stashGold: game.stashGold, waypoints: game.waypoints.list(), merc: game.mercSave(), questFlags: game.questRecord.toJSON(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
       }));
       running = false;
+      detachSound();
       input.dispose();
       panels.dispose();
       skillPanels?.dispose();
+      charPanel.dispose();
       window.removeEventListener('keydown', onKey);
       if (import.meta.env.DEV) delete window.__game;
       resolve();
@@ -389,6 +530,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
           store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel,
+          hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art,
         },
       };
     }
@@ -404,21 +546,29 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       while (acc >= step) {
         if (!panels.menuOpen) {
           for (const ev of game.tick()) {
-            if (ev.type === 'waypointMenu') openWaypointPanel();
+            if (ev.type === 'waypointMenu') {
+              openLeft(null);
+              openWaypointPanel();
+            } else if (ev.type === 'objectUnsupported' && Number(ev.operateFn) === 32) {
+              // 원작 보관함 (objects.txt bank, OperateFn 32): 보관함 + 인벤토리
+              openLeft('stash');
+              openRight('inv');
+            }
             else if (ev.type === 'levelChanged') wpPanel.open = false;
             else if (ev.type === 'shrine') message = { text: tables.string(String(ev.message)), until: performance.now() + 4000 };
             else if (ev.type === 'locked') message = { text: 'Locked', until: performance.now() + 1500 };
             else if (ev.type === 'npcTalk') {
               talkBox.show(npcName(String(ev.typeId)), pickGossip(str, String(ev.gossip), cls, !!ev.intro, Number(ev.pick)), performance.now());
             } else if (ev.type === 'storeOpened') {
-              invPanel.open = true;
+              openLeft(null);
+              openRight('inv');
               talkBox.hide();
             } else if (ev.type === 'npcClosed') {
               storePanel.hide();
               talkBox.hide();
             } else if (ev.type === 'questSpeech') {
               // 퀘스트 대사 (원작 스크롤 두루마리 — 근사: 대사 상자)
-              talkBox.show(npcName(String(ev.typeId)), stripSpeed(str(String(ev.key))), performance.now());
+              talkBox.show(npcName(String(ev.typeId)), str(String(ev.key)), performance.now());
             } else if (ev.type === 'questScroll') {
               talkBox.show('', stripSpeed(str(String(ev.key))), performance.now());
             } else if (ev.type === 'questMessage') {
@@ -428,7 +578,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               // 근사(원작 미확인): 원작은 완료 소리와 퀘스트 단추 깜빡임 — 여기서는 화면 메시지
               message = { text: `${str(`qstsa1q${Number(ev.quest)}`)} — ${str('qstsComplete')}`, until: performance.now() + 4000 };
             } else if (ev.type === 'imbueOpened') {
-              invPanel.open = true;
+              openLeft(null);
+              openRight('inv');
               talkBox.hide();
             } else if (ev.type === 'actChange') {
               // TODO(Act 2 범위 밖): 클래식 Act 2 (Lut Gholein) 가 없다
@@ -469,11 +620,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               .map((e) => ({ x: e.x + e.w / 2, y: e.y + e.h / 2, label: worldByKey.get(e.to)?.warpLabel || e.to })),
           }, WIDTH, HEIGHT);
         }
+        // 원작: 자동 지도를 켜면 오른쪽 위에 지역 이름 (근사: 위치·색)
+        drawText(ctx, levelNames[game.levelId] ?? '', WIDTH - 12, 12, { align: 'right', color: 'gold' });
       }
-      drawHud(ctx, s, table, levelNames[game.levelId] ?? '', game.isDead, {
-        leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
-      });
-      drawBelt(ctx, game.store, icons);
       hoverMonster = null;
       if (input.mouse) {
         const mx = input.mouse.x, my = input.mouse.y;
@@ -481,15 +630,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         const hm = pick ? s.monsters.find((x) => x.id === pick.id && x.mode !== 'DT' && x.mode !== 'DD') : undefined;
         if (hm?.npc) {
           // 원작: NPC 위에 마우스를 올리면 이름만 (생명 막대 없음)
-          ctx.save();
-          ctx.font = '15px serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0,0,0,0.6)';
-          const nm = npcName(hm.typeId), tw = ctx.measureText(nm).width + 24;
-          ctx.fillRect(WIDTH / 2 - tw / 2, 8, tw, 22);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillText(nm, WIDTH / 2, 23);
-          ctx.restore();
+          drawNameBar(ctx, npcName(hm.typeId));
         } else if (hm) {
           const label = namer.label(hm);
           hoverMonster = { id: hm.id, name: label.name, box: drawMonsterBar(ctx, hm, label) };
@@ -504,28 +645,25 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       storePanel.draw(ctx, s.player.gold, str, input.mouse, (it) => itemText.lines(it, reqCtx), (it) => game.priceOf(it, 'buy'));
       if (inter?.mode === 'menu') npcMenu.draw(ctx, inter, npcName(inter.typeId), str, input.mouse);
       if (inter?.mode === 'hire') hirePanel.draw(ctx, inter.hire, s.player.gold, str, input.mouse);
-      talkBox.draw(ctx, now);
+      // 메뉴가 떠 있으면 대사 상자는 그 아래 (근사: 원작은 대사 동안 메뉴를 숨긴다)
+      talkBox.draw(ctx, now, inter?.mode === 'menu' ? npcMenu.bottom + 8 : 90);
       mercBar.draw(ctx, s.merc, s.merc ? str(s.merc.name) : '');
-      invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx);
-      invPanel.drawCursor(ctx, game.store, input.mouse);
-      // 감정 커서 (근사: 원작 커서 그림 대신 글자)
-      if (identifyWith !== null && input.mouse) {
-        ctx.fillStyle = '#c7b377';
-        ctx.font = '13px serif';
-        ctx.fillText('Identify', input.mouse.x + 12, input.mouse.y + 4);
-      }
+      // 왼쪽 패널 자리: 캐릭터·보관함·웨이포인트·퀘스트 / 오른쪽: 스킬 트리·인벤토리
+      charPanel.draw(ctx, input.mouse);
+      stashPanel.draw(ctx, game.store, game.stashGold, ch.level, str, input.mouse, (it) => itemText.lines(it, reqCtx));
       // 웨이포인트에서 멀어지면 패널을 닫는다 (원작 SUNIT_ResetInteractInfo)
       if (wpPanel.open && !game.waypointOpen) wpPanel.open = false;
       wpPanel.draw(ctx);
       questPanel.draw(ctx, s.quests, str, now);
-      if (message && now < message.until) {
-        ctx.font = '16px serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#c7b377';
-        ctx.fillText(message.text, WIDTH / 2, 90);
-        ctx.textAlign = 'left';
-      }
-      skillPanels?.render();
+      skillPanels?.draw(ctx, input.mouse);
+      invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx, str);
+      // 원작 DC6 컨트롤 패널
+      hud.draw(ctx, hudState());
+      if (message && now < message.until) drawText(ctx, message.text, WIDTH / 2, 80, { align: 'center', color: 'gold' });
+      // 감정 커서 (근사: 원작 커서 그림 대신 글자)
+      if (identifyWith !== null && input.mouse) drawText(ctx, 'Identify', input.mouse.x + 12, input.mouse.y - 4, { color: 'gold' });
+      invPanel.drawCursor(ctx, game.store, input.mouse);
+      panels.draw(ctx, now);
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);

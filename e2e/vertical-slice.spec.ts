@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { newHero, uniqueName, walkToBloodMoor } from './helpers';
+import { loadHero, newHero, uniqueName, walkToBloodMoor } from './helpers';
 
 test.skip(!existsSync('game-data/d2data.mpq'), '원작 game-data 필요');
 test.setTimeout(240_000);
@@ -66,8 +66,7 @@ test('수직 슬라이스: 생성 → 캠프 → Blood Moor → 처치 → 줍�
   // 새로고침 → Single Player → 캐릭터 선택 → 불러오기
   await page.reload();
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
-  await page.click('#btn-single');
-  await page.click(`#hero-${name}`);
+  await loadHero(page, name);
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   const after = await page.evaluate(() => {
     const g = window.__game!.game;

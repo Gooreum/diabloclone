@@ -4,7 +4,7 @@ import { buildGameData } from '../../src/data/gamedata';
 import type { GameData } from '../../src/engine/game';
 import { QUALITY, type ItemInstance } from '../../src/engine/treasure';
 import { Rng } from '../../src/engine/rng';
-import { isBroken, isRepairable, transactionCost, type PriceCtx } from '../../src/engine/price';
+import { gambleCost, isBroken, isRepairable, transactionCost, type PriceCtx } from '../../src/engine/price';
 import { computeDerived } from '../../src/engine/charstats';
 import { classStats, createCharacter } from '../../src/engine/player';
 import { gameChain, hasGameData } from '../support/gamedata';
@@ -21,6 +21,18 @@ describe.skipIf(!hasGameData)('상점 가격 (ITEMS_CalculateTransactionCost)', 
     data.treasure.droppedUniques.clear();
     return data.treasure.createItem(data.items.base(code)!, 5, new Rng(seed), q as never, true);
   };
+
+  // 출처: ITEMS_CalculateTransactionCost 도박 분기, misc.txt gamble cost (amu 63000 / rin 50000)
+  it('도박 가격: 반지·목걸이 고정가, 손도끼는 레벨 공식', () => {
+    expect(gambleCost(data.items, 'amu', 10)).toBe(63000);
+    expect(gambleCost(data.items, 'rin', 30)).toBe(50000);
+    // hax: cost 170, lvl 3, uber 9ha lvl 31, ultra 7ha lvl 54 → L=10 이면 uber·ultra 항 0
+    //   ((21/3)+20) × (1700000/10000 + 250×(10 − 1)/3) / 15 = 27 × (170 + 750) / 15 = 1656
+    expect(gambleCost(data.items, 'hax', 10)).toBe(1656);
+    // L < 5 는 5 로 계산 (uber·ultra 항은 원래 레벨로)
+    expect(gambleCost(data.items, 'hax', 1)).toBe(Math.trunc(((Math.trunc(11 / 3) + 20) * (170 + Math.trunc((250 * (5 - 1)) / 3))) / 15));
+    expect(gambleCost(data.items, 'hax', 10, 10)).toBe(1656 - Math.trunc(1656 / 10));
+  });
 
   // hax cost 170 (weapons.txt): 사기 170 × 960/1024 = 159, 팔기 170 × 512/1024 = 85
   it('일반 손도끼: 사기 159 · 팔기 85', () => {

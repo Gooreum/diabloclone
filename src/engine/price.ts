@@ -227,3 +227,41 @@ export function transactionCost(item: ItemInstance, kind: Transaction, ctx: Pric
   else if (kind === 'buy') cost = x.s - Math.trunc((x.s * reduce) / 100);
   return Math.max(1, cost);
 }
+
+/**
+ * 도박 가격 (플레이어 레벨 기준).
+ * 출처: D2MOO D2Common/src/Items/Items.cpp ITEMS_CalculateTransactionCost — TRANSACTIONTYPE_GAMBLE 분기
+ *   반지·목걸이: gamble cost 고정
+ *   그 외: stk = max((minstack+maxstack)/2, 1), uber = max(100·(L−uberLvl)/2 + 1, 0), ultra = max(100·(L−ultraLvl)/4 + 1, 0)
+ *          base = uber·uberCost + ultra·ultraCost + stk·cost·(10000 − uber − ultra)
+ *          cost = ((2L+1)/3 + 20) · (base/10000 + 250·(L + max(lvl−45, 0) − lvl/2)/3) / 15   (L 은 최소 5)
+ */
+export function gambleCost(items: ItemDb, code: string, playerLevel: number, reducePct = 0): number {
+  const orig = items.base(code);
+  if (!orig) return 0x7fffffff;
+  const b = (orig.normCode && items.base(orig.normCode)) || orig;
+  let cost: number;
+  if (b.code === 'rin' || b.code === 'amu') cost = b.gambleCost;
+  else {
+    let L = playerLevel;
+    const stk = Math.max(Math.trunc((b.minStack + b.maxStack) / 2), 1);
+    let uber = 0, ultra = 0, uberCost = 0, ultraCost = 0;
+    const ub = b.uberCode ? items.base(b.uberCode) : undefined;
+    if (ub) {
+      uber = Math.max(Math.trunc((100 * (L - ub.level)) / 2) + 1, 0);
+      uberCost = ub.cost;
+    }
+    const ut = b.ultraCode ? items.base(b.ultraCode) : undefined;
+    if (ut) {
+      ultra = Math.max(Math.trunc((100 * (L - ut.level)) / 4) + 1, 0);
+      ultraCost = ut.cost;
+    }
+    const base = uber * uberCost + ultra * ultraCost + stk * b.cost * (10000 - ultra - uber);
+    if (L < 5) L = 5;
+    const a = Math.trunc((2 * L + 1) / 3) + 20;
+    const m = Math.trunc(base / 10000) + Math.trunc((250 * (L + Math.max(b.level - 45, 0) - Math.trunc(b.level / 2))) / 3);
+    cost = Math.trunc((a * m) / 15);
+  }
+  const reduce = Math.min(reducePct, 99);
+  return reduce ? cost - Math.trunc((cost * reduce) / 100) : cost;
+}

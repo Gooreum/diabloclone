@@ -64,7 +64,21 @@ export interface ItemBase {
   minStack: number; maxStack: number; spawnStack: number;
   quest: boolean;
   unique: boolean;
+  /** 상인별 판매 수량 (weapons/armor/misc.txt <상인>Min/Max/MagicMin/MagicMax/MagicLvl), 상시 판매 (PermStoreItem) */
+  vendors: Record<string, VendorStock>;
+  permStore: boolean;
+  /** bitfield1 & 1 이면 상점에서 매직으로도 판매 (출처: D2MOO ITEMS_CheckBitField1Flag1) */
+  bitfield1: number;
+  /** 악몽/지옥 상점 업그레이드 코드 (NightmareUpgrade / HellUpgrade, 'xxx' = 없음) */
+  nightmareUpgrade: string; hellUpgrade: string;
+  /** 반지·목걸이 도박 고정가 (gamble cost) */
+  gambleCost: number;
 }
+
+export interface VendorStock { min: number; max: number; magicMin: number; magicMax: number; magicLvl: number }
+
+/** weapons/armor/misc.txt 의 상인 컬럼 접두사 (Charsi Gheed Akara …) */
+export const VENDOR_COLUMNS = ['Charsi', 'Gheed', 'Akara', 'Fara', 'Lysander', 'Drognan', 'Hratli', 'Alkor', 'Ormus', 'Elzix', 'Asheara', 'Cain', 'Halbu', 'Jamella', 'Larzuk', 'Malah', 'Drehya'];
 
 export interface ItemTypeDef {
   code: string; name: string; equiv: string[]; normal: boolean; magic: boolean; rare: boolean; treasureClass: boolean; throwable: boolean;
@@ -80,6 +94,15 @@ export interface ItemTypeDef {
   staffMods: string;
   /** 수리 가능 (itemtypes Repair) */
   repair: boolean;
+}
+
+function vendorStock(r: TxtRow): Record<string, VendorStock> {
+  const out: Record<string, VendorStock> = {};
+  for (const v of VENDOR_COLUMNS) {
+    const s = { min: n(r[`${v}Min`]), max: n(r[`${v}Max`]), magicMin: n(r[`${v}MagicMin`]), magicMax: n(r[`${v}MagicMax`]), magicLvl: n(r[`${v}MagicLvl`]) };
+    if (s.max || s.magicMax) out[v.toLowerCase()] = s;
+  }
+  return out;
 }
 
 export class ItemDb {
@@ -124,6 +147,8 @@ export class ItemDb {
           wclass: r.wclass ?? '', twoHandedWclass: r['2handedwclass'] ?? '', hitClass: r['hit class'] ?? '',
           stackable: n(r.stackable) === 1, minStack: n(r.minstack), maxStack: n(r.maxstack), spawnStack: n(r.spawnstack),
           quest: n(r.quest) > 0, unique: n(r.unique) === 1,
+          vendors: vendorStock(r), permStore: n(r.PermStoreItem) === 1, bitfield1: n(r.bitfield1),
+          nightmareUpgrade: r.NightmareUpgrade ?? 'xxx', hellUpgrade: r.HellUpgrade ?? 'xxx', gambleCost: n(r['gamble cost']),
         });
       }
     };

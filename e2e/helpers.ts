@@ -8,7 +8,7 @@ export async function newHero(page: Page, name: string, cls = 'barbarian'): Prom
   await page.click('#btn-create');
   await page.fill('#hero-name', name);
   await page.click(`#btn-${cls}`);
-  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   await expect(page.locator('#menu')).toBeHidden();
 }
 

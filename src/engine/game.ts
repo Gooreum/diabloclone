@@ -31,6 +31,12 @@ import { addElemental, applyMonsterResists, emptyDamage, totalDamage, type Damag
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
 import { PLAYER_SEQUENCES, type SeqFrame } from './skills/sequences';
 import { evalCalc } from './skills/calc';
+import {
+  OBJ, OBJMODE, SUBCLASS, animFrames, objectCollisionBit, chestDropRolls, chestTcName, distanceToObject, initObject, newRegion, populateRoomObjects, presetObject,
+  setObjectMode, updateObjectCollision, wellAfterUse, wellRegen, type ObjectDb, type ObjectRegion, type ObjectSpawn, type ObjectUnit, type PopulateRoom,
+} from './objects';
+import { WaypointFlags } from './waypoints';
+import { AutomapReveal } from './automap';
 
 /**
  * 원작 플레이어 애니메이션 모드 토큰: NU 대기, WL 걷기, RN 달리기, TN/TW 마을, A1/A2 공격, SC 시전, TH 던지기,
@@ -65,6 +71,8 @@ export interface GameData {
   /** npc.txt 가격 배수, books.txt 책 충전 가격 */
   npcPrices?: Map<string, NpcPrice>;
   bookCharge?: Map<string, number>;
+  /** objects.txt / ObjGroup.txt / shrines.txt / levels.txt (오브젝트) */
+  objects?: ObjectDb;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -94,6 +102,8 @@ export interface GameInit {
   corpse?: Record<string, ItemInstance>;
   /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
   levels?: LevelDef[];
+  /** 활성 웨이포인트 번호 (levels.txt Waypoint). 0(마을)은 항상 활성 */
+  waypoints?: number[];
 }
 
 /** 레벨 출구: 플레이어가 영역(서브타일)에 들어가면 다른 레벨의 지정 위치로 이동 */
@@ -117,9 +127,22 @@ export interface LevelDef {
   exits: LevelExit[];
   /** 처음 들어갈 때 배치할 몬스터 */
   spawns?: { typeId: string; x: number; y: number; leaderIndex: number }[];
+  /** levels.txt 번호 (오브젝트·웨이포인트·상자 TC) */
+  levelNo?: number;
+  /** DS1 프리셋 오브젝트 (objects.txt 번호, 574 이상은 원작 특수 표) — 레벨 서브타일 */
+  objects?: { classId: number; x: number; y: number }[];
+  /** 오브젝트 그룹 배치용 방 (서브타일) */
+  rooms?: PopulateRoom[];
+  /** levels.txt 몬스터 풀 (함정 몬스터 선택) */
+  monsterPool?: string[];
+  /** 마을 포털이 열리는 자리 (원작 타일 정보 11 — DUNGEON_FindActSpawnLocationEx(…, 11, …)) */
+  portalSpot?: { x: number; y: number };
 }
 
-interface LevelState { def: LevelDef; monsters: MonsterUnit[]; ground: GroundItem[]; missiles: Missile[]; populated: boolean }
+interface LevelState {
+  def: LevelDef; monsters: MonsterUnit[]; ground: GroundItem[]; missiles: Missile[]; populated: boolean;
+  objects: ObjectUnit[]; region: ObjectRegion | null; automap: AutomapReveal;
+}
 
 export interface GameEvent { type: string; [k: string]: unknown }
 
@@ -140,6 +163,13 @@ export interface GroundItemSnapshot { id: number; code: string; quality: number;
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number }
 /** 플레이어 시체 (죽을 때 장착 아이템이 남는다) */
 export interface CorpseSnapshot { x: number; y: number; dir: number; items: ItemInstance[] }
+/** 오브젝트 (상자·문·신전·웨이포인트·포털 …) */
+export interface ObjectSnapshot {
+  id: number; classId: number; token: string; name: string; x: number; y: number; mode: number; modeTick: number;
+  selectable: boolean; subClass: number;
+  /** 포털이면 도착 레벨 */
+  portalTo?: string;
+}
 export interface WorldSnapshot {
   tick: number;
   corpse: CorpseSnapshot | null;
@@ -147,13 +177,15 @@ export interface WorldSnapshot {
   monsters: MonsterSnapshot[];
   items: GroundItemSnapshot[];
   missiles: MissileSnapshot[];
+  objects: ObjectSnapshot[];
   inventory: ItemInstance[];
 }
 
 type PlayerAction =
   | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean }
   | { kind: 'pickup'; itemId: number }
-  | { kind: 'corpse' };
+  | { kind: 'corpse' }
+  | { kind: 'object'; id: number };
 
 /** 진행 중인 스킬 사용 (애니메이션 + 판정 시점) */
 interface Cast {
@@ -271,10 +303,28 @@ export class Game {
   readonly pets: MonsterUnit[] = [];
   /** 켜져 있는 오라 (오른쪽 버튼의 오라 스킬) */
   private aura: { skill: SkillRecord; lvl: number; next: number } | null = null;
+  /** 활성 웨이포인트 (캐릭터 저장) */
+  readonly waypoints: WaypointFlags;
+  /** 원작 pGame->pObjectControl->pSeed (오브젝트 배치·초기화·조작 굴림) */
+  private readonly objControl: Rng;
+  private readonly seed: number;
+  /** 플레이어의 마을 포털 한 쌍 (원작 PLAYER_SetUniqueIdInPlayerData — 한 사람당 하나) */
+  townPortal: { fieldLevel: string; fieldId: number; townLevel: string; townId: number } | null = null;
+  /** 웨이포인트 목록 패널을 연 웨이포인트 (원작 SUNIT_SetInteractInfo) */
+  waypointOpen: { levelId: string; objectId: number } | null = null;
 
   constructor(init: GameInit) {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
-    for (const d of defs) this.levels.set(d.id, { def: d, monsters: [], ground: [], missiles: [], populated: false });
+    for (const d of defs) {
+      this.levels.set(d.id, {
+        def: d, monsters: [], ground: [], missiles: [], populated: false, objects: [], region: null,
+        automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
+      });
+    }
+    this.seed = init.seed >>> 0;
+    // 근사(원작 미확인): 원작 오브젝트 시드는 게임 시드에서 굴린 값 (OBJRGN_AllocObjectControl) — 여기서는 게임 시드에서 고정 변환
+    this.objControl = new Rng((init.seed ^ 0x0b1ec7) >>> 0 || 1);
+    this.waypoints = new WaypointFlags(init.waypoints ?? []);
     this.level = this.levels.get((defs[0] as LevelDef).id) as LevelState;
     this.rng = new Rng(init.seed);
     this.data = init.data;
@@ -449,6 +499,7 @@ export class Game {
       const m = this.spawnMonster(sp.typeId, sp.x, sp.y, leader);
       leaders[i] = m.id;
     });
+    this.createLevelObjects(level);
     this.level = prev;
   }
 
@@ -508,6 +559,9 @@ export class Game {
     this.updateAura();
     this.updatePlayer();
     this.checkExits();
+    this.updateObjects();
+    this.touchWaypoint();
+    this.level.automap.revealAround(this.player.x, this.player.y);
     this.updateMonsters();
     this.updatePets();
     this.updateMissiles();
@@ -534,6 +588,10 @@ export class Game {
       })),
       items: this.ground.map((g) => ({ id: g.item.id, code: g.item.code, quality: g.item.quality, quantity: g.item.quantity, x: g.x, y: g.y })),
       missiles: this.missiles.map((m) => ({ id: m.id, name: m.def.name, x: m.x, y: m.y, dir: dir64(m.dx, m.dy), celFile: m.def.celFile, frame: m.age % m.def.animLen })),
+      objects: this.level.objects.map((o) => ({
+        id: o.id, classId: o.type.id, token: o.type.token, name: o.type.name, x: o.x, y: o.y, mode: o.mode, modeTick: this.tickCount - o.modeStart,
+        selectable: !!o.type.selectable[o.mode], subClass: o.type.subClass, ...(o.portal ? { portalTo: o.portal.toLevel } : {}),
+      })),
       inventory: [...this.inventory],
     };
   }
@@ -664,6 +722,17 @@ export class Game {
       }
       case 'useItem': {
         this.useItem(cmd.itemId, cmd.targetId);
+        return;
+      }
+      case 'interact': {
+        const o = this.level.objects.find((x) => x.id === cmd.unitId);
+        if (!o || this.isBusy()) return;
+        p.action = { kind: 'object', id: o.id };
+        p.repathAt = 0;
+        return;
+      }
+      case 'waypoint': {
+        this.travelWaypoint(cmd.level);
         return;
       }
       case 'setSkill': {
@@ -801,7 +870,8 @@ export class Game {
   /** AR = (민첩 − 7) × 5 + 클래스 상수 + 장비 추가 명중 (명중% 는 판정 때 곱). 출처: combat.ts playerAttackRating */
   private playerAR(): number {
     const c = this.character, cs = this.classStats;
-    return c && cs ? playerAttackRating(this.effStat('dex'), cs.toHitFactor, this.derived()?.toHit ?? 0) : 0;
+    // 전투 신전: 상태 스탯 tohit (출처: ObjMode.cpp D2GAME_SHRINES_CombatBoost → STAT_TOHIT)
+    return c && cs ? playerAttackRating(this.effStat('dex'), cs.toHitFactor, (this.derived()?.toHit ?? 0) + this.player.states.stat('tohit')) : 0;
   }
 
   /** 무기 공격 속도 %: 100 − WSM + EIAS (EIAS = ⌊120 × IAS / (120 + IAS)⌋). 출처: Maxroll Attack Speed */
@@ -853,6 +923,8 @@ export class Game {
         this.pathPlayerTo(cp.x, cp.y, p.running);
         p.repathAt = this.tickCount + 10;
       }
+    } else if (act?.kind === 'object') {
+      this.driveObjectAction(act.id);
     } else if (act?.kind === 'pickup') {
       const g = this.ground.find((x) => x.item.id === act.itemId);
       if (!g) {
@@ -1037,6 +1109,18 @@ export class Game {
           st.stats = { potion: perFrame };
         }
       }
+    } else if (b.pSpell === 2) {
+      // 마을 포털 두루마리(tsc) / 책(tbk, 충전 1 소모). 출처: SKILLITEM_pSpell02_CastPortal (마을 안에서는 실패)
+      if (b.code === 'tbk' && found.item.quantity <= 0) return;
+      if (!this.castTownPortal()) {
+        this.events.push({ type: 'portalFailed' });
+        return;
+      }
+      if (b.code === 'tbk') {
+        found.item.quantity--;
+        this.events.push({ type: 'itemUsed', itemId: id, code: found.item.code });
+        return;
+      }
     } else if (b.pSpell === 5) {
       for (const us of b.useStats) {
         if (us.stat === 'hitpoints') c.life = Math.min(this.maxLife(), c.life + (this.maxLife() * us.calc) / 100);
@@ -1150,7 +1234,10 @@ export class Game {
 
   private skillLevel(s: SkillRecord): number {
     if (s.id <= 5) return 1;
-    return this.character?.skills[s.id] ?? 0;
+    const hard = this.character?.skills[s.id] ?? 0;
+    // 스킬 신전: 배운 스킬 +Arg0 (shrines.txt Skill Boost Arg0 = 2, 상태 shrine_skill). 근사(원작 미확인): 원작은 상태 해제 콜백에서 스킬을 다시 계산
+    const boost = this.player.states.get('shrine_skill')?.stats.allskills ?? 0;
+    return hard > 0 ? hard + boost : 0;
   }
 
   private isRangedWeapon(): boolean {
@@ -2224,7 +2311,9 @@ export class Game {
     const c = this.character, cs = this.classStats, table = this.expTable;
     // 소환수가 죽인 몬스터도 주인이 경험치를 받는다. 혼란·가시 등 다른 원인도 플레이어 근처면 받음 (근사)
     if (c && cs && table && (source !== 'other' || Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40)) {
-      this.gainExperience(adjustedExperience(m.stats.exp, c.level, m.stats.level));
+      // 경험 신전: item_addexperience % 만큼 더 (출처: shrines.txt Experience Boost Arg0 = 50, itemstatcost item_addexperience)
+      const bonus = this.playerStat('item_addexperience');
+      this.gainExperience(Math.trunc((adjustedExperience(m.stats.exp, c.level, m.stats.level) * (100 + bonus)) / 100));
     }
     const data = this.data;
     const tc = m.type.treasure[0];
@@ -3171,6 +3260,702 @@ export class Game {
    *       독: 상태의 hpregen(음수, 1/256/프레임) 만큼 감소 — 독으로도 죽는다 (출처: SUNITDMG_ApplyPoisonDamage)
    * 플레이어 마나: 초당 25 × (256 × 최대마나 / (25 × 120)) / 256 (출처: Maxroll Life & Mana Mechanics, charstats ManaRegen=120)
    */
+  // ---------------------------------------------------------------- 오브젝트
+
+  /** 플레이어 상태 (읽기 전용 복사: 이름·만료 틱·스탯) */
+  playerState(name: string): { until: number; stats: Record<string, number> } | undefined {
+    const st = this.player.states.get(name);
+    return st ? { until: st.until, stats: { ...st.stats } } : undefined;
+  }
+
+  /** 현재 레벨 오브젝트 (읽기 전용 목록) */
+  get objects(): readonly ObjectUnit[] {
+    return this.level.objects;
+  }
+  /** 레벨의 오브젝트 (방문하지 않은 레벨은 빈 목록) */
+  objectsOf(levelId: string): readonly ObjectUnit[] {
+    return this.levels.get(levelId)?.objects ?? [];
+  }
+  /** 레벨의 자동 지도 탐험 기록 */
+  automapOf(levelId: string): AutomapReveal | undefined {
+    return this.levels.get(levelId)?.automap;
+  }
+  /** 레벨 정의 (UI: 웨이포인트 목록·자동 지도 표시) */
+  levelDef(levelId: string): LevelDef | undefined {
+    return this.levels.get(levelId)?.def;
+  }
+  /** 레벨 번호(levels.txt) → 레벨 키 */
+  levelKeyOf(levelNo: number): string | undefined {
+    for (const l of this.levels.values()) if (l.def.levelNo === levelNo) return l.def.id;
+    return undefined;
+  }
+
+  /**
+   * 레벨 첫 입장 때 오브젝트 생성: DS1 프리셋 → 방마다 오브젝트 그룹 배치.
+   * 출처: Objects.cpp OBJECTS_SpawnPresetObject / OBJECTS_PopulationHandler (마을 방은 배치 안 함)
+   */
+  private createLevelObjects(level: LevelState): void {
+    const db = this.data?.objects;
+    if (!db) return;
+    const def = level.def, levelNo = def.levelNo ?? 0;
+    const rooms = def.rooms ?? [];
+    level.region = newRegion(rooms.filter((r) => !r.noPopulate && !r.hasWaypoint).length);
+    const create = (s: ObjectSpawn) => this.createObject(level, s);
+    for (const p of def.objects ?? []) {
+      const s = presetObject(p.classId, p.x, p.y, levelNo, this.objControl);
+      if (s) create(s);
+    }
+    if (def.inTown) return;
+    rooms.forEach((r, i) => {
+      // 근사(원작 미확인): 원작 방 시드(pRoom->pSeed)는 DRLG 방 생성에서 나온다 — 여기서는 게임 시드·레벨·방 순번으로 고정
+      const roomRng = new Rng(((this.seed ^ Math.imul(levelNo + 1, 0x9e3779b1) ^ Math.imul(i + 1, 0x85ebca6b)) >>> 0) || 1);
+      populateRoomObjects(db, levelNo, r, def.map, this.objControl, roomRng, level.region as ObjectRegion, create);
+    });
+  }
+
+  /** SUNIT_AllocUnitData(UNIT_OBJECT, …) + OBJECTS_InitHandler + 충돌 기록 */
+  private createObject(level: LevelState, s: ObjectSpawn): ObjectUnit | null {
+    const db = this.data?.objects;
+    const t = db?.type(s.classId);
+    if (!db || !t) return null;
+    const o: ObjectUnit = {
+      id: this.nextUnitId++, type: t, x: s.x + 0.5, y: s.y + 0.5, mode: s.mode ?? OBJMODE.NEUTRAL, modeStart: this.tickCount, interact: 0, spark: false,
+      operated: false, endAnimAt: -1, regenAt: -1, resetAt: -1, rng: new Rng((this.objControl.roll() % 65534) + 1), blocking: false, lastOperate: -100,
+    };
+    initObject(o, s, { db, levelNo: level.def.levelNo ?? 0, inTown: level.def.inTown, control: this.objControl });
+    updateObjectCollision(o, level.def.map);
+    level.objects.push(o);
+    return o;
+  }
+
+  /** 예약 이벤트: ENDANIM(작동 → 열림), 우물 재생, 신전 초기화. 출처: ObjMode.cpp D2GAME_OBJMODE_InvokeEventFunction (sub_6FC74AC0 / sub_6FC74B40 / sub_6FC74B00) */
+  private updateObjects(): void {
+    const now = this.tickCount;
+    for (const lv of this.levels.values()) {
+      if (!lv.objects.length) continue;
+      for (const o of lv.objects) {
+        if (o.endAnimAt >= 0 && now >= o.endAnimAt) {
+          o.endAnimAt = -1;
+          if (o.mode === OBJMODE.OPERATING && o.type.mode[OBJMODE.OPENED]) setObjectMode(o, OBJMODE.OPENED, lv.def.map, now);
+        }
+        if (o.regenAt >= 0 && now >= o.regenAt) {
+          o.regenAt = -1;
+          const r = wellRegen(o.type, o.interact);
+          o.interact = r.left;
+          if (r.mode !== null) setObjectMode(o, r.mode, lv.def.map, now);
+        }
+        if (o.resetAt >= 0 && now >= o.resetAt) {
+          o.resetAt = -1;
+          if (o.type.subClass & SUBCLASS.SHRINE) {
+            setObjectMode(o, OBJMODE.NEUTRAL, lv.def.map, now);
+            o.operated = false;
+            this.events.push({ type: 'shrineRefreshed', objectId: o.id });
+          }
+        }
+      }
+    }
+  }
+
+  private scheduleEndAnim(o: ObjectUnit): void {
+    o.endAnimAt = this.tickCount + animFrames(o.type, OBJMODE.OPERATING) + 1;
+  }
+
+  /** 오브젝트까지 걸어가서 조작 (원작 PLAYER interact: OperateRange 안에 들어가면 OBJECTS_OperateHandler) */
+  private driveObjectAction(id: number): void {
+    const p = this.player;
+    const o = this.level.objects.find((x) => x.id === id);
+    if (!o) {
+      p.action = null;
+      return;
+    }
+    // 근사(원작 미확인): 거리 = 오브젝트 상자 가장자리까지, OperateRange(서브타일) + 1 안이면 조작
+    if (distanceToObject(o, p.x, p.y) <= Math.max(o.type.operateRange, 1) + 1) {
+      p.path = [];
+      p.action = null;
+      this.operateObject(o);
+      return;
+    }
+    if (this.tickCount < p.repathAt) return;
+    p.repathAt = this.tickCount + 10;
+    if (!this.pathPlayerTo(o.x, o.y, p.running) || p.path.length === 0) p.action = null;
+  }
+
+  /**
+   * 조작 함수 표 (objects.txt OperateFn).
+   * 출처: ObjMode.cpp gpObjOperateFnTable — 1 Casket, 2 Shrine, 3 Urn, 4 Chest, 5 Barrel, 7 ExplodingBarrel, 8 Door, 14 Corpse,
+   *       15 Portal, 19 ArmorStand, 20 WeaponRack, 22 Well, 23 Waypoint, 26 BookShelf, 30 ExplodingChest
+   */
+  operateObject(o: ObjectUnit): void {
+    if (this.isDead) return;
+    const fn = o.type.operateFn;
+    switch (fn) {
+      case 1: return this.opCasket(o);
+      case 2: return this.opShrine(o);
+      case 3: return this.opUrn(o);
+      case 4: return this.opChest(o);
+      case 5: return this.opBarrel(o);
+      case 7: return this.opExplodingBarrel(o);
+      case 8: return this.opDoor(o);
+      case 14: return this.opCorpse(o);
+      case 15: return this.usePortal(o);
+      case 19:
+      case 20:
+        // 근사(원작 미확인): 원작은 D2GAME_DropArmor / DropWeapon (방어구·무기 전용 드롭) — 여기서는 상자 TC 한 번
+        if (o.mode !== OBJMODE.NEUTRAL) return;
+        this.dropChest(o, 0);
+        this.setMode(o, OBJMODE.OPENED);
+        return;
+      case 22: return this.opWell(o);
+      case 23: return this.opWaypoint(o);
+      case 26: return this.opBookShelf(o);
+      case 30:
+        if (o.mode !== OBJMODE.NEUTRAL) return;
+        this.trapDamagePlayer(o, 0);
+        this.trapDamagePlayer(o, 1);
+        this.setMode(o, OBJMODE.OPERATING);
+        this.scheduleEndAnim(o);
+        return;
+      default:
+        this.events.push({ type: 'objectUnsupported', objectId: o.id, operateFn: fn });
+    }
+  }
+
+  private setMode(o: ObjectUnit, mode: number): void {
+    setObjectMode(o, mode, this.level.def.map, this.tickCount);
+  }
+
+  /**
+   * 상자 TC 드롭 (OBJMODE_DropFromChestTCWithQuality): "Act N Chest A/B/C", 아이템 레벨 = 레벨 몬스터 레벨 (levels.txt MonLvl1), 오브젝트 시드.
+   * 첫 아이템(없으면 null) 을 돌려준다 (원작 ppDroppableItems[0])
+   */
+  private dropChest(o: ObjectUnit, quality: number): ItemInstance | null {
+    const data = this.data, db = data?.objects;
+    if (!data || !db) return null;
+    const levelNo = this.level.def.levelNo ?? 0;
+    const tc = chestTcName(db, levelNo);
+    const mlvl = db.levels.get(levelNo)?.monLvl || 1;
+    const items = data.treasure.drop(tc, mlvl, o.rng, this.derived()?.stat('item_magicbonus') ?? 0, { exact: true, quality });
+    for (const it of items) {
+      this.dropItem(it, o.x, o.y);
+      this.events.push({ type: 'itemDropped', itemId: it.id, code: it.code, quality: it.quality, source: 'object', objectId: o.id });
+    }
+    this.events.push({ type: 'chestDrop', objectId: o.id, tc, count: items.length });
+    return items[0] ?? null;
+  }
+
+  /** 정해진 코드의 아이템 하나 떨어뜨리기 (OBJMODE_DropItemWithCodeAndQuality / DropItemAtUnit) */
+  private dropCode(code: string, x: number, y: number): void {
+    const data = this.data, b = data?.items.base(code);
+    if (!data || !b) return;
+    const lvl = this.data?.objects?.levels.get(this.level.def.levelNo ?? 0)?.monLvl || 1;
+    const it = data.treasure.createItem(b, lvl, this.rng, QUALITY.NORMAL, true);
+    it.quantity = Math.max(1, it.quantity);
+    this.dropItem(it, x, y);
+    this.events.push({ type: 'itemDropped', itemId: it.id, code: it.code, quality: it.quality, source: 'object' });
+  }
+
+  /** 함정 몬스터 (Casket/Barrel): rand(10000) & 0xFFFFE000 ≠ 0 (약 18%). 출처: ObjMode.cpp D2GAME_SpawnTrapMonster_6FC75B40, ObjRgn.cpp OBJRGN_GetTrapMonsterId */
+  private trapMonster(o: ObjectUnit): void {
+    if (((this.objControl.roll() % 10000) & 0xffffe000) === 0) return;
+    const id = this.trapMonsterId();
+    // 출처: D2GAME_SpawnTrapMonster — 234(flyingscimitar)는 Act 1 에서 나오지 않는다
+    if (!id || id === 'flyingscimitar' || !this.data?.monsters.types.has(id)) return;
+    const spot = nearestWalkable(this.map, { x: o.x + 1, y: o.y + 1 }, 6);
+    if (!spot) return;
+    const m = this.spawnMonster(id, spot.x + 0.5, spot.y + 0.5);
+    this.events.push({ type: 'trapMonster', objectId: o.id, monsterId: m.id, typeId: id });
+  }
+
+  /**
+   * 출처: OBJRGN_GetTrapMonsterId — 레벨 몬스터 중 zombie1~5 가 있으면 zombie1, skeleton/sk_archer/skmage_* 1~4 가 있으면 그 첫 번호, 없으면 flyingscimitar
+   * (monstats 행 순서로 번호 범위를 판정)
+   */
+  private trapMonsterId(): string {
+    const ids = [...(this.data?.monsters.types.keys() ?? [])];
+    const idx = (id: string) => ids.indexOf(id);
+    for (const m of this.level.def.monsterPool ?? []) {
+      const k = idx(m);
+      if (k < 0) continue;
+      const z = idx('zombie1');
+      if (z >= 0 && k >= z && k < z + 5) return 'zombie1';
+      for (const base of ['skeleton1', 'sk_archer1', 'skmage_pois1', 'skmage_cold1', 'skmage_fire1', 'skmage_ltng1']) {
+        const b = idx(base);
+        if (b >= 0 && k >= b && k < b + 4) return base;
+      }
+    }
+    return 'flyingscimitar';
+  }
+
+  /**
+   * 함정 오브젝트 피해 (OBJEVAL_ApplyTrapObjectDamage): 최소 hp>>5, 최대 hp>>3 (1/256 단위), 명중 = max(2·(lvl + rand(lvl/4) − 5·(dex/2) − lvl) − 방어 + 125, 65)%,
+   * 피해 = (rand(max − min + 256) + min) × objects.txt Damage / 100. 마을에서는 무효
+   */
+  private trapDamagePlayer(o: ObjectUnit, dmgType: number): void {
+    const c = this.character;
+    if (!c || this.inTown || this.isDead) return;
+    const hp = Math.trunc(c.life * 256);
+    const min = Math.max(hp >> 5, 1), max = Math.max(hp >> 3, min + 1);
+    const lvl = c.level;
+    const param = 2 * (((lvl + o.rng.pick(lvl >> 2)) & 0xff) - 5 * (this.effStat('dex') >> 1) - lvl);
+    const chance = Math.max(param - this.playerDefenseValue() + 125, 65);
+    if (o.rng.roll() % 100 >= chance) return;
+    const dmg = Math.trunc(((o.rng.pick(max - min + 256) + min) * o.type.damage) / 100);
+    if (!dmg) return;
+    c.life = Math.max(0, c.life - dmg / 256);
+    this.events.push({ type: 'playerHit', damage: dmg / 256, source: 'trap', element: dmgType === 1 ? 'fire' : 'physical' });
+    if (c.life <= 0) this.playerDie();
+  }
+
+  private trapDamageMonster(o: ObjectUnit, m: MonsterUnit): void {
+    const hp = Math.trunc(m.hp * 256);
+    const min = Math.max(hp >> 5, 1), max = Math.max(hp >> 3, min + 1);
+    const dmg = Math.trunc(((o.rng.pick(max - min + 256) + min) * o.type.damage) / 100);
+    if (dmg > 0) this.damageMonster(m, { ...emptyDamage(), phys: dmg }, 'other');
+  }
+
+  /** 출처: ObjMode.cpp OBJECTS_OperateFunction01_Casket */
+  private opCasket(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL || !this.dropChest(o, 0)) return;
+    this.setMode(o, OBJMODE.OPERATING);
+    this.scheduleEndAnim(o);
+    this.trapMonster(o);
+    this.events.push({ type: 'objectOpened', objectId: o.id });
+  }
+
+  /** 출처: ObjMode.cpp OBJECTS_OperateFunction03_Urn_Basket_Jar — rand(100) <= 20 이면 상자 TC */
+  private opUrn(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    this.setMode(o, OBJMODE.OPERATING);
+    this.scheduleEndAnim(o);
+    if (this.objControl.roll() % 100 <= 20) this.dropChest(o, 0);
+    this.events.push({ type: 'objectOpened', objectId: o.id });
+  }
+
+  /** 출처: ObjMode.cpp OBJECTS_OperateFunction14_Corpse (시체·숨은 보물·통나무·돌무더기) — 항상 상자 TC */
+  private opCorpse(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    this.dropChest(o, 0);
+    this.setMode(o, OBJMODE.OPERATING);
+    this.scheduleEndAnim(o);
+    this.events.push({ type: 'objectOpened', objectId: o.id });
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction04_Chest — 잠긴 상자(InteractType & 0x80)는 열쇠 필요(없으면 소리만), 드롭 2번.
+   *       스파크 상자는 매직(5% 레어) 품질, 75% 확률로 드롭 (잠김·스파크는 항상). 끝에 OBJECTS_ChestEnd (Mode1 있으면 작동 애니메이션)
+   */
+  private opChest(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    const locked = (o.interact & 0x80) !== 0;
+    if (locked) {
+      if (!this.useKey()) {
+        this.events.push({ type: 'locked', objectId: o.id });
+        return;
+      }
+      this.events.push({ type: 'unlocked', objectId: o.id });
+    }
+    let quality = 0;
+    if (o.spark) quality = this.objControl.roll() % 100 < 5 ? QUALITY.RARE : QUALITY.MAGIC;
+    // 드롭 여부 굴림은 원작처럼 오브젝트 조작 시드(pObjectregion) 사용
+    let drops = chestDropRolls(o, this.objControl);
+    let magic = 0;
+    while (drops-- > 0) {
+      const it = this.dropChest(o, quality);
+      if (it && it.quality >= QUALITY.MAGIC) magic++;
+    }
+    if (o.spark && !magic) {
+      for (let i = 0; i < 10; i++) {
+        const it = this.dropChest(o, quality);
+        if (it && it.quality >= QUALITY.MAGIC) break;
+      }
+    }
+    this.setMode(o, o.type.mode[OBJMODE.OPERATING] ? OBJMODE.OPERATING : OBJMODE.OPENED);
+    if ((o.mode as number) === OBJMODE.OPERATING) this.scheduleEndAnim(o);
+    this.events.push({ type: 'objectOpened', objectId: o.id, locked });
+  }
+
+  /** 열쇠 하나 쓰기. 출처: D2GAME_DoKeyCheck_6FC4A4B0 (인벤토리 열쇠 수량 1 감소, 0 이면 사라짐) */
+  private useKey(): boolean {
+    const key = this.store.inventoryItems.find((it) => it.code === 'key' && it.quantity > 0);
+    if (!key) return false;
+    key.quantity--;
+    if (key.quantity <= 0) this.store.consume(key.id);
+    return true;
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction05_Barrel — 부서짐, 함정 몬스터, rand(100) <= 20 이면 상자 TC
+   * 근사(원작 미확인): 원작은 이때 플레이어가 통을 때리는 공격 모드(스킬 1)로 바뀐다 — 여기서는 애니메이션 없이 바로 부순다
+   */
+  private opBarrel(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    this.setMode(o, OBJMODE.OPERATING);
+    this.trapMonster(o);
+    if (this.objControl.roll() % 100 <= 20) this.dropChest(o, 0);
+    this.scheduleEndAnim(o);
+    this.events.push({ type: 'objectOpened', objectId: o.id });
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction07_ExplodingBarrel — 반경 3 안의 플레이어·몬스터에게 함정 피해, 거리 2 안의 폭발 통(11)도 연쇄 폭발
+   * 근사(원작 미확인): 폭발 그림은 통의 작동(OP) 애니메이션만 그린다
+   */
+  private opExplodingBarrel(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    this.setMode(o, OBJMODE.OPERATING);
+    this.events.push({ type: 'barrelExploded', objectId: o.id, x: o.x, y: o.y });
+    const p = this.player;
+    if (Math.hypot(p.x - o.x, p.y - o.y) <= 3) this.trapDamagePlayer(o, 0);
+    for (const m of [...this.monsters]) if (m.mode !== 'DT' && m.mode !== 'DD' && Math.hypot(m.x - o.x, m.y - o.y) <= 3) this.trapDamageMonster(o, m);
+    for (const b of this.level.objects) if (b !== o && b.type.id === OBJ.EXPLODING_BARREL && b.mode === OBJMODE.NEUTRAL && Math.hypot(b.x - o.x, b.y - o.y) <= 2) this.opExplodingBarrel(b);
+    this.scheduleEndAnim(o);
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction08_Door — 0.5초 안 재조작 무시, 닫힘 → 열림(충돌 해제), 열림 → 닫힘(문 자리에 유닛이 없을 때, 충돌 기록),
+   *       유닛이 있으면 S3(막힘), 잠긴 문(S4)은 열쇠
+   */
+  private opDoor(o: ObjectUnit): void {
+    // 500ms = 원작 25fps 기준 12.5 틱
+    if (this.tickCount < o.lastOperate + 13) return;
+    const t = o.type;
+    const occupied = () => {
+      const l = Math.floor(o.x) - Math.trunc(t.sizeX / 2), b = Math.floor(o.y) - Math.trunc(t.sizeY / 2);
+      const inBox = (x: number, y: number) => x >= l && x < l + t.sizeX && y >= b && y < b + t.sizeY;
+      return inBox(Math.floor(this.player.x), Math.floor(this.player.y)) || this.monsters.some((m) => m.mode !== 'DT' && m.mode !== 'DD' && inBox(Math.floor(m.x), Math.floor(m.y)));
+    };
+    switch (o.mode) {
+      case OBJMODE.SPECIAL4:
+        if (!this.useKey()) {
+          this.events.push({ type: 'locked', objectId: o.id });
+          return;
+        }
+        this.setMode(o, OBJMODE.OPENED);
+        break;
+      case OBJMODE.NEUTRAL:
+        this.setMode(o, OBJMODE.OPENED);
+        this.events.push({ type: 'doorOpened', objectId: o.id });
+        break;
+      case OBJMODE.OPENED:
+      case OBJMODE.SPECIAL3:
+        if (!occupied()) {
+          this.setMode(o, OBJMODE.NEUTRAL);
+          this.events.push({ type: 'doorClosed', objectId: o.id });
+        } else if (o.mode !== OBJMODE.SPECIAL3) this.setMode(o, OBJMODE.SPECIAL3);
+        else return;
+        break;
+      default:
+        return;
+    }
+    o.lastOperate = this.tickCount;
+  }
+
+  /** 출처: ObjMode.cpp OBJECTS_OperateFunction26_BookShelf — rand(20) <= 12 이면 두루마리(isc/tsc), 아니면 책(ibk/tbk) */
+  private opBookShelf(o: ObjectUnit): void {
+    if (o.mode !== OBJMODE.NEUTRAL) return;
+    this.setMode(o, OBJMODE.OPENED);
+    const scroll = this.objControl.roll() % 20 <= 12;
+    const first = (this.objControl.roll() & 1) === 1;
+    this.dropCode(scroll ? (first ? 'isc' : 'tsc') : first ? 'ibk' : 'tbk', o.x, o.y);
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction22_Well — 남은 횟수가 있고 생명(Parm3 & 2)·마나(Parm3 & 1)가 모자라면 최대치 × Parm1 / 256 회복,
+   *       독·빙결 해제, 쓰면 횟수 −1 (모드 갱신), Parm0 + 1 프레임 뒤 한 칸 재생 (EVENTTYPE_AITHINK → sub_6FC74B40)
+   */
+  private opWell(o: ObjectUnit): void {
+    const c = this.character;
+    if (!c || !o.interact) return;
+    const t = o.type;
+    let used = false;
+    const ml = this.maxLife(), mm = this.maxMana();
+    if (c.life < ml && t.parm[3]! & 2) {
+      c.life = Math.min(ml, c.life + (ml * t.parm[1]!) / 256);
+      used = true;
+    }
+    if (c.mana < mm && t.parm[3]! & 1) {
+      c.mana = Math.min(mm, c.mana + (mm * t.parm[1]!) / 256);
+      used = true;
+    }
+    for (const st of ['poison', 'freeze', 'cold']) {
+      if (this.player.states.has(st)) {
+        this.player.states.remove(st);
+        used = true;
+      }
+    }
+    if (!used) return;
+    const r = wellAfterUse(t, o.interact);
+    o.interact = r.left;
+    if (r.mode !== null) this.setMode(o, r.mode);
+    o.regenAt = this.tickCount + t.parm[0]! + 1;
+    this.events.push({ type: 'wellUsed', objectId: o.id, left: o.interact });
+  }
+
+  /**
+   * 출처: ObjMode.cpp OBJECTS_OperateFunction02_Shrine — 한 번만(다시 채워질 때까지), 메시지(ShrMsg<code>), shrines.txt Code 로 효과,
+   *       reset time in minutes > 0 이면 1200 × 분 + 1 프레임 뒤 다시 사용 가능, 작동 애니메이션이 끝나면 열림
+   */
+  private opShrine(o: ObjectUnit): void {
+    const db = this.data?.objects;
+    if (!db || o.operated || o.mode !== OBJMODE.NEUTRAL) return;
+    o.operated = true;
+    this.setMode(o, OBJMODE.OPERATING);
+    const s = db.shrine(o.interact) ?? db.shrine(1);
+    if (!s) return;
+    this.events.push({ type: 'shrine', objectId: o.id, code: s.code, name: s.name, message: `ShrMsg${s.code}` });
+    this.applyShrine(o, s.code >= 0 && s.code < 24 ? s.code : 1);
+    if (s.resetMinutes) o.resetAt = this.tickCount + 1200 * s.resetMinutes + 1;
+    if ((o.mode as number) === OBJMODE.OPERATING && !o.type.cycleAnim[1] && o.type.mode[2]) this.scheduleEndAnim(o);
+  }
+
+  /**
+   * 신전 효과 (gpShrineTable_6FD28D18, Code 순서).
+   * 출처: ObjMode.cpp D2GAME_SHRINES_* — 상태 이름은 states.txt shrine_*, 스탯은 표의 스탯 번호 (171 skill_armor_percent, 39 fireresist,
+   *       43 coldresist, 41 lightresist, 45 poisonresist, 27 manarecoverybonus, 85 item_addexperience), 값 = sub_6FC77750 (그대로 Arg0)
+   */
+  applyShrine(o: ObjectUnit, code: number): void {
+    const db = this.data?.objects, c = this.character;
+    const s = db?.shrine(code);
+    if (!s || !c) return;
+    const until = this.tickCount + s.duration;
+    const st = this.player.states;
+    const ml = this.maxLife(), mm = this.maxMana();
+    switch (code) {
+      case 1: c.life = ml; c.mana = mm; break;
+      case 2: c.life = ml; break;
+      case 3: c.mana = mm; break;
+      case 4: {
+        const v = Math.trunc((c.life * s.arg0) / 100);
+        c.life -= v;
+        c.mana = c.mana + (v * s.arg1) / 100;
+        break;
+      }
+      case 5: {
+        const v = Math.trunc((c.mana * s.arg0) / 100);
+        c.mana -= v;
+        c.life = c.life + (v * s.arg1) / 100;
+        break;
+      }
+      case 6: st.set('shrine_armor', until, { skill_armor_percent: s.arg0 }); break;
+      case 7:
+        // 출처: D2GAME_SHRINES_CombatBoost — tohit = Arg0 × 명중률 / 100, damagepercent = Arg1.
+        // 근사(원작 미확인): 명중률(OBJMODE_GetToHitPercentage)의 무기 마스터리·스킬 명중 보너스는 빼고 현재 AR 로 계산
+        st.set('shrine_combat', until, { tohit: Math.trunc((s.arg0 * this.playerAR()) / 100), damagepercent: s.arg1 });
+        break;
+      case 8: st.set('shrine_resist_fire', until, { fireresist: s.arg0 }); break;
+      case 9: st.set('shrine_resist_cold', until, { coldresist: s.arg0 }); break;
+      case 10: st.set('shrine_resist_lightning', until, { lightresist: s.arg0 }); break;
+      case 11: st.set('shrine_resist_poison', until, { poisonresist: s.arg0 }); break;
+      case 12: st.set('shrine_skill', until, { allskills: s.arg0 }); this.passiveCache = null; break;
+      case 13: st.set('shrine_mana_regen', until, { manarecoverybonus: s.arg0 }); break;
+      // 근사(원작 미확인): 이 엔진에는 기력(스태미나)이 없어 상태만 건다
+      case 14: st.set('shrine_stamina', until, {}); break;
+      case 15: st.set('shrine_experience', until, { item_addexperience: s.arg0 }); break;
+      case 17: this.createPortalPair(this.player.x + 5, this.player.y + 5, false); break;
+      case 18: this.shrineGem(); break;
+      case 19: {
+        // 출처: D2GAME_SHRINES_Storm — 반경 Arg1 안의 살아 있는 플레이어·몬스터 생명 −Arg0 %. 근사(원작 미확인): 원작의 파이어볼 16발(미사일 62)은 생략
+        const hit = (hp: number) => Math.trunc((Math.trunc(hp) * s.arg0) / 100);
+        if (!this.isDead) c.life = Math.max(1, c.life - hit(c.life));
+        for (const m of this.monsters) if (m.mode !== 'DT' && m.mode !== 'DD' && Math.hypot(m.x - o.x, m.y - o.y) <= s.arg1) m.hp = Math.max(1, m.hp - hit(m.hp));
+        break;
+      }
+      case 21:
+      case 22: {
+        // 출처: D2GAME_SHRINES_Exploding / Poison — rand(Arg1 − Arg0) + Arg0 개의 투척 물약(opm / gpm)을 플레이어 옆에
+        // 근사(원작 미확인): 원작이 신전 주위로 쏘는 미사일 6발(45 / 48)은 생략
+        const cnt = o.rng.pick(s.arg1 - s.arg0) + s.arg0;
+        for (let i = 0; i < cnt; i++) this.dropCode(code === 21 ? 'opm' : 'gpm', this.player.x, this.player.y);
+        break;
+      }
+      default:
+        // 20 Warping(몬스터 → 유니크)·16 Enirhs 는 미구현 (Enirhs 는 InitFn 에서 18 로 바뀌어 나오지 않음)
+        this.events.push({ type: 'shrineUnsupported', code });
+    }
+  }
+
+  /** 출처: D2GAME_SHRINES_Gem_6FC76910 — 배낭의 보석 하나를 BetterGem 으로 (없으면 무작위 조각 보석 gcw/gcr/gcg/gcb/gcy/gcv) */
+  private shrineGem(): void {
+    const data = this.data;
+    if (!data) return;
+    for (const it of this.store.inventoryItems) {
+      const b = data.items.base(it.code);
+      if (!b || !data.items.isType(b, 'gem') || !b.betterGem || b.betterGem === 'non') continue;
+      if (!data.items.base(b.betterGem)) continue;
+      this.store.consume(it.id);
+      this.dropCode(b.betterGem, this.player.x, this.player.y);
+      return;
+    }
+    const codes = ['gcw', 'gcr', 'gcg', 'gcb', 'gcy', 'gcv'];
+    this.dropCode(codes[this.rng.roll() % 6] as string, this.player.x, this.player.y);
+  }
+
+  // ---------------------------------------------------------------- 웨이포인트
+
+  /** 레벨의 웨이포인트 위치 (DS1 프리셋 objects.txt SubClass 0x40) */
+  waypointPos(levelId: string): { x: number; y: number } | null {
+    const lv = this.levels.get(levelId), db = this.data?.objects;
+    if (!lv || !db) return null;
+    const live = lv.objects.find((o) => o.type.subClass & SUBCLASS.WAYPOINT);
+    if (live) return { x: live.x, y: live.y };
+    const p = (lv.def.objects ?? []).find((q) => (db.type(q.classId)?.subClass ?? 0) & SUBCLASS.WAYPOINT);
+    return p ? { x: p.x + 0.5, y: p.y + 0.5 } : null;
+  }
+
+  private waypointNo(levelId: string): number {
+    const no = this.levels.get(levelId)?.def.levelNo;
+    return no === undefined ? 255 : (this.data?.objects?.levels.get(no)?.waypoint ?? 255);
+  }
+
+  /**
+   * 웨이포인트 활성 (OBJECTS_OperateFunction23_Waypoint 첫 부분: WAYPOINTS_ActivateWaypoint, 처음이면 작동 애니메이션)
+   */
+  private activateWaypoint(o: ObjectUnit): void {
+    const no = this.waypointNo(this.level.def.id);
+    if (no !== 255 && this.waypoints.activate(no)) this.events.push({ type: 'waypointActivated', no, level: this.level.def.id });
+    if (o.mode === OBJMODE.NEUTRAL) {
+      this.setMode(o, OBJMODE.OPERATING);
+      this.scheduleEndAnim(o);
+    }
+  }
+
+  /** 출처: OBJECTS_OperateFunction23_Waypoint — 활성 + (열려 있으면) 목록 패널 (packet 0x63) */
+  private opWaypoint(o: ObjectUnit): void {
+    this.activateWaypoint(o);
+    this.waypointOpen = { levelId: this.level.def.id, objectId: o.id };
+    this.events.push({ type: 'waypointMenu', objectId: o.id, level: this.level.def.id });
+  }
+
+  /** 웨이포인트는 클릭(조작)해야 활성 (opWaypoint). 여기서는 멀어지면 목록 패널만 닫는다 */
+  private touchWaypoint(): void {
+    const p = this.player;
+    // 웨이포인트에서 멀어지면 목록 패널 대상 해제 (원작 SUNIT_ResetInteractInfo — 걸어서 벗어나면 패널이 닫힌다)
+    const open = this.waypointOpen;
+    if (open) {
+      const src = open.levelId === this.level.def.id ? this.level.objects.find((o) => o.id === open.objectId) : undefined;
+      if (!src || distanceToObject(src, p.x, p.y) > 6) this.waypointOpen = null;
+    }
+  }
+
+  /**
+   * 목록에서 고른 레벨로 이동. 출처: D2GAME_WAYPOINT_Unk_6FC79600 — 조작 중인 웨이포인트가 있어야 하고, 다른 레벨이며 활성된 웨이포인트여야 한다.
+   * 도착 = 도착 레벨 웨이포인트 옆 (근사(원작 미확인): 원작 DUNGEON_FindActSpawnLocation(마을 13) 대신 웨이포인트 옆 가장 가까운 걷기 칸)
+   */
+  travelWaypoint(levelId: string): boolean {
+    const open = this.waypointOpen;
+    if (!open || open.levelId !== this.level.def.id || this.isDead) return false;
+    const src = this.level.objects.find((o) => o.id === open.objectId);
+    if (!src || distanceToObject(src, this.player.x, this.player.y) > 6) {
+      this.waypointOpen = null;
+      return false;
+    }
+    const no = this.waypointNo(levelId);
+    if (levelId === this.level.def.id || no === 255 || !this.waypoints.has(no)) return false;
+    const target = this.levels.get(levelId);
+    if (!target) return false;
+    this.populate(target);
+    const wp = this.waypointPos(levelId);
+    if (!wp) return false;
+    const spot = nearestWalkable(target.def.map, { x: wp.x, y: wp.y + 3 }, 12) ?? { x: Math.floor(wp.x), y: Math.floor(wp.y) };
+    this.waypointOpen = null;
+    this.changeLevel(levelId, spot.x + 0.5, spot.y + 0.5);
+    this.events.push({ type: 'waypointTravel', level: levelId, no });
+    return true;
+  }
+
+  // ---------------------------------------------------------------- 마을 포털
+
+  /** 3×3 이 빈 칸 찾기 (COLLISION_GetFreeCoordinatesWithField 근사: 벽·오브젝트·문이 없는 3×3, 가까운 순) */
+  private freeSpot(map: CollisionMap, x: number, y: number, size = 3, radius = 12): { x: number; y: number } | null {
+    const cx = Math.floor(x), cy = Math.floor(y);
+    for (let r = 0; r <= radius; r++)
+      for (let dy = -r; dy <= r; dy++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const px = cx + dx, py = cy + dy;
+          if (map.maskInBox(px, py, size, size, 0x01 | 0x0400 | 0x0800) === 0) return { x: px, y: py };
+        }
+    return null;
+  }
+
+  private townKey(): string | undefined {
+    for (const l of this.levels.values()) if (l.def.inTown) return l.def.id;
+    return undefined;
+  }
+
+  /**
+   * 마을 포털 열기 (두루마리·책). 출처: SkillItem.cpp SKILLITEM_pSpell02_CastPortal — 마을이면 실패, 이전 포털 한 쌍을 닫고(sub_6FC7C170)
+   *       Skills.cpp D2GAME_CreatePortalObject (현재 위치 3×3 빈칸, 오브젝트 59 모드 1) → D2GAME_CreateLinkPortal (마을 타일 정보 11 근처, 모드 2)
+   */
+  castTownPortal(): boolean {
+    if (this.inTown || this.isDead) return false;
+    this.closeTownPortal();
+    const pair = this.createPortalPair(this.player.x, this.player.y, true);
+    return pair;
+  }
+
+  /** 출처: PLAYER_Player.cpp sub_6FC7C170 — 플레이어의 마을 포털 한 쌍 제거 */
+  private closeTownPortal(): void {
+    const tp = this.townPortal;
+    if (!tp) return;
+    this.removeObject(tp.fieldLevel, tp.fieldId);
+    this.removeObject(tp.townLevel, tp.townId);
+    this.townPortal = null;
+    this.events.push({ type: 'portalClosed' });
+  }
+
+  private removeObject(levelId: string, id: number): void {
+    const lv = this.levels.get(levelId);
+    if (!lv) return;
+    const i = lv.objects.findIndex((o) => o.id === id);
+    if (i < 0) return;
+    const o = lv.objects[i] as ObjectUnit;
+    if (o.blocking) lv.def.map.setUnitBox(Math.floor(o.x), Math.floor(o.y), o.type.sizeX, o.type.sizeY, objectCollisionBit(o.type), false);
+    lv.objects.splice(i, 1);
+  }
+
+  private createPortalPair(x: number, y: number, owned: boolean): boolean {
+    const town = this.townKey();
+    const townLv = town ? this.levels.get(town) : undefined;
+    if (!town || !townLv || this.level.def.inTown) return false;
+    const here = this.level;
+    const a = this.freeSpot(here.def.map, x, y);
+    if (!a) return false;
+    const field = this.createObject(here, { classId: OBJ.TOWN_PORTAL, x: a.x, y: a.y, mode: OBJMODE.OPERATING, preOperateLock: true });
+    if (!field) return false;
+    this.scheduleEndAnim(field);
+    this.populate(townLv);
+    const spot = townLv.def.portalSpot ?? { x: townLv.def.map.width / 2, y: townLv.def.map.height / 2 };
+    const b = this.freeSpot(townLv.def.map, spot.x, spot.y, 3, 20) ?? { x: Math.floor(spot.x), y: Math.floor(spot.y) };
+    const link = this.createObject(townLv, { classId: OBJ.TOWN_PORTAL, x: b.x, y: b.y, mode: OBJMODE.OPENED, preOperateLock: true });
+    if (!link) return false;
+    field.portal = { toLevel: town, linkId: link.id, linkLevel: town, owner: owned };
+    link.portal = { toLevel: here.def.id, linkId: field.id, linkLevel: here.def.id, owner: owned };
+    if (owned) this.townPortal = { fieldLevel: here.def.id, fieldId: field.id, townLevel: town, townId: link.id };
+    this.events.push({ type: 'portalOpened', fieldLevel: here.def.id, fieldId: field.id, townId: link.id });
+    return true;
+  }
+
+  /**
+   * 포털 들어가기. 출처: ObjMode.cpp OBJECTS_OperateFunction15_Portal — 짝 포털 위치로 이동(COLLISION_GetFreeCoordinates),
+   *       주인이 마을 쪽 포털을 타고 돌아오면(짝 id == 플레이어 고유 id) 두 포털 모두 사라진다
+   */
+  usePortal(o: ObjectUnit): void {
+    const pt = o.portal;
+    if (!pt || this.isDead) return;
+    const dest = this.levels.get(pt.linkLevel);
+    if (!dest) return;
+    this.populate(dest);
+    const link = dest.objects.find((x) => x.id === pt.linkId);
+    const at = link ? { x: link.x, y: link.y } : { x: dest.def.map.width / 2, y: dest.def.map.height / 2 };
+    const spot = nearestWalkable(dest.def.map, { x: at.x, y: at.y + 3 }, 12) ?? { x: Math.floor(at.x), y: Math.floor(at.y) };
+    const tp = this.townPortal;
+    const closing = !!tp && link?.id === tp.fieldId && o.id === tp.townId;
+    this.changeLevel(pt.linkLevel, spot.x + 0.5, spot.y + 0.5);
+    this.events.push({ type: 'portalTaken', to: pt.linkLevel });
+    if (closing) this.closeTownPortal();
+  }
+
   private regen(): void {
     for (const m of this.monsters) {
       if (m.mode === 'DT' || m.mode === 'DD') continue;

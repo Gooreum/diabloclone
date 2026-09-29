@@ -30,8 +30,8 @@ interface LayerGfx { dcc: Dcc; canvases: Map<number, Drawable> }
 export interface Composite { cof: Cof; layers: Map<number, LayerGfx> }
 
 export interface CompositeSpec {
-  /** 'CHARS' 또는 'MONSTERS' */
-  root: 'CHARS' | 'MONSTERS';
+  /** 'CHARS', 'MONSTERS' 또는 'OBJECTS' */
+  root: 'CHARS' | 'MONSTERS' | 'OBJECTS';
   token: string;
   mode: string;
   wclass: string;
@@ -78,15 +78,17 @@ export class UnitGfx {
     return { cof, layers };
   }
 
-  /** 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표 */
-  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number): void {
+  /** 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환 */
+  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
     const order = cof.priority[d]?.[f] ?? cof.layers.map((l) => l.type);
+    let l0 = Infinity, t0 = Infinity, r0 = -Infinity, b0 = -Infinity;
     for (const type of order) {
       const lg = comp.layers.get(type);
       if (!lg) continue;
+      const layer = cof.layers.find((l) => l.type === type);
       const dir = lg.dcc.directions[d];
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
@@ -96,8 +98,21 @@ export class UnitGfx {
         c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
         lg.canvases.set(key, c);
       }
+      // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사
+      const blend = layer?.transparent ? layer.drawEffect : -1;
+      if (blend >= 0) {
+        ctx.save();
+        if (blend <= 2) ctx.globalAlpha = [0.75, 0.5, 0.25][blend] as number;
+        else ctx.globalCompositeOperation = blend === 4 ? 'multiply' : 'lighter';
+      }
       ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
+      if (blend >= 0) ctx.restore();
+      l0 = Math.min(l0, x + dir.box.left);
+      t0 = Math.min(t0, y + dir.box.top);
+      r0 = Math.max(r0, x + dir.box.left + dir.box.width);
+      b0 = Math.max(b0, y + dir.box.top + dir.box.height);
     }
+    return l0 < r0 ? { x: l0, y: t0, w: r0 - l0, h: b0 - t0 } : null;
   }
 }
 

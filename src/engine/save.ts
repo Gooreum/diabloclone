@@ -22,6 +22,8 @@ export interface CharacterSave {
   stashGold: number;
   /** 줍지 않은 시체의 아이템 (다음 게임 시작 위치 옆에 시체로) */
   corpse: Record<string, ItemInstance>;
+  /** 활성 웨이포인트 번호 (levels.txt Waypoint). 원작도 캐릭터마다 저장 (D2WaypointDataStrc). 예전 저장은 [0] (마을만) */
+  waypoints: number[];
   savedAt: number;
 }
 
@@ -34,6 +36,7 @@ export interface SaveItems {
   equipment: Record<string, ItemInstance>;
   stashGold?: number;
   corpse?: Record<string, ItemInstance>;
+  waypoints?: number[];
 }
 
 export function makeSave(name: string, character: Character, gold: number, items: SaveItems, now = Date.now()): CharacterSave {
@@ -48,6 +51,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     equipment: structuredClone(items.equipment),
     stashGold: items.stashGold ?? 0,
     corpse: structuredClone(items.corpse ?? {}),
+    waypoints: [...new Set([0, ...(items.waypoints ?? [])])].sort((a, b) => a - b),
     savedAt: now,
   };
 }
@@ -96,6 +100,8 @@ export function parseSave(text: string): CharacterSave {
   s.belt ??= [];
   s.stashGold ??= 0;
   s.corpse ??= {};
+  // 웨이포인트 필드가 없던 저장 호환: 마을(0)만 활성. 숫자가 아닌 값은 버린다
+  s.waypoints = [...new Set([0, ...(Array.isArray(s.waypoints) ? s.waypoints.filter((n): n is number => Number.isInteger(n) && n >= 0 && n < 255) : [])])].sort((a, b) => a - b);
   for (const it of Object.values(s.corpse)) normalizeItem(it);
   return s as CharacterSave;
 }

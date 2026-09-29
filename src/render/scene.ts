@@ -2,6 +2,7 @@
 import type { AnimData } from '../formats/animdata';
 import type { ItemDb } from '../engine/items';
 import type { MonsterDb } from '../engine/monster';
+import { OBJMODE_TOKENS, type ObjectDb } from '../engine/objects';
 import type { WorldSnapshot } from '../engine/game';
 import type { PickBox } from '../input/dom';
 import { toCanvas, type Camera } from './iso';
@@ -21,7 +22,12 @@ export interface SceneDeps {
   /** 플레이어 시체 외형 (장착 레이어·무기 클래스) */
   corpseLook?: { equip: Record<string, string>; wclass: string };
   inTown: boolean;
+  /** objects.txt (오브젝트 그래픽 토큰·애니메이션·선택 상자) */
+  objectDb?: ObjectDb;
 }
+
+/** 오브젝트 COF 레이어는 모두 기본 외형 'lit' (출처: objects.txt HD~S8 = 레이어 사용 여부, 원작 오브젝트 DCC 이름 <토큰><레이어>LIT<모드>HTH) */
+const OBJECT_EQUIP: Record<string, string> = Object.fromEntries(['HD', 'TR', 'LG', 'RA', 'LA', 'RH', 'LH', 'SH', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'].map((l) => [l, 'lit']));
 
 const animFrame = (anim: AnimData, key: string, modeTick: number, loop = true): number => {
   const r = anim.get(key);
@@ -50,6 +56,31 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
         const p = toCanvas(cm, it.x, it.y);
         const size = d.items.draw(ctx, base.flippyFile, p.x, p.y);
         if (size) picks.push({ kind: 'item', id: it.id, x: size.x - 4, y: size.y - 4, w: size.w + 8, h: size.h + 8 });
+      },
+    });
+  }
+
+  // 오브젝트: objects.txt 토큰의 COF(모드 NU/OP/ON/S1…) 합성, 프레임 = Start + 틱 × FrameDelta / 256 (CycleAnim 이면 반복, 아니면 마지막 프레임에서 멈춤)
+  // 출처: objects.txt FrameDelta/CycleAnim/Start, DrawUnder (바닥에 깔리는 오브젝트는 유닛보다 먼저)
+  for (const o of s.objects ?? []) {
+    if (!onScreen(o.x, o.y)) continue;
+    const t = d.objectDb?.type(o.classId);
+    if (!t || !t.token) continue;
+    const mode = OBJMODE_TOKENS[o.mode] ?? 'NU';
+    const comp = d.units.get({ root: 'OBJECTS', token: t.token, mode, wclass: 'HTH', equip: OBJECT_EQUIP });
+    const raw = (t.start[o.mode] ?? 0) + Math.floor((o.modeTick * (t.frameDelta[o.mode] ?? 256)) / 256);
+    out.push({
+      depth: o.x + o.y - (t.drawUnder ? 4 : 0),
+      draw: (ctx, cm) => {
+        const p = toCanvas(cm, o.x, o.y);
+        if (!comp) return;
+        const fpd = comp.cof.framesPerDirection;
+        const frame = t.cycleAnim[o.mode] ? raw % fpd : Math.min(raw, fpd - 1);
+        const box = d.units.draw(ctx, comp, 0, frame, p.x, p.y);
+        if (!o.selectable) return;
+        // 선택 상자: objects.txt Left/Top/Width/Height (있으면), 없으면 그림 영역
+        if (t.width > 0 && t.height > 0) picks.push({ kind: 'object', id: o.id, x: p.x + t.left, y: p.y + t.top, w: t.width, h: t.height });
+        else if (box) picks.push({ kind: 'object', id: o.id, x: box.x, y: box.y, w: box.w, h: box.h });
       },
     });
   }

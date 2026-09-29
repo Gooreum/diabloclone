@@ -27,6 +27,11 @@ import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
 import { drawBelt } from './ui/hud';
 import { playerLayers } from './render/appearance';
 import type { Placed } from './engine/inventory';
+import { AutomapTable } from './engine/automap';
+import { SUBCLASS } from './engine/objects';
+import { waypointLevels } from './engine/waypoints';
+import { AutomapRenderer, type AutomapMode } from './render/automap';
+import { WaypointPanel } from './ui/waypanel';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
@@ -37,7 +42,11 @@ const BODY = { HD: 'lit', TR: 'lit', LG: 'lit', RA: 'lit', LA: 'lit', S1: 'lit',
 
 declare global {
   interface Window {
-    __game?: { game: Game; ready: boolean; input?: InputController; save?: () => Promise<void> };
+    __game?: {
+      game: Game; ready: boolean; input?: InputController; save?: () => Promise<void>;
+      /** e2e: 웨이포인트 패널·자동 지도 상태 */
+      ui?: { waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number };
+    };
     __menuReady?: boolean;
   }
 }
@@ -123,8 +132,24 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const game = new Game({
     map: townMap, levels: world.levels.map((l) => l.def), player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
-    stashGold: save?.stashGold ?? 0, corpse: save?.corpse,
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints,
   });
+  // 웨이포인트 패널·자동 지도·신전 메시지
+  const wpPanel = new WaypointPanel(assets, pal);
+  const automap = new AutomapRenderer(assets, pal, new AutomapTable(tables.table('AutoMap')));
+  let automapMode: AutomapMode = 'off';
+  let automapStyle: 'full' | 'mini' = 'full';
+  let automapDrawn = 0;
+  const worldByKey = world.byKey;
+  let message: { text: string; until: number } | null = null;
+  const act1Waypoints = data.objects ? waypointLevels([...data.objects.levels.values()]).filter((w) => w.act === 0) : [];
+  const openWaypointPanel = () => {
+    wpPanel.rows = act1Waypoints.map((w) => {
+      const key = game.levelKeyOf(w.levelNo) ?? '';
+      return { no: w.no, levelKey: key, name: worldByKey.get(key)?.name ?? key, active: game.waypoints.has(w.no), current: key === game.levelId };
+    });
+    wpPanel.open = true;
+  };
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
   const icons = new ItemIcons(assets, pal, data.items);
@@ -136,6 +161,19 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
   let identifyWith: number | null = null;
   input.intercept = (x, y, button) => {
+    // 웨이포인트 패널 (원작: 열린 동안 줄 클릭 = 이동, 패널 밖 클릭 = 닫고 이동)
+    const wp = wpPanel.click(x, y);
+    if (wp === 'close') {
+      wpPanel.open = false;
+      return true;
+    }
+    if (wp === 'panel') return true;
+    if (wp) {
+      game.enqueue({ type: 'waypoint', level: wp });
+      wpPanel.open = false;
+      return true;
+    }
+    if (wpPanel.open) wpPanel.open = false;
     const store = game.store;
     const hit = invPanel.hit(x, y);
     if (hit) {
@@ -198,6 +236,21 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         })
       : null;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') {
+        // 원작: Tab = 자동 지도 켜기/끄기, V = 미니 지도 모드 전환
+        e.preventDefault();
+        automapMode = automapMode === 'off' ? automapStyle : 'off';
+        return;
+      }
+      if (e.key === 'v' || e.key === 'V') {
+        automapStyle = automapStyle === 'full' ? 'mini' : 'full';
+        if (automapMode !== 'off') automapMode = automapStyle;
+        return;
+      }
+      if (e.key === 'Escape' && wpPanel.open) {
+        wpPanel.open = false;
+        return;
+      }
       if (e.key === 'Escape') {
         if (game.isDead) {
           const p = nearestWalkable(townMap, world.start, 10) ?? world.start;
@@ -216,7 +269,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     async function saveAndExit(): Promise<void> {
       const st = game.store;
       await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment,
-        stashGold: game.stashGold, corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
+        stashGold: game.stashGold, waypoints: game.waypoints.list(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
       }));
       running = false;
       input.dispose();
@@ -227,7 +280,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       resolve();
     }
     window.addEventListener('keydown', onKey);
-    if (import.meta.env.DEV) window.__game = { game, ready: true, input, save: saveAndExit };
+    if (import.meta.env.DEV) window.__game = { game, ready: true, input, save: saveAndExit, ui: { waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn } };
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
@@ -238,7 +291,14 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       input.enabled = !panels.menuOpen;
       // 원작 싱글플레이: 게임 메뉴가 열리면 게임이 멈춘다
       while (acc >= step) {
-        if (!panels.menuOpen) game.tick();
+        if (!panels.menuOpen) {
+          for (const ev of game.tick()) {
+            if (ev.type === 'waypointMenu') openWaypointPanel();
+            else if (ev.type === 'levelChanged') wpPanel.open = false;
+            else if (ev.type === 'shrine') message = { text: tables.string(String(ev.message)), until: performance.now() + 4000 };
+            else if (ev.type === 'locked') message = { text: 'Locked', until: performance.now() + 1500 };
+          }
+        }
         acc -= step;
       }
       input.update(now);
@@ -256,8 +316,23 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       (renderers[game.levelId] as WorldRenderer).render(
         ctx,
         cam,
-        buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown }, input.pickBoxes),
+        buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects }, input.pickBoxes),
       );
+      if (automapMode !== 'off') {
+        const wl = worldByKey.get(game.levelId);
+        const reveal = game.automapOf(game.levelId);
+        if (wl && reveal) {
+          const objs = game.objects;
+          automapDrawn = automap.draw(ctx, automapMode, wl.preset, wl.automapName, reveal, {
+            player: { x: s.player.x, y: s.player.y },
+            waypoints: objs.filter((o) => o.type.subClass & SUBCLASS.WAYPOINT).map((o) => ({ x: o.x, y: o.y })),
+            portals: objs.filter((o) => o.portal).map((o) => ({ x: o.x, y: o.y })),
+            // 출구 표시: 드러난 곳의 출구에 도착 레벨의 LevelWarp 문자열
+            exits: game.exits.filter((e) => reveal.isSeen(Math.floor((e.x + e.w / 2) / 5), Math.floor((e.y + e.h / 2) / 5)))
+              .map((e) => ({ x: e.x + e.w / 2, y: e.y + e.h / 2, label: worldByKey.get(e.to)?.warpLabel || e.to })),
+          }, WIDTH, HEIGHT);
+        }
+      }
       drawHud(ctx, s, table, levelNames[game.levelId] ?? '', game.isDead, {
         leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
       });
@@ -270,6 +345,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         ctx.fillStyle = '#c7b377';
         ctx.font = '13px serif';
         ctx.fillText('Identify', input.mouse.x + 12, input.mouse.y + 4);
+      }
+      // 웨이포인트에서 멀어지면 패널을 닫는다 (원작 SUNIT_ResetInteractInfo)
+      if (wpPanel.open && !game.waypointOpen) wpPanel.open = false;
+      wpPanel.draw(ctx);
+      if (message && now < message.until) {
+        ctx.font = '16px serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#c7b377';
+        ctx.fillText(message.text, WIDTH / 2, 90);
+        ctx.textAlign = 'left';
       }
       skillPanels?.render();
       requestAnimationFrame(frame);

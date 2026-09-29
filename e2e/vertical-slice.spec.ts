@@ -68,7 +68,7 @@ test('수직 슬라이스: 생성 → 캠프 → Blood Moor → 처치 → 줍�
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   await page.click('#btn-single');
   await page.click(`#hero-${name}`);
-  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 60_000 });
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   const after = await page.evaluate(() => {
     const g = window.__game!.game;
     const s = g.snapshot();

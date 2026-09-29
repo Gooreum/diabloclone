@@ -52,6 +52,8 @@ export interface ItemBase {
   armorGfx: { ra: number; la: number; tr: number; lg: number; s1: number; s2: number } | null;
   /** 사용 아이템 (misc.txt): pSpell 번호, 상태, 지속(len), stat1~3 과 calc1~3 */
   useable: boolean; pSpell: number; useState: string; useLen: number; useStats: { stat: string; calc: number }[];
+  /** misc.txt BetterGem (한 단계 위 보석 코드, 'non' = 없음) */
+  betterGem: string;
   strBonus: number; dexBonus: number;
   speed: number;
   minAc: number; maxAc: number;
@@ -141,6 +143,7 @@ export class ItemDb {
           armorGfx: r.Torso !== undefined && r.Torso !== '' ? { ra: n(r.rArm), la: n(r.lArm), tr: n(r.Torso), lg: n(r.Legs), s1: n(r.rSPad), s2: n(r.lSPad) } : null,
           useable: n(r.useable) === 1, pSpell: n(r.pSpell), useState: r.state ?? '', useLen: n(r.len),
           useStats: [1, 2, 3].map((i) => ({ stat: r[`stat${i}`] ?? '', calc: n(r[`calc${i}`]) })).filter((x) => x.stat),
+          betterGem: r.BetterGem ?? '',
           strBonus: n(r.StrBonus), dexBonus: n(r.DexBonus), speed: n(r.speed),
           minAc: n(r.minac), maxAc: n(r.maxac), block: n(r.block),
           reqStr: n(r.reqstr), reqDex: n(r.reqdex),

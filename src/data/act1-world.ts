@@ -11,6 +11,7 @@ import { Rng } from '../engine/rng';
 import type { GameData, LevelDef, LevelExit } from '../engine/game';
 import { makeDrlgData, tilePath } from './drlg-data';
 import type { AssetSource, GameTables } from './tables';
+import { AutomapTable } from '../engine/automap';
 
 /** 엔진 레벨 id (게임·저장·HUD 에서 쓰는 문자열) ← levels.txt Id */
 export const LEVEL_KEYS: Record<number, string> = {
@@ -117,6 +118,10 @@ export interface WorldLevel {
   key: string;
   id: number;
   name: string;
+  /** AutoMap.txt LevelName (LvlTypes 이름 "Act 1 - Wilderness" → "1 Wilderness") */
+  automapName: string;
+  /** levels.txt LevelWarp 문자열 ("To The Cold Plains") — 자동 지도 출구 표시 */
+  warpLabel: string;
   preset: PresetLevel;
   def: LevelDef;
 }
@@ -157,13 +162,28 @@ export function buildAct1World(src: AssetSource, tables: GameTables, gameData: G
     const preset = buildPresetLevel(lv.layout.ds1, dt1s, (seed ^ (lv.id * 0x9e3779b1)) >>> 0, { tileMask: lv.layout.tileMask, blockEmpty: true });
     const inTown = lv.id === LEVEL.ROGUEENCAMPMENT;
     let spawns: LevelDef['spawns'];
+    let monsterPool: string[] | undefined;
     if (!inTown) {
       // 출처: levels.txt 몬스터 풀 + 방 단위 배치 (spawn.ts). 원작처럼 몬스터 없는 방(POPULATION_ZERO: Populate=0 프리셋·이동 타일 방)은 제외
       const info = levelMonsterInfo(tables.table('Levels'), rec.levelName);
       const rooms = lv.layout.rooms.filter((r) => !(r.flags & ROOM.POPULATION_ZERO));
       spawns = planSpawns(info, rooms, preset.collision, gameData.monsters, new Rng((seed ^ (lv.id * 0x5bd1e995)) >>> 0));
+      monsterPool = info.pool;
     }
-    levels.push({ key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, preset, def: { id: key, map: preset.collision, inTown, exits: [], spawns } });
+    // 오브젝트: DS1 프리셋 유닛(type 2 = 오브젝트, 번호는 DRLGPRESET_ParseDS1File 에서 objects.txt 번호로 변환됨)과 방 목록 (오브젝트 그룹 배치)
+    // 출처: Objects.cpp OBJECTS_PopulationHandler — 웨이포인트 방(DUNGEON_HasWaypoint)은 배치 안 함
+    const objects = lv.layout.units.filter((u) => u.type === 2).map((u) => ({ classId: u.id, x: u.x, y: u.y }));
+    const popRooms = lv.layout.rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h, hasWaypoint: (r.flags & ROOM.WAYPOINT_MASK) !== 0, noPopulate: (r.flags & ROOM.POPULATION_ZERO) !== 0 }));
+    const def: LevelDef = { id: key, map: preset.collision, inTown, exits: [], spawns, levelNo: lv.id, objects, rooms: popRooms };
+    if (monsterPool) def.monsterPool = monsterPool;
+    // 마을 포털 자리: 원작 D2GAME_CreateLinkPortal → DUNGEON_FindActSpawnLocationEx(…, 11, …) = 타일 정보 11 (+ 서브타일 3, sub_6FD788D0 규칙)
+    const ti = lv.layout.tileInfo.find((t) => t.index === 11);
+    if (ti) def.portalSpot = { x: ti.x * 5 + 3, y: ti.y * 5 + 3 };
+    const lvlTypeName = tables.table('LvlTypes').find((r) => Number(r.Id) === rec.levelType)?.Name ?? '';
+    const warpKey = tables.table('Levels').find((r) => Number(r.Id) === lv.id)?.LevelWarp ?? '';
+    levels.push({
+      key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(lvlTypeName), warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,
+    });
   }
   const byKey = new Map(levels.map((l) => [l.key, l]));
   const byId = new Map(levels.map((l) => [l.id, l]));

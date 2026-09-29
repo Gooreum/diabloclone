@@ -152,8 +152,12 @@ export class TreasureDb {
   }
 
   /** TC 에서 드롭 목록 생성 (싱글플레이 = 플레이어 1명, NoDrop 보정 없음) */
-  drop(tcName: string, mlvl: number, rng: Rng, magicFind = 0): ItemInstance[] {
-    const root = this.resolve(tcName, mlvl);
+  /**
+   * @param opts.exact 루트 TC 를 group/level 로 올리지 않는다 (상자 TC: D2GAME_DropTC 에 레코드를 직접 넘김)
+   * @param opts.quality 최소 품질 (원작 DropTC nQuality — 스파크 상자 매직/레어). 근사(원작 미확인): 굴린 품질이 낮으면 이 품질로 올림
+   */
+  drop(tcName: string, mlvl: number, rng: Rng, magicFind = 0, opts: { exact?: boolean; quality?: number } = {}): ItemInstance[] {
+    const root = opts.exact ? this.tcs.get(tcName) : this.resolve(tcName, mlvl);
     if (!root) return [];
     const out: ItemInstance[] = [];
     let throwables = 0;
@@ -206,7 +210,9 @@ export class TreasureDb {
         if (++throwables <= 10) { frame.picks++; continue; }
         dropBase = this.items.base('lsd') ?? base;
       }
-      out.push(this.createItem(dropBase, mlvl, rng, this.rollQuality(dropBase, mlvl, frame.mods, rng, magicFind), true));
+      let q = this.rollQuality(dropBase, mlvl, frame.mods, rng, magicFind);
+      if (opts.quality && q < opts.quality && !this.items.types.get(dropBase.type)?.normal && dropBase.category !== 'misc') q = opts.quality as Quality;
+      out.push(this.createItem(dropBase, mlvl, rng, q, true));
     }
     return out;
   }

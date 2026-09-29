@@ -6,7 +6,8 @@
 //       qlvl (N-3, N] 아이템, 가중치 = rarity (https://d2mods.info/forum/kb/viewarticle?a=368)
 import type { TxtRow } from '../formats/txt';
 import type { ItemBase, ItemDb } from './items';
-import type { Rng } from './rng';
+import { Rng } from './rng';
+import type { ItemGen } from './itemgen';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
@@ -17,6 +18,9 @@ interface QualityMods { unique: number; set: number; rare: number; magic: number
 
 interface TcEntry { name: string; prob: number; isTc: boolean }
 interface Tc { name: string; group: number; level: number; picks: number; noDrop: number; mods: QualityMods; entries: TcEntry[] }
+
+/** 아이템이 주는 스탯 (itemstatcost.txt 이름, param = 레이어(스킬 Id 등), value) */
+export interface ItemStat { stat: string; param: number; value: number }
 
 export interface ItemInstance {
   id: number;
@@ -29,8 +33,31 @@ export interface ItemInstance {
   durability: number;
   maxDurability: number;
   defense: number;
-  /** 매직 이상 접사는 Phase 7 에서 생성 (현재는 품질만 결정) */
-  affixesPending: boolean;
+  /** 격자 크기 (invwidth × invheight) */
+  invW: number;
+  invH: number;
+  /** 요구 레벨 (기본 levelreq 와 접사·유니크·세트 lvl req 중 최대) */
+  levelReq: number;
+  /** magicprefix/magicsuffix 행 번호 (매직·레어) */
+  prefixes: number[];
+  suffixes: number[];
+  /** rareprefix/raresuffix 행 번호 (레어 이름) */
+  rareName?: [number, number];
+  /** uniqueitems / setitems 행 번호 */
+  uniqueIdx?: number;
+  setIdx?: number;
+  /** qualityitems 행 (상급), lowqualityitems 행 (하급) */
+  superiorIdx?: number;
+  lowQualityIdx?: number;
+  /** 소켓 수와 박힌 보석 */
+  sockets: number;
+  socketed: ItemInstance[];
+  /** 굴린 속성 → 스탯 */
+  stats: ItemStat[];
+  /** 하급 무기: 피해 75% (출처: sub_6FC549F0) */
+  inferiorDamage?: boolean;
+  /** 방어% 접사로 기본 방어가 maxac + 1 로 올라감 */
+  edDefenseBase?: boolean;
 }
 
 interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare: number; rareDiv: number; rareMin: number; set: number; setDiv: number; setMin: number; magic: number; magicDiv: number; magicMin: number; hiQ: number; hiQDiv: number; normal: number; normalDiv: number }
@@ -41,6 +68,10 @@ export class TreasureDb {
   private readonly ratio: ItemRatio;
   private readonly items: ItemDb;
   private nextId = 1;
+  /** 품질·접사 생성기 (없으면 기본 아이템만) */
+  gen: ItemGen | null = null;
+  /** 이번 게임에서 이미 나온 유니크 (nolimit 제외, 게임마다 초기화). 출처: pGame->dwUniqueFlags */
+  readonly droppedUniques = new Set<number>();
 
   constructor(items: ItemDb, treasureClassEx: TxtRow[], itemRatio: TxtRow[]) {
     this.items = items;
@@ -169,12 +200,13 @@ export class TreasureDb {
       }
       const base = this.items.base(entry.name);
       if (!base || base.version >= 100) continue;
-      // 출처: D2MOO DropTC — 클래식은 투척 무기 10개까지 픽을 되돌리고, 초과 시 slingshot 대체 (슬라이스에서는 드롭 생략)
+      // 출처: D2MOO D2GAME_DropTC — 클래식은 투척 무기가 뽑히면 10번까지 픽을 되돌리고, 넘으면 Long Sword('lsd')로 바꾼다
+      let dropBase = base;
       if ([...this.items.typeChain(base.type)].some((t) => this.items.types.get(t)?.throwable)) {
         if (++throwables <= 10) { frame.picks++; continue; }
-        continue;
+        dropBase = this.items.base('lsd') ?? base;
       }
-      out.push(this.createItem(base, mlvl, rng, this.rollQuality(base, mlvl, frame.mods, rng, magicFind)));
+      out.push(this.createItem(dropBase, mlvl, rng, this.rollQuality(dropBase, mlvl, frame.mods, rng, magicFind), true));
     }
     return out;
   }
@@ -221,10 +253,12 @@ export class TreasureDb {
   }
 
   /** 출처: D2MOO D2GAME_InitItemStats — 골드 = max(rand(5×ilvl) + ilvl, 1), 내구도 = dur/2 + rand(dur/2), 방어 = minac + rand(maxac−minac+1) */
-  createItem(base: ItemBase, ilvl: number, rng: Rng, quality: Quality): ItemInstance {
+  /** generate = true 면 품질·접사·소켓 생성 (몬스터 드롭 등). 시작 장비처럼 기본 아이템만 필요하면 false */
+  createItem(base: ItemBase, ilvl: number, rng: Rng, quality: Quality, generate = false): ItemInstance {
     const item: ItemInstance = {
       id: this.nextId++, code: base.code, quality, ilvl, identified: quality <= QUALITY.SUPERIOR,
-      quantity: 1, durability: 0, maxDurability: 0, defense: 0, affixesPending: quality >= QUALITY.MAGIC,
+      quantity: 1, durability: 0, maxDurability: 0, defense: 0, invW: base.invWidth, invH: base.invHeight, levelReq: base.levelReq,
+      prefixes: [], suffixes: [], sockets: 0, socketed: [], stats: [],
     };
     if (base.code === 'gld') {
       item.quantity = Math.max(rng.pick(5 * ilvl) + ilvl, 1);
@@ -236,6 +270,12 @@ export class TreasureDb {
       item.durability = Math.min(rng.pick(half) + half, 255);
     }
     if (base.category === 'armor') item.defense = base.minAc + rng.pick(base.maxAc - base.minAc + 1);
+    // 출처: D2MOO D2GAME_InitItemStats — 매직 이상은 스택 수량 1
+    if (generate && this.gen && base.code !== 'gld') {
+      // 원작은 아이템 시드(품질·접사)와 유닛 시드(기본 능력치)를 따로 쓴다
+      const itemRng = new Rng(Number(rng.next() & 0xffffffffn) || 1);
+      this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques });
+    }
     // 출처: D2MOO D2Game ITEMS/Items.cpp — 수량 = rand(spawnstack − minstack) + minstack (spawnstack 이 없거나 작으면 max(minstack, maxstack))
     if (base.stackable) {
       const spawn = base.spawnStack < base.minStack || !base.spawnStack ? Math.max(base.minStack, base.maxStack) : base.spawnStack;

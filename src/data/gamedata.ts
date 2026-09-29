@@ -6,6 +6,7 @@ import { TreasureDb } from '../engine/treasure';
 import { parseMissiles } from '../engine/missiles';
 import { SkillDb } from '../engine/skills/db';
 import { SkillCalc } from '../engine/skills/formulas';
+import { ItemGen } from '../engine/itemgen';
 import type { GameData } from '../engine/game';
 import { GameTables, type AssetSource } from './tables';
 
@@ -14,6 +15,12 @@ const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 export function buildGameData(src: AssetSource, tables = new GameTables(src)): GameData {
   const items = new ItemDb({ weapons: tables.table('weapons'), armor: tables.table('armor'), misc: tables.table('misc'), itemtypes: tables.table('ItemTypes') });
   const treasure = new TreasureDb(items, tables.table('TreasureClassEx'), tables.table('ItemRatio'));
+  treasure.gen = new ItemGen(items, {
+    magicprefix: tables.table('MagicPrefix'), magicsuffix: tables.table('MagicSuffix'), rareprefix: tables.table('RarePrefix'), raresuffix: tables.table('RareSuffix'),
+    uniqueitems: tables.table('UniqueItems'), setitems: tables.table('SetItems'), sets: tables.table('Sets'),
+    qualityitems: tables.table('QualityItems'), lowqualityitems: tables.table('LowQualityItems'),
+    properties: tables.table('Properties'), itemstatcost: tables.table('ItemStatCost'), skills: tables.table('skills'),
+  });
   const monsters = new MonsterDb(tables.table('MonStats'), tables.table('MonStats2'), tables.table('MonLvl'));
   const animBytes = src.read('data\\global\\AnimData.d2');
   if (!animBytes) throw new Error('AnimData.d2 not found');

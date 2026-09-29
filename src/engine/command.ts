@@ -19,7 +19,7 @@ export type Command =
   /** 오브젝트 조작 (걸어가서 연다: 상자·문·신전·우물·웨이포인트·포털) */
   | { type: 'interact'; unitId: number }
   /** 웨이포인트 목록에서 레벨 고르기 (열어 둔 웨이포인트에서 그 레벨 웨이포인트로 이동) */
-  | { type: 'waypoint'; level: string }
+  | { type: 'waypoint'; level: string | number }
   | { type: 'useBelt'; slot: number }
   | { type: 'moveItem'; itemId: number; to: ItemLocation }
   /** 인벤토리·벨트 아이템 사용 (물약 마시기, 두루마리 읽기 — 원작 우클릭) */

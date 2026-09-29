@@ -44,6 +44,8 @@ import { NPC_DEFS, NpcServices, type HireCandidate, type NpcOption, type TradeHo
 import type { StoreItem } from './shop';
 import type { GambleTable } from './shop';
 import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from './quests/act1';
+import { QuestControl } from './quests/index';
+import { difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { LEVEL } from './drlg/types';
 
@@ -115,6 +117,8 @@ export interface GameInit {
   stashGold?: number;
   /** 난이도 0 Normal / 1 Nightmare / 2 Hell (DifficultyLevels.txt 행) */
   difficulty?: 0 | 1 | 2;
+  /** 시작 막 (0 = Act 1 … 3 = Act 4). levels 는 이 막의 레벨 */
+  act?: number;
   /** 저장된 시체 (게임을 나갔다 들어오면 시작 위치 옆에 놓인다) */
   corpse?: Record<string, ItemInstance>;
   /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
@@ -176,6 +180,12 @@ interface LevelState {
 }
 
 export interface GameEvent { type: string; [k: string]: unknown }
+
+/** 한 막의 레벨 (Game.addAct / onActChange 가 돌려줌). start = 막 도착 위치 (마을) */
+export interface ActLevels { levels: LevelDef[]; start: Pt }
+
+/** 막별 상태 캐시 (레벨·NPC·몬스터·오브젝트는 LevelState 안에). 원작도 막마다 DRLG·방·유닛을 따로 둔다 */
+interface ActState { act: number; levels: Map<string, LevelState>; start: Pt }
 
 export interface PlayerSnapshot {
   id: number; x: number; y: number; mode: PlayerMode; dir: number; modeTick: number;
@@ -372,6 +382,15 @@ export class Game {
   gold = 0;
   stashGold = 0;
   readonly difficulty: 0 | 1 | 2;
+  /** 난이도 규칙 (DifficultyLevels.txt 현재 난이도 행) */
+  readonly rules: DifficultyRules;
+  /** 현재 막 (0 = Act 1 … 3 = Act 4). 출처: D2MOO DRLG_GetActNoFromLevelId — 플레이어가 있는 레벨의 막 */
+  act = 0;
+  /**
+   * 막 월드 요청: 아직 만들지 않은 막으로 갈 때 부른다 (원작 DRLG_AllocDrlg 처럼 막 단위로 지연 생성).
+   * 브라우저(main.ts)는 여기서 그 막 월드·렌더러를 만들어 돌려준다. null 이면 그 막으로 갈 수 없다
+   */
+  onActChange: ((act: number) => ActLevels | null | undefined) | null = null;
   /**
    * 플레이어 시체: 장착·커서 아이템과 되찾을 경험치(잃은 경험치의 75%).
    * 출처: D2MOO PlrModes.cpp D2GAME_CORPSE_Handler_6FC7FBD0
@@ -382,7 +401,10 @@ export class Game {
   private tickCount = 0;
   private readonly queue: Command[] = [];
   private readonly player: PlayerState;
-  private readonly levels = new Map<string, LevelState>();
+  /** 현재 막의 레벨 (acts 의 현재 막 levels 와 같은 객체) */
+  private levels = new Map<string, LevelState>();
+  /** 막별 캐시 — 막을 떠나도 레벨·NPC·상점 상태를 그대로 둔다 */
+  private readonly acts = new Map<number, ActState>();
   private level: LevelState;
   /** 출구로 막 넘어옴: 도착 칸을 덮는 출구는 벗어날 때까지 무시 */
   private exitHold = false;
@@ -421,20 +443,18 @@ export class Game {
   readonly questRecord: QuestRecord;
   /** 게임 전역 퀘스트 기록 (원작 pQuestControl->pQuestFlags, 게임마다 새로) */
   readonly questGlobal = new QuestRecord();
-  /** Act 1 퀘스트 상태 기계 */
+  /** Act 1 퀘스트 상태 기계 (questControl 의 Act 1 모듈) */
   readonly quests: Act1Quests;
+  /** 모든 막 퀘스트 (게임 사건은 여기로 알린다) */
+  readonly questControl: QuestControl;
   /** 용병 기록 (죽어도 남는다 — 부활 대상). unitId = 살아 있는 유닛 */
   merc: (MercSave & { unitId: number | null }) | null = null;
   private mercInfo: MercStats | null = null;
 
   constructor(init: GameInit) {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
-    for (const d of defs) {
-      this.levels.set(d.id, {
-        def: d, monsters: [], ground: [], missiles: [], populated: false, npcs: [], objects: [], region: null, variants: new Map(),
-        automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
-      });
-    }
+    this.act = init.act ?? 0;
+    this.levels = this.addAct(this.act, { levels: defs, start: { x: init.player.x, y: init.player.y } }).levels;
     this.seed = init.seed >>> 0;
     // 근사(원작 미확인): 원작 오브젝트 시드는 게임 시드에서 굴린 값 (OBJRGN_AllocObjectControl) — 여기서는 게임 시드에서 고정 변환
     this.objControl = new Rng((init.seed ^ 0x0b1ec7) >>> 0 || 1);
@@ -462,6 +482,7 @@ export class Game {
     this.gold = init.gold ?? 0;
     this.stashGold = init.stashGold ?? 0;
     this.difficulty = init.difficulty ?? 0;
+    this.rules = difficultyRules(init.data?.difficultyRows, this.difficulty);
     const p = init.player;
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
@@ -480,14 +501,15 @@ export class Game {
     if (!init.questFlags) for (const f of init.quests ?? []) this.legacyQuest(f);
     // 원작 퀘스트 전역 시드 (QUESTS_QuestInit: SEED_InitLowSeed(ITEMS_RollRandomNumber(pGameSeed))). 근사: 게임 시드에서 고정 변환
     this.questRng = new Rng((init.seed ^ 0x51e57) >>> 0 || 1);
-    this.quests = new Act1Quests(this.questHost());
+    this.questControl = new QuestControl(this.questHost());
+    this.quests = this.questControl.get(0) as Act1Quests;
     // 저장된 용병: 게임을 시작하면 플레이어 곁에 (죽은 용병은 기록만 — 부활 대상). 출처: D2GAME_MERCS_Create_6FCC8630
     if (init.merc) {
       this.merc = { ...init.merc, unitId: null };
       if (!init.merc.dead) this.spawnMerc(p.x + 1, p.y + 1);
     }
     // 출처: QUESTS_SequenceCycler — 플레이어가 게임에 들어옴
-    this.quests.startGame();
+    this.questControl.startGame();
   }
 
   get frame(): number {
@@ -524,8 +546,99 @@ export class Game {
     return this.level.missiles;
   }
 
-  /** 레벨 전환: 진행 중 행동 취소, 첫 방문이면 몬스터 배치 */
+  /**
+   * 막 레벨 등록 (막 캐시 만들기). 이미 있으면 그대로 돌려준다.
+   * 출처: D2MOO DRLG_AllocDrlg — 막마다 DRLG·방 목록을 따로
+   */
+  addAct(act: number, w: ActLevels): ActState {
+    const have = this.acts.get(act);
+    if (have) return have;
+    const levels = new Map<string, LevelState>();
+    for (const d of w.levels) {
+      levels.set(d.id, {
+        def: d, monsters: [], ground: [], missiles: [], populated: false, npcs: [], objects: [], region: null, variants: new Map(),
+        automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
+      });
+    }
+    const st: ActState = { act, levels, start: { x: w.start.x, y: w.start.y } };
+    this.acts.set(act, st);
+    return st;
+  }
+
+  /** 막이 준비됐는가 (레벨이 등록됨) */
+  hasAct(act: number): boolean {
+    return this.acts.has(act);
+  }
+
+  /** 막 준비: 없으면 onActChange 로 요청 (원작: 막에 처음 들어갈 때 DRLG 할당) */
+  private ensureAct(act: number): ActState | null {
+    const have = this.acts.get(act);
+    if (have) return have;
+    const w = this.onActChange?.(act);
+    return w ? this.addAct(act, w) : null;
+  }
+
+  /** 레벨 id 로 (모든 막에서) 레벨과 막 찾기 */
+  private findLevel(id: string): { act: number; level: LevelState } | null {
+    const here = this.levels.get(id);
+    if (here) return { act: this.act, level: here };
+    for (const a of this.acts.values()) {
+      const l = a.levels.get(id);
+      if (l) return { act: a.act, level: l };
+    }
+    return null;
+  }
+
+  /** 막의 마을 레벨 id */
+  townOf(act: number): string | undefined {
+    const a = this.acts.get(act);
+    if (!a) return undefined;
+    for (const l of a.levels.values()) if (l.def.inTown) return l.def.id;
+    return undefined;
+  }
+
+  /**
+   * 막 전환. arrive = 'town' 이면 그 막 마을 시작 위치, 아니면 지정 레벨·위치.
+   * 막 월드가 없으면 onActChange 로 요청한다. 성공하면 true.
+   * 출처: D2MOO D2GAME_PlayerChangeAct (Warriv·Meshif·Jerhyn·Tyrael 이동, 막 경계 웨이포인트) → 새 막 마을 DUNGEON_FindActSpawnLocation
+   */
+  changeAct(act: number, arrive: 'town' | { levelId: string; x: number; y: number } = 'town'): boolean {
+    const st = this.ensureAct(act);
+    if (!st) return false;
+    if (arrive === 'town') {
+      const town = this.townOf(act);
+      if (!town) return false;
+      const tl = st.levels.get(town) as LevelState;
+      const p = nearestWalkable(tl.def.map, st.start, 10) ?? { x: Math.floor(st.start.x), y: Math.floor(st.start.y) };
+      this.changeLevel(town, p.x + 0.5, p.y + 0.5);
+    } else {
+      if (!st.levels.has(arrive.levelId)) return false;
+      this.changeLevel(arrive.levelId, arrive.x, arrive.y);
+    }
+    return true;
+  }
+
+  /** 현재 막을 바꾼다 (레벨 목록만 — 플레이어 이동은 changeLevel) */
+  private switchAct(act: number): void {
+    if (act === this.act) return;
+    const st = this.acts.get(act);
+    if (!st) throw new Error(`act ${act} not loaded`);
+    const from = this.act;
+    // 원작: 막을 옮기면 웨이포인트 패널·대화가 닫히고, 떠난 막 마을 상인 재고는 비운다 (SUNITPROXY_UpdateVendorInventory)
+    this.waypointOpen = null;
+    this.closeTalk();
+    if (this.level.def.inTown) this.npc.leaveTown();
+    this.act = act;
+    this.levels = st.levels;
+    this.events.push({ type: 'actChanged', act, from });
+  }
+
+  /** 레벨 전환: 진행 중 행동 취소, 첫 방문이면 몬스터 배치. 다른 막 레벨이면 막도 바꾼다 */
   changeLevel(id: string, x: number, y: number): void {
+    if (!this.levels.has(id)) {
+      const f = this.findLevel(id);
+      if (f) this.switchAct(f.act);
+    }
     const next = this.levels.get(id);
     if (!next) throw new Error(`unknown level ${id}`);
     this.exitHold = false;
@@ -553,7 +666,7 @@ export class Game {
     this.populate(next);
     this.events.push({ type: 'levelChanged', level: id });
     // 출처: QUESTS_ChangeLevel
-    if (oldNo !== (next.def.levelNo ?? 0)) this.quests.changeLevel(oldNo, next.def.levelNo ?? 0);
+    if (oldNo !== (next.def.levelNo ?? 0)) this.questControl.changeLevel(oldNo, next.def.levelNo ?? 0);
   }
 
   /**
@@ -571,6 +684,18 @@ export class Game {
       this.character.mana = this.maxMana();
     }
     this.changeLevel(levelId, x, y);
+  }
+
+  /**
+   * 현재 막 마을에서 부활 (원작: 죽으면 그 막 마을 시작 위치). 출처: D2GAME_PlayerRespawn → DUNGEON_FindActSpawnLocation(현재 막)
+   */
+  respawnInTown(): void {
+    const st = this.acts.get(this.act);
+    const town = this.townOf(this.act);
+    if (!st || !town) return;
+    const map = (st.levels.get(town) as LevelState).def.map;
+    const p = nearestWalkable(map, st.start, 10) ?? { x: Math.floor(st.start.x), y: Math.floor(st.start.y) };
+    this.respawn(town, p.x + 0.5, p.y + 0.5);
   }
 
   /**
@@ -715,7 +840,7 @@ export class Game {
     this.updateMissiles();
     this.regen();
     // 출처: QUESTS_QuestUpdater (퀘스트 타이머)
-    this.quests.update();
+    this.questControl.update();
     this.tickCount++;
     return this.events;
   }
@@ -739,7 +864,7 @@ export class Game {
         return {
           id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
           hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
-          ...(m.npc ? { npc: true, interact: m.npc.interact, ...(m.npc.interact && this.quests.npcHasQuest(m.type.id) ? { quest: true } : {}) } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
+          ...(m.npc ? { npc: true, interact: m.npc.interact, ...(m.npc.interact && this.questControl.npcHasQuest(m.type.id) ? { quest: true } : {}) } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
           flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
           ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
         };
@@ -889,8 +1014,7 @@ export class Game {
   private umodCtx(): UModContext | null {
     const d = this.data;
     if (!d?.uniques) return null;
-    const row = d.difficultyRows?.[this.difficulty];
-    return { db: d.uniques, monsters: d.monsters, difficulty: this.difficulty, championDmgBonus: Number(row?.ChampionDamageBonus ?? 90) || 90 };
+    return { db: d.uniques, monsters: d.monsters, difficulty: this.difficulty, championDmgBonus: this.rules.championDamageBonus };
   }
 
   private applyUMod(m: MonsterUnit, umod: number, bUnique: boolean): void {
@@ -1809,7 +1933,7 @@ export class Game {
     this.statsDirty = true;
     this.events.push({ type: 'itemPickup', itemId: g.item.id, code: g.item.code });
     // 출처: QUESTS_ItemPickedUp (퀘스트 아이템의 연결 목록)
-    this.quests.itemPickedUp(g.item.code);
+    this.questControl.itemPickedUp(g.item.code);
   }
 
   // ---------------------------------------------------------------- 아이템 사용
@@ -3234,7 +3358,7 @@ export class Game {
 
   /** DifficultyLevels.txt AiCurseDivisor (Normal 1) */
   private aiCurseDiv(): number {
-    return Number(this.data?.difficultyRows?.[this.difficulty]?.AiCurseDivisor ?? 1) || 1;
+    return this.rules.aiCurseDivisor;
   }
 
   /** 그림만 보이는 미사일 (클라이언트 미사일·오버레이). celFile 이 'overlays\\…' 면 오버레이 폴더 그림 */
@@ -3626,8 +3750,8 @@ export class Game {
     if (dvl) {
       const phys = Math.min(applyMonsterResists(d, this.monsterResists(m)).phys / 256, Math.max(0, hpBefore));
       const ll = dvl.stat('lifedrainmindam'), ml = dvl.stat('manadrainmindam');
-      if (ll > 0) c.life = Math.min(this.maxLife(), c.life + (phys * ll) / 100);
-      if (ml > 0) c.mana = Math.min(this.maxMana(), c.mana + (phys * ml) / 100);
+      if (ll > 0) c.life = Math.min(this.maxLife(), c.life + (phys * ll) / 100 / this.rules.lifeStealDivisor);
+      if (ml > 0) c.mana = Math.min(this.maxMana(), c.mana + (phys * ml) / 100 / this.rules.manaStealDivisor);
     }
     if (spec.selfDamagePct) {
       // Sacrifice: 준 물리 피해(대상 생명 이하)의 calc2 % 만큼 자신 피해 (출처: SKILLS_SrvDo064_Sacrifice)
@@ -3689,7 +3813,8 @@ export class Game {
     }
     this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));
-    const coldDiv = this.data?.coldDivisor || 1, frzDiv = this.data?.freezeDivisor || 1;
+    // 출처: DifficultyLevels.txt MonsterColdDivisor / MonsterFreezeDivisor (현재 난이도 행)
+    const coldDiv = this.rules.monsterColdDivisor, frzDiv = this.rules.monsterFreezeDivisor;
     if (d.coldLen > 0 && m.type.coldEffect < 0) {
       const eff = m.type.coldEffect;
       m.states.set('cold', this.tickCount + Math.max(1, Math.trunc(d.coldLen / coldDiv)), { velocitypercent: eff, attackrate: eff, other_animrate: eff });
@@ -3773,7 +3898,7 @@ export class Game {
       const su = m.superUnique !== undefined ? this.data?.uniques?.superUnique(m.superUnique)?.key : undefined;
       // 근사(원작 미확인): "같은 방이나 이웃 방" 대신 같은 레벨의 40 서브타일 안
       const near = this.level.monsters.includes(m) && Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40;
-      this.quests.monsterKilled({ levelNo, typeId: m.type.id, ...(su ? { superUnique: su } : {}), x: m.x, y: m.y, byPlayer: source !== 'other', playerNear: near });
+      this.questControl.monsterKilled({ levelNo, typeId: m.type.id, ...(su ? { superUnique: su } : {}), x: m.x, y: m.y, byPlayer: source !== 'other', playerNear: near });
     }
   }
 
@@ -3806,7 +3931,7 @@ export class Game {
     const unique = (m.flags & MONFLAG.UNIQUE) !== 0;
     if (m.umods.includes(UMOD.FIRE) && unique) {
       const hp = Math.trunc((m.type.maxHpPct * data.monsters.levelBase(Math.max(1, m.stats.level), 'HP')) / 100);
-      const pct = Number(data.difficultyRows?.[this.difficulty]?.MonsterCEDamagePercent ?? 50) || 50;
+      const pct = this.rules.monsterCEDamagePercent;
       const max = Math.trunc((hp * pct) / 100), min = Math.trunc((max * 60) / 100);
       const dmg = min + m.rng.pick(Math.max(0, max - min));
       const explode = data.missiles.get('monstercorpseexplode');
@@ -4302,7 +4427,7 @@ export class Game {
       if (!(def.mode in MONMODE_INDEX)) return false;
       mode = def.mode as MonMode;
     }
-    const bonus = Number(this.data.difficultyRows?.[this.difficulty]?.MonsterSkillBonus ?? 0) || 0;
+    const bonus = this.rules.monsterSkillBonus;
     const cast = this.makeCast(m, slot, def.name, Math.max(1, def.lvl) + bonus, t ?? { unitId: m.targetId, ...this.targetOf(m) }, seq);
     // Nest(둥지): 시작할 때 스폰 자리를 정한다 (출처: SKILLS_SrvSt49_Nest_EvilHutSpawner → MONSTERS_GetMinionSpawnInfo)
     if (def.name === 'Nest') {
@@ -4705,7 +4830,7 @@ export class Game {
     if (missName && data?.missiles.has(missName)) {
       const tp = this.targetOf(m);
       // 출처: MonsterMode.cpp 공격 이벤트 — 미사일 레벨 = MonsterSkillBonus + 1
-      const lvl = (Number(data.difficultyRows?.[this.difficulty]?.MonsterSkillBonus ?? 0) || 0) + 1;
+      const lvl = this.rules.monsterSkillBonus + 1;
       this.launchMonsterMissile(m, missName, tp.x, tp.y, { lvl, mode: m.mode });
       // 출처: 같은 곳 — Quill Rat 계열은 aip3 개수만큼 대상 ±5 지점에도 (시드 'SEIS')
       if (m.type.baseId === 'quillrat1') {
@@ -5344,11 +5469,11 @@ export class Game {
   /** 퀘스트 대사 재생: 클라이언트가 두루마리를 띄우고 문자열 번호를 돌려보낸다 (QUESTS_NPCMessage → ScrollMessage) → 목록 다시 (QUESTS_NPCActivateSpeeches) */
   private playSpeech(n: MonsterUnit, sp: QuestSpeech): void {
     this.events.push({ type: 'questSpeech', npcId: n.id, typeId: n.type.id, quest: sp.quest, index: sp.index, key: sp.key });
-    this.quests.scrollMessage(n.type.id, sp.index);
+    this.questControl.scrollMessage(n.type.id, sp.index);
     const t = this.talk;
     if (t && t.npcId === n.id) {
       // 다시 만든 목록: 방금 재생한 대사는 메뉴 항목으로 남긴다 (원작 nMenu 0 → 2 로 다시 보냄 — 근사)
-      const next = this.quests.npcActivate(n.type.id);
+      const next = this.questControl.npcActivate(n.type.id);
       if (!next.some((x) => x.quest === sp.quest)) next.push({ ...sp, menu: 2 });
       t.speeches = next.map((x) => (x.index === sp.index ? { ...x, menu: 2 as const } : x));
     }
@@ -5415,7 +5540,7 @@ export class Game {
     if (n.mode !== 'NU') this.setMonMode(n, 'NU');
     n.dir = dir64(this.player.x - n.x, this.player.y - n.y);
     // 출처: QUESTS_NPCActivate — 퀘스트마다 대사 목록 (nMenu 0 은 말을 걸자마자 재생)
-    const speeches = this.quests.npcActivate(n.type.id);
+    const speeches = this.questControl.npcActivate(n.type.id);
     this.talk = { levelId: this.level.def.id, npcId: n.id, mode: 'menu', speeches };
     if (NPC_DEFS[n.type.id]?.heal) this.healAtNpc();
     this.events.push({ type: 'npcInteract', npcId: n.id, typeId: n.type.id });
@@ -5434,7 +5559,7 @@ export class Game {
     if (n) this.npc.endTrade(n.type.id);
     this.events.push({ type: 'npcClosed', npcId: t.npcId });
     // 출처: QUESTS_NPCDeactivate
-    if (n) this.quests.npcDeactivate(n.type.id);
+    if (n) this.questControl.npcDeactivate(n.type.id);
   }
 
   private npcMenu(option: NpcOption): void {
@@ -6048,7 +6173,7 @@ export class Game {
     this.gold = 0;
     this.events.push({ type: 'goldLost', amount: penalty });
     const et = this.expTable;
-    const pct = Number(this.data?.difficultyRows?.[this.difficulty]?.DeathExpPenalty ?? 0);
+    const pct = this.rules.deathExpPenalty;
     if (c.level > 1 && et && pct > 0) {
       const prev = et.threshold(c.level - 1), cur = et.threshold(c.level);
       let loss = Math.trunc(((cur - prev) * pct) / 100);
@@ -6424,20 +6549,25 @@ export class Game {
   }
   /** 레벨의 오브젝트 (방문하지 않은 레벨은 빈 목록) */
   objectsOf(levelId: string): readonly ObjectUnit[] {
-    return this.levels.get(levelId)?.objects ?? [];
+    return this.findLevel(levelId)?.level.objects ?? [];
   }
   /** 레벨의 자동 지도 탐험 기록 */
   automapOf(levelId: string): AutomapReveal | undefined {
-    return this.levels.get(levelId)?.automap;
+    return this.findLevel(levelId)?.level.automap;
   }
   /** 레벨 정의 (UI: 웨이포인트 목록·자동 지도 표시) */
   levelDef(levelId: string): LevelDef | undefined {
-    return this.levels.get(levelId)?.def;
+    return this.findLevel(levelId)?.level.def;
   }
-  /** 레벨 번호(levels.txt) → 레벨 키 */
+  /** 레벨 번호(levels.txt) → 레벨 키 (현재 막 먼저, 없으면 만들어 둔 다른 막) */
   levelKeyOf(levelNo: number): string | undefined {
     for (const l of this.levels.values()) if (l.def.levelNo === levelNo) return l.def.id;
+    for (const a of this.acts.values()) for (const l of a.levels.values()) if (l.def.levelNo === levelNo) return l.def.id;
     return undefined;
+  }
+  /** 퀘스트 패널 탭 (막) 의 줄 */
+  questLog(act: number): QuestLogEntry[] {
+    return this.questControl.log(act);
   }
 
   /**
@@ -6484,7 +6614,7 @@ export class Game {
     if ([4, 6, 7, 9, 13, 15, 47].includes(t.initFn)) {
       const prev = this.level;
       this.level = level;
-      this.quests.initObject(o);
+      this.questControl.initObject(o);
       this.level = prev;
     }
     return o;
@@ -6556,7 +6686,7 @@ export class Game {
     if (this.isDead) return;
     const fn = o.type.operateFn;
     // 퀘스트 오브젝트 (6 TowerTome, 9 Monolith, 10 CainGibbet, 12 InifussTree, 21 Malus, 33 WirtsBody)
-    if (this.quests.operate(o)) return;
+    if (this.questControl.operate(o)) return;
     switch (fn) {
       case 1: return this.opCasket(o);
       case 2: return this.opShrine(o);
@@ -7143,7 +7273,7 @@ export class Game {
 
   /** 레벨의 웨이포인트 위치 (DS1 프리셋 objects.txt SubClass 0x40) */
   waypointPos(levelId: string): { x: number; y: number } | null {
-    const lv = this.levels.get(levelId), db = this.data?.objects;
+    const lv = this.findLevel(levelId)?.level, db = this.data?.objects;
     if (!lv || !db) return null;
     const live = lv.objects.find((o) => o.type.subClass & SUBCLASS.WAYPOINT);
     if (live) return { x: live.x, y: live.y };
@@ -7152,8 +7282,11 @@ export class Game {
   }
 
   private waypointNo(levelId: string): number {
-    const no = this.levels.get(levelId)?.def.levelNo;
-    return no === undefined ? 255 : (this.data?.objects?.levels.get(no)?.waypoint ?? 255);
+    return this.waypointNoOf(this.findLevel(levelId)?.level.def.levelNo);
+  }
+  /** levels.txt Waypoint (전역 번호: Act 1 0~8, Act 2 9~17, Act 3 18~26, Act 4 27~29) */
+  private waypointNoOf(levelNo: number | undefined): number {
+    return levelNo === undefined ? 255 : (this.data?.objects?.levels.get(levelNo)?.waypoint ?? 255);
   }
 
   /**
@@ -7190,7 +7323,7 @@ export class Game {
    * 목록에서 고른 레벨로 이동. 출처: D2GAME_WAYPOINT_Unk_6FC79600 — 조작 중인 웨이포인트가 있어야 하고, 다른 레벨이며 활성된 웨이포인트여야 한다.
    * 도착 = 도착 레벨 웨이포인트 옆 (근사(원작 미확인): 원작 DUNGEON_FindActSpawnLocation(마을 13) 대신 웨이포인트 옆 가장 가까운 걷기 칸)
    */
-  travelWaypoint(levelId: string): boolean {
+  travelWaypoint(target: string | number): boolean {
     const open = this.waypointOpen;
     if (!open || open.levelId !== this.level.def.id || this.isDead) return false;
     const src = this.level.objects.find((o) => o.id === open.objectId);
@@ -7198,14 +7331,31 @@ export class Game {
       this.waypointOpen = null;
       return false;
     }
-    const no = this.waypointNo(levelId);
-    if (levelId === this.level.def.id || no === 255 || !this.waypoints.has(no)) return false;
-    const target = this.levels.get(levelId);
-    if (!target) return false;
-    this.populate(target);
+    // 대상: 레벨 키 또는 levels.txt 번호. 다른 막이면 그 막 월드를 준비한다 (출처: D2GAME_WAYPOINT_Unk_6FC79600 — 막이 다르면 D2GAME_PlayerChangeAct)
+    const levelNo = typeof target === 'number' ? target : this.findLevel(target)?.level.def.levelNo;
+    const no = this.waypointNoOf(levelNo);
+    if (levelNo === undefined || levelNo === this.level.def.levelNo || no === 255 || !this.waypoints.has(no)) return false;
+    const targetAct = this.data?.objects?.levels.get(levelNo)?.act ?? this.act;
+    let levelId = typeof target === 'string' ? target : this.levelKeyOf(levelNo);
+    if (levelId === undefined || !this.findLevel(levelId)) {
+      const st = this.ensureAct(targetAct);
+      if (!st) return false;
+      levelId = [...st.levels.values()].find((l) => l.def.levelNo === levelNo)?.def.id;
+      if (levelId === undefined) return false;
+    }
+    const target_ = this.findLevel(levelId);
+    if (!target_) return false;
+    const targetLv = target_.level;
+    // 다른 막이면 막부터 바꾼다 (첫 배치의 마을·퀘스트 판단이 그 막 기준이 되게). 실패하면 되돌린다
+    const fromAct = this.act;
+    if (target_.act !== fromAct) this.switchAct(target_.act);
+    this.populate(targetLv);
     const wp = this.waypointPos(levelId);
-    if (!wp) return false;
-    const spot = nearestWalkable(target.def.map, { x: wp.x, y: wp.y + 3 }, 12) ?? { x: Math.floor(wp.x), y: Math.floor(wp.y) };
+    if (!wp) {
+      if (this.act !== fromAct) this.switchAct(fromAct);
+      return false;
+    }
+    const spot = nearestWalkable(targetLv.def.map, { x: wp.x, y: wp.y + 3 }, 12) ?? { x: Math.floor(wp.x), y: Math.floor(wp.y) };
     this.waypointOpen = null;
     this.changeLevel(levelId, spot.x + 0.5, spot.y + 0.5);
     this.events.push({ type: 'waypointTravel', level: levelId, no });
@@ -7254,7 +7404,7 @@ export class Game {
   }
 
   private removeObject(levelId: string, id: number): void {
-    const lv = this.levels.get(levelId);
+    const lv = this.findLevel(levelId)?.level;
     if (!lv) return;
     const i = lv.objects.findIndex((o) => o.id === id);
     if (i < 0) return;
@@ -7292,7 +7442,7 @@ export class Game {
   usePortal(o: ObjectUnit): void {
     const pt = o.portal;
     if (!pt || this.isDead) return;
-    const dest = this.levels.get(pt.linkLevel);
+    const dest = this.findLevel(pt.linkLevel)?.level;
     if (!dest) return;
     this.populate(dest);
     const link = dest.objects.find((x) => x.id === pt.linkId);

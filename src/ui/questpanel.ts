@@ -17,7 +17,9 @@ type Str = (k: string) => string;
 export const QUEST_PANEL = { x: 80, y: 60, w: 320, h: 432 } as const;
 /** 아이콘 칸 (패널 기준): 3개 × 2줄 */
 const ICON = { x0: 26, y0: 44, dx: 94, dy: 96, w: 72, h: 86 } as const;
-const TAB = { x: 2, y: 3, w: 78 } as const;
+const TAB = { x: 2, y: 3, w: 78, h: 30 } as const;
+/** 클래식 막 탭 수 (I~IV) */
+const TABS = 4;
 const TEXT = { x: 160, y: 250, w: 280, line: 17 } as const;
 const LAST = { x: 223, y: 389, w: 30, h: 30 } as const;
 const CLOSE = { x: 272, y: 384, w: 36, h: 36 } as const;
@@ -25,6 +27,10 @@ const FILES = ['questbackground', 'questtabs', 'questlast', 'a1q1', 'a1q2', 'a1q
 
 export class QuestPanel {
   open = false;
+  /** 고른 막 탭 (0 = Act I). 막마다 퀘스트 줄은 Game.questLog(tab) */
+  tab = 0;
+  /** 누를 수 있는 탭 (퀘스트 모듈이 있는 막) */
+  tabEnabled: boolean[] = [true, false, false, false];
   /** 고른 퀘스트 (원작: 가장 최근에 갱신된 퀘스트가 처음 선택) */
   selected = 1;
   private readonly frames = new Map<string, Drawable[] | null>();
@@ -91,8 +97,9 @@ export class QuestPanel {
       bg.forEach((c, i) => ctx.drawImage(c as CanvasImageSource, P.x + (pos[i]?.[0] ?? 0), P.y + (pos[i]?.[1] ?? 0)));
     }
     const tabs = this.frames.get('questtabs');
-    if (tabs) for (let a = 0; a < 4; a++) {
-      const f = tabs[a * 2 + (a === 0 ? 0 : 1)];
+    // 탭 프레임 짝: 선택 2a, 비선택 2a+1 (근사(원작 미확인))
+    if (tabs) for (let a = 0; a < TABS; a++) {
+      const f = tabs[a * 2 + (a === this.tab ? 0 : 1)];
       if (f) ctx.drawImage(f as CanvasImageSource, P.x + TAB.x + a * TAB.w, P.y + TAB.y);
     }
     entries.forEach((e, i) => {
@@ -110,6 +117,8 @@ export class QuestPanel {
     if (last) ctx.drawImage(last as CanvasImageSource, P.x + LAST.x, P.y + LAST.y);
     // 고른 퀘스트: 이름 + 설명
     const sel = entries.find((e) => e.quest === this.selected);
+    // 퀘스트가 없는 탭 (아직 없는 막) 은 이름·설명 없이
+    if (!entries.length) return;
     drawText(ctx, str(`qstsa1q${this.selected}`), P.x + TEXT.x, P.y + TEXT.y - 8, { align: 'center', color: 'white' });
     if (sel) {
       const lines = this.description(sel, str);
@@ -136,6 +145,12 @@ export class QuestPanel {
     const P = QUEST_PANEL;
     if (x < P.x || y < P.y || x > P.x + P.w || y > P.y + P.h) return null;
     if (x >= P.x + CLOSE.x && x <= P.x + CLOSE.x + CLOSE.w && y >= P.y + CLOSE.y && y <= P.y + CLOSE.y + CLOSE.h) return 'close';
+    // 막 탭: 퀘스트가 있는 막만 고를 수 있다
+    if (y >= P.y + TAB.y && y < P.y + TAB.y + TAB.h && x >= P.x + TAB.x && x < P.x + TAB.x + TABS * TAB.w) {
+      const a = Math.floor((x - P.x - TAB.x) / TAB.w);
+      if (this.tabEnabled[a]) this.tab = a;
+      return 'panel';
+    }
     if (x >= P.x + LAST.x && x <= P.x + LAST.x + LAST.w && y >= P.y + LAST.y && y <= P.y + LAST.y + LAST.h) {
       // 근사(원작 미확인): questlast = 마지막으로 진행한 퀘스트로 — 여기서는 진행 중인 마지막 퀘스트
       const act = [...this.entries].reverse().find((e) => e.icon === 'active');

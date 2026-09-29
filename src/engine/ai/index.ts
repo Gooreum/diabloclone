@@ -3,7 +3,7 @@
 //       AiUtil.cpp sub_6FCF2110 (aidist 기본 35, 마을 플레이어 제외) (https://github.com/ThePhrozenKeep/D2MOO)
 // 근사(원작 미확인): 이동 완료/공격 종료 후 다음 판단까지 monstats aidel 프레임 대기, 경로는 엔진 A* 사용.
 import { aiDistance, isInMeleeRange } from '../monster';
-import { ACT1_AI } from './act1';
+import { ACT1_AI, type AiFn } from './act1';
 import { idle, walkCloseToUnit } from './tactics';
 import type { AiWorld, MonsterUnit } from './types';
 
@@ -14,12 +14,18 @@ export { aiParam, circle, escape, idle, moveToTarget, recentlyHit, rollChance, r
 
 const PLAYER_SIZE = 2;
 
+/**
+ * 막별 AI 표를 합친 것 (monstats AI 이름 → 함수). 원작 AI 표(gpMonsterAiTable)도 막 구분 없이 하나다.
+ * Phase 5: ACT2_AI·ACT3_AI·ACT4_AI 를 여기에 더한다 (이름이 겹치면 앞 막 것이 이긴다 — 같은 AI 는 한 번만 정의)
+ */
+export const AI_TABLE: Readonly<Record<string, AiFn>> = { ...ACT1_AI };
+
 export function aiName(m: MonsterUnit): string {
   return m.aiOverride ?? m.type.ai;
 }
 
 export function hasAi(ai: string): boolean {
-  return ai in ACT1_AI;
+  return ai in AI_TABLE;
 }
 
 /** 한 번의 AI 판단. 대상이 없거나 멀면 거리별 대기 (출처: sub_6FCCF9D0) */
@@ -37,7 +43,7 @@ export function think(w: AiWorld, m: MonsterUnit): void {
     return;
   }
   const combat = isInMeleeRange(m.x, m.y, m.type.sizeX, m.type.meleeRange, t.x, t.y, t.size || PLAYER_SIZE);
-  const fn = ACT1_AI[aiName(m)];
+  const fn = AI_TABLE[aiName(m)];
   if (fn) fn(w, m, dist, combat);
   else idle(w, m, 25);
 }

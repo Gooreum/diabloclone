@@ -8,17 +8,24 @@ import { indexedToCanvas, type Drawable } from '../render/sprites';
 import type { AsyncAssets } from '../render/units';
 import { drawText } from './text';
 
-export interface WaypointRow { no: number; levelKey: string; name: string; active: boolean; current: boolean }
+export interface WaypointRow { no: number; levelKey: string; name: string; active: boolean; current: boolean; levelNo?: number }
 
 export const WP_PANEL = { x: 80, y: 60, w: 320, h: 432 } as const;
 /** 줄(아이콘 칸) 위치: 배경 그림의 금테 칸 (x 15, y 57 + 36·i) */
 const ROW = { iconX: 16, iconY: 58, step: 36, textX: 60 } as const;
 const TAB = { x: 2, y: 3, w: 78, h: 30 } as const;
+/** 클래식 막 탭 수 (I~IV) */
+const TABS = 4;
 const CLOSE = { x: 272, y: 384, w: 36, h: 36 } as const;
 
 export class WaypointPanel {
   open = false;
-  rows: WaypointRow[] = [];
+  /** 고른 막 탭 (0 = Act I). 원작: 패널을 열면 지금 막 탭 */
+  tab = 0;
+  /** 막 탭별 줄 (월드가 없는 막은 빈 목록) */
+  rowsByAct: WaypointRow[][] = [];
+  /** 누를 수 있는 탭 (월드가 있는 막) */
+  tabEnabled: boolean[] = [true, false, false, false];
   private readonly frames = new Map<string, Drawable[] | null>();
   private readonly assets: AsyncAssets;
   private readonly pal: Palette;
@@ -38,6 +45,14 @@ export class WaypointPanel {
     });
   }
 
+  /** 지금 탭의 줄 */
+  get rows(): WaypointRow[] {
+    return this.rowsByAct[this.tab] ?? [];
+  }
+  set rows(v: WaypointRow[]) {
+    this.rowsByAct[this.tab] = v;
+  }
+
   get ready(): boolean {
     return ['waygatebackground', 'waygatetabs', 'waygateicons'].every((n) => !!this.frames.get(n));
   }
@@ -52,8 +67,9 @@ export class WaypointPanel {
       bg.forEach((c, i) => ctx.drawImage(c as CanvasImageSource, P.x + (pos[i]?.[0] ?? 0), P.y + (pos[i]?.[1] ?? 0)));
     }
     const tabs = this.frames.get('waygatetabs');
-    if (tabs) for (let a = 0; a < 4; a++) {
-      const f = tabs[a * 2 + (a === 0 ? 0 : 1)];
+    // 탭 프레임 짝: 선택 2a, 비선택 2a+1 (근사(원작 미확인))
+    if (tabs) for (let a = 0; a < TABS; a++) {
+      const f = tabs[a * 2 + (a === this.tab ? 0 : 1)];
       if (f) ctx.drawImage(f as CanvasImageSource, P.x + TAB.x + a * TAB.w, P.y + TAB.y);
     }
     const icons = this.frames.get('waygateicons');
@@ -71,10 +87,21 @@ export class WaypointPanel {
     const P = WP_PANEL;
     if (x < P.x || y < P.y || x > P.x + P.w || y > P.y + P.h) return null;
     if (x >= P.x + CLOSE.x && x <= P.x + CLOSE.x + CLOSE.w && y >= P.y + CLOSE.y && y <= P.y + CLOSE.y + CLOSE.h) return 'close';
+    // 막 탭: 월드가 있는 막만 고를 수 있다
+    if (y >= P.y + TAB.y && y < P.y + TAB.y + TAB.h && x >= P.x + TAB.x && x < P.x + TAB.x + TABS * TAB.w) {
+      const a = Math.floor((x - P.x - TAB.x) / TAB.w);
+      if (this.tabEnabled[a]) this.tab = a;
+      return 'panel';
+    }
     const i = Math.floor((y - P.y - ROW.iconY) / ROW.step);
     const row = this.rows[i];
     if (row && x >= P.x + ROW.iconX && y >= P.y + ROW.iconY + i * ROW.step && y <= P.y + ROW.iconY + i * ROW.step + 32 && row.active && !row.current) return row.levelKey;
     return 'panel';
+  }
+
+  /** 막 탭 a 의 화면 중심 (테스트·자동화용) */
+  tabCenter(a: number): { x: number; y: number } {
+    return { x: WP_PANEL.x + TAB.x + a * TAB.w + TAB.w / 2, y: WP_PANEL.y + TAB.y + TAB.h / 2 };
   }
 
   /** 줄 i 의 화면 중심 (테스트·자동화용) */

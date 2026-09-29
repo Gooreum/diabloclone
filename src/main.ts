@@ -3,7 +3,7 @@ import { AssetLoader } from './assets/loader';
 import { loadGameData } from './assets/gamedata-loader';
 import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
-import { act1SlicePaths, buildSliceWorld, townDt1Paths } from './data/act1';
+import { ACT1_WORLD_TABLES, act1WorldPaths, buildAct1World } from './data/act1-world';
 import type { GameTables } from './data/tables';
 import { CLASS_TOKEN, Game, type GameData } from './engine/game';
 import { ENGINE_FPS } from './engine/index';
@@ -34,7 +34,6 @@ const ANIMDATA = 'data\\global\\AnimData.d2';
 // 캐릭터 외형 (방어구 없음 = lit). 무기/방패 레이어는 장착 아이템 코드로 결정
 // 출처: Phrozen Keep COF 문서 — 레이어 HD 머리, TR 몸통, LG 다리, RA/LA 팔, RH 오른손 무기, LH 왼손(활), SH 방패, S1/S2 어깨
 const BODY = { HD: 'lit', TR: 'lit', LG: 'lit', RA: 'lit', LA: 'lit', S1: 'lit', S2: 'lit' };
-const LEVEL_NAMES: Record<string, string> = { town: 'Rogue Encampment', bloodmoor: 'Blood Moor' };
 
 declare global {
   interface Window {
@@ -58,10 +57,10 @@ async function boot(): Promise<void> {
   ctx.fillText('Loading...', 20, 30);
 
   const assets = await AssetLoader.open('/d2/');
-  await assets.preload([PALETTE, ANIMDATA, 'data\\global\\excel\\LvlPrest.txt', 'data\\global\\excel\\LvlTypes.txt', 'data\\local\\lng\\eng\\string.tbl', 'data\\local\\lng\\eng\\expansionstring.tbl', 'data\\local\\lng\\eng\\patchstring.tbl']);
+  await assets.preload([PALETTE, ANIMDATA, ...ACT1_WORLD_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\local\\lng\\eng\\string.tbl', 'data\\local\\lng\\eng\\expansionstring.tbl', 'data\\local\\lng\\eng\\patchstring.tbl']);
   const { data, tables } = await loadGameData(assets);
-  await assets.preload(act1SlicePaths(tables));
-  await assets.preload(townDt1Paths(assets));
+  // Act 1 오버월드 DRLG 가 읽는 원작 DS1/DT1 (LvlPrest·LvlSub·LvlTypes)
+  await assets.preload(act1WorldPaths(assets, tables));
   const shared: Shared = { assets, data, tables, pal: parsePalette(assets.read(PALETTE) as Uint8Array), anim: AnimData.parse(assets.read(ANIMDATA) as Uint8Array), canvas, ctx, host };
 
   const menu = new Menu(host);
@@ -80,8 +79,16 @@ async function boot(): Promise<void> {
 function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null): Promise<void> {
   const { data, tables, assets, pal, anim, canvas, ctx, host } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
-  const world = buildSliceWorld(assets, tables, data, seed);
-  const renderers: Record<string, WorldRenderer> = { town: new WorldRenderer(world.town, pal), bloodmoor: new WorldRenderer(world.bloodMoor, pal) };
+  // 원작 DRLG 이식: 게임 시드로 Act 1 오버월드 생성 (출처: D2MOO DRLG_AllocDrlg)
+  const world = buildAct1World(assets, tables, data, seed);
+  const renderers: Record<string, WorldRenderer> = {};
+  // HUD 레벨 이름: levels.txt LevelName → 원작 문자열
+  const levelNames: Record<string, string> = {};
+  for (const l of world.levels) {
+    renderers[l.key] = new WorldRenderer(l.preset, pal);
+    levelNames[l.key] = l.name;
+  }
+  const townMap = world.byKey.get('town')!.def.map;
   const units = new UnitGfx(assets, pal);
   const itemGfx = new ItemGfx(assets, pal);
   const missileGfx = new MissileGfx(assets, pal);
@@ -114,7 +121,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     }
   }
   const game = new Game({
-    map: world.town.collision, levels: world.levels, player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
+    map: townMap, levels: world.levels.map((l) => l.def), player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
     stashGold: save?.stashGold ?? 0, corpse: save?.corpse,
   });
@@ -193,7 +200,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (game.isDead) {
-          const p = nearestWalkable(world.town.collision, world.start, 10) ?? world.start;
+          const p = nearestWalkable(townMap, world.start, 10) ?? world.start;
           game.respawn('town', p.x + 0.5, p.y + 0.5);
         } else if (skillPanels?.open) {
           if (skillPanels.skills.style.display === 'block') skillPanels.toggleSkills();
@@ -251,7 +258,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         cam,
         buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown }, input.pickBoxes),
       );
-      drawHud(ctx, s, table, LEVEL_NAMES[game.levelId] ?? '', game.isDead, {
+      drawHud(ctx, s, table, levelNames[game.levelId] ?? '', game.isDead, {
         leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
       });
       drawBelt(ctx, game.store, icons);

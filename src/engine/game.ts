@@ -101,6 +101,8 @@ export interface LevelExit {
   x: number; y: number; w: number; h: number; to: string; toX: number; toY: number;
   /** 지정 시 도착 y = 현재 y + dy (야외 경계처럼 나란히 이어지는 출구) */
   dy?: number;
+  /** 지정 시 도착 x = 현재 x + dx (남북으로 맞닿은 야외 경계) */
+  dx?: number;
 }
 
 export interface LevelDef {
@@ -315,6 +317,10 @@ export class Game {
   get map(): CollisionMap {
     return this.level.def.map;
   }
+  /** 현재 레벨의 출구 (읽기 전용) */
+  get exits(): readonly LevelExit[] {
+    return this.level.def.exits;
+  }
   get inTown(): boolean {
     return this.level.def.inTown;
   }
@@ -444,8 +450,9 @@ export class Game {
       if (p.x >= e.x && p.x < e.x + e.w && p.y >= e.y && p.y < e.y + e.h) {
         const target = this.levels.get(e.to);
         const ty = e.dy !== undefined ? p.y + e.dy : e.toY;
-        const spot = target ? nearestWalkable(target.def.map, { x: e.toX, y: ty }, 12) : null;
-        this.changeLevel(e.to, spot ? spot.x + 0.5 : e.toX, spot ? spot.y + 0.5 : ty);
+        const tx = e.dx !== undefined ? p.x + e.dx : e.toX;
+        const spot = target ? nearestWalkable(target.def.map, { x: tx, y: ty }, 12) : null;
+        this.changeLevel(e.to, spot ? spot.x + 0.5 : tx, spot ? spot.y + 0.5 : ty);
         return;
       }
     }

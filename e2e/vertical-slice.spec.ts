@@ -23,7 +23,13 @@ test('수직 슬라이스: 생성 → 캠프 → Blood Moor → 처치 → 줍�
       alive.sort((a, b) => Math.hypot(a.x - s.player.x, a.y - s.player.y) - Math.hypot(b.x - s.player.x, b.y - s.player.y));
       const t = alive[0];
       if (t && s.player.mode !== 'A1') {
-        if (Math.hypot(t.x - s.player.x, t.y - s.player.y) > 12) g.changeLevel(g.levelId, t.x + 3, t.y);
+        if (Math.hypot(t.x - s.player.x, t.y - s.player.y) > 12) {
+          // 원작 DRLG 지형(나무·강)이 있으므로 대상 옆의 걷기 가능한 칸으로 순간이동
+          const m = g.map;
+          let p = { x: t.x, y: t.y };
+          for (let r = 2; r <= 5 && p.x === t.x; r++) for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]] as const) if (m.walkable(Math.floor(t.x + dx), Math.floor(t.y + dy))) { p = { x: t.x + dx, y: t.y + dy }; break; }
+          g.changeLevel(g.levelId, p.x, p.y);
+        }
         g.enqueue({ type: 'attack', targetId: t.id, standStill: false });
       }
       return s.player.experience > 0 && s.items.length > 0;
@@ -38,7 +44,7 @@ test('수직 슬라이스: 생성 → 캠프 → Blood Moor → 처치 → 줍�
       const s = g.snapshot();
       const it = s.items[0];
       if (it && s.player.mode !== 'A1') {
-        if (Math.hypot(it.x - s.player.x, it.y - s.player.y) > 10) g.changeLevel(g.levelId, it.x + 2, it.y);
+        if (Math.hypot(it.x - s.player.x, it.y - s.player.y) > 10) g.changeLevel(g.levelId, it.x, it.y); // 드롭 위치는 걷기 가능한 칸
         g.enqueue({ type: 'pickup', itemId: it.id });
       }
       return s.player.gold > 0 || s.inventory.length > inv0; // 골드 획득 또는 시작 인벤토리보다 아이템 증가

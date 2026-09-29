@@ -4,6 +4,23 @@
 
 export interface Ds1Cell { prop1: number; sequence: number; style: number; hidden: boolean; orientation: number }
 export interface Ds1Object { type: number; id: number; x: number; y: number; flags: number; path: { x: number; y: number; action: number }[] }
+/** 치환 그룹 (LvlSub 파일): 타일 박스 + 대안 개수. 출처: D2MOO DrlgPreset.cpp DRLGPRESET_ParseDS1File (D2DrlgSubstGroupStrc tBox, field_14) */
+export interface Ds1SubstGroup { x: number; y: number; w: number; h: number; alternatives: number }
+/**
+ * 원작 DRLG 가 쓰는 원시 셀 값(32비트 그대로). 비트 구성은 D2MOO D2DrlgRoomTile.h D2C_PackedTileInformation:
+ * bit0 벽, bit1 바닥, bit8-15 sequence, bit20-25 style, bit27 그림자, bit31 숨김 …
+ * 모든 배열은 width×height (DS1 헤더 값 + 1) 크기.
+ */
+export interface Ds1Raw {
+  walls: Uint32Array[];
+  /** 벽 레이어별 타일 종류(방향) — 원작 pTileTypeLayer */
+  tileTypes: Uint32Array[];
+  floors: Uint32Array[];
+  shadow: Uint32Array;
+  /** 치환 방식 (0 없음, 1 고정, 2 무작위) — 출처: D2DrlgDrlg.h DRLGSUBST_* */
+  substMethod: number;
+  groups: Ds1SubstGroup[];
+}
 export interface Ds1 {
   version: number;
   width: number;
@@ -15,6 +32,8 @@ export interface Ds1 {
   floors: Ds1Cell[][];
   shadows: Ds1Cell[][];
   objects: Ds1Object[];
+  /** parseDs1 로 읽은 경우에만 존재 (원작 DRLG 이식용 원시 레이어) */
+  raw?: Ds1Raw;
 }
 
 // 출처: DS1 문서 — 버전 7 미만의 방향 값 변환 표
@@ -85,6 +104,9 @@ export function parseDs1(buf: Uint8Array): Ds1 {
     shadowRaw = readLayer();
     if (numTags) readLayer();
   }
+  const u32 = (a: number[]) => Uint32Array.from(a, (v) => v >>> 0);
+  const tileTypes = orientRaw.map((layer) => u32(layer.map((v) => (version < 7 ? DIR_LOOKUP[v & 0xff] ?? v & 0xff : v))));
+  const raw: Ds1Raw = { walls: wallRaw.map(u32), tileTypes, floors: floorRaw.map(u32), shadow: u32(shadowRaw), substMethod: substitutionType, groups: [] };
   const walls = wallRaw.map((layer, li) =>
     layer.map((dw, i) => {
       const o = (orientRaw[li]?.[i] ?? 0) & 0xff;
@@ -103,11 +125,17 @@ export function parseDs1(buf: Uint8Array): Ds1 {
       objects.push({ type, id, x, y, flags, path: [] });
     }
   }
-  // 그룹 (버전 12 이상 + 태그 레이어) — 현재는 건너뛴다
+  // 치환 그룹 (버전 12 이상 + 태그 레이어). 출처: D2MOO DRLGPRESET_ParseDS1File — x,y,w,h (+버전 13 이상 대안 개수)
   if (version >= 12 && numTags && p + 4 <= buf.length) {
     if (version >= 18) p += 4;
     const n = i32();
-    p += n * (version >= 13 ? 20 : 16);
+    // 근사(원작 미확인): 원작 파일 중 그룹 수보다 데이터가 짧은 것이 있다 (Act1/Outdoors/Trees.ds1: 14 개 선언, 13 개 + 0).
+    //   원작은 버퍼 뒤 메모리를 읽는다 — 모자란 값은 0 으로 채우고 그룹 수는 유지 (무작위 선택 범위 보존)
+    const i32z = () => (p + 4 <= buf.length ? i32() : 0);
+    for (let i = 0; i < n; i++) {
+      const x = i32z(), y = i32z(), w = i32z(), h = i32z();
+      raw.groups.push({ x, y, w, h, alternatives: version >= 13 ? i32z() : 0 });
+    }
   }
   // NPC 경로 (버전 14 이상): 위치가 일치하는 오브젝트에 연결
   if (version >= 14 && p + 4 <= buf.length) {
@@ -123,7 +151,7 @@ export function parseDs1(buf: Uint8Array): Ds1 {
       if (obj) obj.path = path;
     }
   }
-  return { version, width, height, act, substitutionType, files, walls, floors, shadows, objects };
+  return { version, width, height, act, substitutionType, files, walls, floors, shadows, objects, raw };
 }
 
 /** DS1 가 참조하는 파일 경로를 MPQ 내부 경로로 정규화 ("\d2\data\..." → "data\...", .tg1 → .dt1) */

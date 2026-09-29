@@ -25,6 +25,15 @@ export class Rng {
     return state & 0xffffffffffffffffn;
   }
 
+  /**
+   * SEED_RollRandomNumber 의 하위 32비트 (원작 코드의 `SEED_RollRandomNumber(&seed) & 3`, `(unsigned)... % 100` 등)
+   * 출처: D2MOO D2Seed.h SEED_RollRandomNumber (lSeed = high + 0x6AC690C5 × low, 반환 = lSeed)
+   */
+  roll(): number {
+    this.next();
+    return this.low;
+  }
+
   /** RANDOM_RandomNumberSelector: [0, modulo). 2의 거듭제곱이면 마스크, 아니면 새 low % modulo. modulo<1 이면 0 */
   pick(modulo: number): number {
     if ((modulo | 0) < 1) return 0;

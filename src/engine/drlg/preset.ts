@@ -19,6 +19,21 @@ export interface PresetLevel {
   walls: PlacedTile[];
   shadows: PlacedTile[];
   collision: CollisionMap;
+  /** DT1 에서 타일을 찾지 못한 셀 수 */
+  missing: number;
+  /** 마스크 안에서 못 찾아 마스크 밖 DT1 에서 고른 셀 수 (tileMask 사용 시) */
+  maskFallback: number;
+}
+
+export interface PresetBuildOptions {
+  /**
+   * 타일별 DT1 파일 마스크 (원작 방 dwDT1Mask: 비트 i = LvlTypes "File i+1" = dt1s[i]).
+   * dt1s 인덱스 32 이상 (Blank/InvisWal/Warp — 원작이 항상 로드)은 항상 허용.
+   * 출처: D2MOO DrlgRoomTile.cpp DRLGROOMTILE_LoadDT1FilesForRoom, DRLGROOMTILE_GetTileCache
+   */
+  tileMask?: Uint32Array;
+  /** 보이는 바닥이 없는 타일의 서브타일은 막는다 (원작: 방이 없는 칸 = 이동 불가) */
+  blockEmpty?: boolean;
 }
 
 export const tileKey = (orientation: number, main: number, sub: number): string => `${orientation}:${main}:${sub}`;
@@ -37,8 +52,10 @@ export function subtileIndex(x: number, y: number): number {
   return x + (4 - y) * 5;
 }
 
-export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number): PresetLevel {
+export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number, opts: PresetBuildOptions = {}): PresetLevel {
   const tiles = dt1s.flat();
+  const srcOf: number[] = [];
+  dt1s.forEach((list, fi) => list.forEach(() => srcOf.push(fi)));
   const byKey = new Map<string, number[]>();
   tiles.forEach((t, i) => {
     const k = tileKey(t.orientation, t.mainIndex, t.subIndex);
@@ -47,9 +64,24 @@ export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number): Pre
     else byKey.set(k, [i]);
   });
   const rng = new Rng(seed);
-  const pick = (k: string): number => {
-    const list = byKey.get(k);
-    if (!list || list.length === 0) return -1;
+  let missing = 0, maskFallback = 0;
+  const allowed = (i: number, cell: number): boolean => {
+    if (!opts.tileMask) return true;
+    const f = srcOf[i] ?? 0;
+    return f >= 32 || (((opts.tileMask[cell] ?? 0) >>> f) & 1) === 1;
+  };
+  const pick = (k: string, cell = -1): number => {
+    const all = byKey.get(k);
+    if (!all || all.length === 0) {
+      missing++;
+      return -1;
+    }
+    let list = cell >= 0 && opts.tileMask ? all.filter((i) => allowed(i, cell)) : all;
+    if (list.length === 0) {
+      // 근사(원작 미확인): 원작은 마스크 안에 타일이 없으면 Warp.dt1 의 출구 타일로 대체한다 — 여기서는 마스크 밖 타일
+      maskFallback++;
+      list = all;
+    }
     if (list.length === 1) return list[0] as number;
     const total = list.reduce((s, i) => s + Math.max(tiles[i]?.rarity ?? 0, 0), 0);
     if (total <= 0) return list[0] as number;
@@ -78,7 +110,7 @@ export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number): Pre
     layer.forEach((c, i) => {
       if (!c.prop1 || c.hidden) return;
       const x = i % W, y = Math.floor(i / W);
-      const idx = pick(tileKey(0, c.style, c.sequence));
+      const idx = pick(tileKey(0, c.style, c.sequence), i);
       if (idx < 0) return;
       floors.push({ x, y, orientation: 0, tileIndex: idx });
       applyFlags(idx, x, y);
@@ -90,7 +122,7 @@ export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number): Pre
       if (!c.prop1 || c.hidden || c.orientation === 0) return;
       const x = i % W, y = Math.floor(i / W);
       for (const o of wallOrientations(c.orientation)) {
-        const idx = pick(tileKey(o, c.style, c.sequence));
+        const idx = pick(tileKey(o, c.style, c.sequence), i);
         if (idx < 0) continue;
         walls.push({ x, y, orientation: o, tileIndex: idx });
         applyFlags(idx, x, y);
@@ -101,9 +133,18 @@ export function buildPresetLevel(ds1: Ds1, dt1s: Dt1Tile[][], seed: number): Pre
   for (const layer of ds1.shadows) {
     layer.forEach((c, i) => {
       if (!c.prop1 || c.hidden) return;
-      const idx = pick(tileKey(13, c.style, c.sequence));
+      const idx = pick(tileKey(13, c.style, c.sequence), i);
       if (idx >= 0) shadows.push({ x: i % W, y: Math.floor(i / W), orientation: 13, tileIndex: idx });
     });
   }
-  return { widthTiles: W, heightTiles: H, tiles, floors, walls, shadows, collision };
+  if (opts.blockEmpty) {
+    const hasFloor = new Uint8Array(W * H);
+    for (const f of floors) hasFloor[f.y * W + f.x] = 1;
+    for (let ty = 0; ty < H; ty++)
+      for (let tx = 0; tx < W; tx++) {
+        if (hasFloor[ty * W + tx]) continue;
+        for (let sy = 0; sy < 5; sy++) for (let sx = 0; sx < 5; sx++) collision.block(tx * 5 + sx, ty * 5 + sy);
+      }
+  }
+  return { widthTiles: W, heightTiles: H, tiles, floors, walls, shadows, collision, missing, maskFallback };
 }

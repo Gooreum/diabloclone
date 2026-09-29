@@ -129,6 +129,8 @@ export interface ObjectUnit {
   operated: boolean;
   /** 예약된 이벤트 (틱): ENDANIM(작동 → 열림), 우물 재생, 신전 초기화 */
   endAnimAt: number; regenAt: number; resetAt: number;
+  /** 함정 발동 틱 (EVENTTYPE_TRAP: 연 뒤 35 프레임), 불 오브젝트 피해 틱 (EVENTTYPE_MODECHANGE) — 없으면 undefined */
+  trapAt?: number; fireAt?: number;
   /** 포털: 도착 레벨 키·짝 포털 id·주인 플레이어 (마을 포털) */
   portal?: { toLevel: string; linkId: number; linkLevel: string; owner: boolean };
   /** 오브젝트 전용 시드 (원작 pObject->pSeed: 상자 InitFn 에서 초기화) */

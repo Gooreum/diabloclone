@@ -43,4 +43,7 @@ export type Command =
   | { type: 'hire'; index: number }
   /** NPC 대화·상점 닫기 */
   | { type: 'closeNpc' }
+  // ---- [UI Phase 12 Step 2] 골드 옮기기 (원작 금화 창: 보관함 넣기·빼기, 인벤토리에서 떨어뜨리기)
+  | { type: 'goldTransfer'; to: 'stash' | 'inventory' | 'ground'; amount: number }
+  // ---- [UI Phase 12 Step 2] 끝
   | { type: 'saveAndExit' };

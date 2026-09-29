@@ -20,6 +20,8 @@ export interface ClassStats {
   statPerLevel: number;
   toHitFactor: number; blockFactor: number;
   walkVelocity: number; runVelocity: number;
+  /** 달리기 스태미나 소모 (charstats RunDrain, 1/256 단위 × 2 가 한 프레임 소모) */
+  runDrain: number;
   startItems: { code: string; loc: string; count: number }[];
 }
 
@@ -36,7 +38,7 @@ export function classStats(charstats: TxtRow[], cls: ClassName): ClassStats {
     lifePerLevel: n(r.LifePerLevel), staminaPerLevel: n(r.StaminaPerLevel), manaPerLevel: n(r.ManaPerLevel),
     lifePerVit: n(r.LifePerVitality), staminaPerVit: n(r.StaminaPerVitality), manaPerEne: n(r.ManaPerMagic),
     statPerLevel: n(r.StatPerLevel), toHitFactor: n(r.ToHitFactor), blockFactor: n(r.BlockFactor),
-    walkVelocity: n(r.WalkVelocity), runVelocity: n(r.RunVelocity), startItems,
+    walkVelocity: n(r.WalkVelocity), runVelocity: n(r.RunVelocity), runDrain: n(r.RunDrain), startItems,
   };
 }
 
@@ -98,7 +100,7 @@ export function expTable(rows: TxtRow[], cls: ClassName): ExpTable {
 /**
  * 경험치 획득 → 레벨업 처리. 레벨당: 스탯 StatPerLevel, 스킬 1, 생명/마나/스태미나 PerLevel/4.
  * 출처(스킬 1): Phrozen Keep — "Increasing Skill Points Gained Per Level" (레벨당 1, 하드코딩) (https://d2mods.info/forum/viewtopic.php?t=57248)
- * 미확인: 레벨업 시 생명/마나 전부 회복 여부 — 신뢰할 출처 확인 전까지 적용하지 않는다.
+ * 레벨업 시 생명(살아 있으면)·마나·스태미나 전부 회복은 Game 쪽에서 (장비 포함 최대치). 출처: D2MOO PlayerStats.cpp PLAYERSTATS_LevelUp
  * 최대 레벨에서는 경험치가 최대 레벨 임계치를 넘지 않는다.
  */
 export function addExperience(ch: Character, cs: ClassStats, table: ExpTable, amount: number): number {

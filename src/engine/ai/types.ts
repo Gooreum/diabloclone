@@ -31,6 +31,8 @@ export interface MonsterUnit {
   id: number;
   type: MonsterType;
   stats: MonsterStats;
+  /** Conversion 으로 낮춘 레벨·최대 생명의 원래 값 (원작 STATE_CONVERSION_SAVE: STAT_CONVERSION_LEVEL / STAT_CONVERSION_MAXHP) */
+  conversionSave?: { level: number; maxHp: number };
   x: number;
   y: number;
   hp: number;

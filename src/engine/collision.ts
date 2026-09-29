@@ -79,3 +79,29 @@ export class CollisionMap {
     if (this.inBounds(x, y)) this.flags[y * this.width + x] = (this.flags[y * this.width + x] ?? 0) | flag;
   }
 }
+
+/**
+ * 유닛·미사일이 차지하는 서브타일 (중심 칸 기준 오프셋).
+ * 출처: D2MOO D2Collision.cpp COLLISION_CheckMaskWithSize / COLLISION_SetMaskWithPattern —
+ *   크기 0·1 = 한 칸, 2 = 중심 + 상하좌우 (SMALL, 십자), 3 이상 = 3×3 (BIG, COLLISION_CreateBoundingBox)
+ */
+export function footprint(size: number): readonly (readonly [number, number])[] {
+  if (size <= 1) return FP1;
+  if (size === 2) return FP2;
+  return FP3;
+}
+const FP1 = [[0, 0]] as const;
+const FP2 = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const;
+const FP3 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const;
+
+/**
+ * 두 유닛(미사일 포함)의 차지 칸이 겹치나. 미사일은 자기 크기 패턴으로 유닛의 존재 마스크를 검사한다.
+ * 출처: D2MOO MISSILE 충돌 — COLLISION_CheckMaskWithSize(미사일 위치, 미사일 Size, 유닛 마스크)
+ */
+export function footprintsOverlap(ax: number, ay: number, aSize: number, bx: number, by: number, bSize: number): boolean {
+  const dx = Math.floor(bx) - Math.floor(ax), dy = Math.floor(by) - Math.floor(ay);
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) return false;
+  const fb = footprint(bSize);
+  for (const [x1, y1] of footprint(aSize)) for (const [x2, y2] of fb) if (x1 === dx + x2 && y1 === dy + y2) return true;
+  return false;
+}

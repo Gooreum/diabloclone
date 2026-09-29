@@ -137,6 +137,9 @@ export interface HireCandidate { index: number; name: string; init: HirelingInit
  * 마을 NPC 상태: 상인 재고, 도박 목록, 고용 목록, NPC 시드.
  * 출처: D2NpcControlStrc — pSeed (NPC 굴림 전용), 상인 기록마다 재고(bVendorInit), 플레이어별 도박 인벤토리, 고용 목록(pMercData)
  */
+/** 레벨업 때 재고를 새로 채우는 상인 (npcTrade.bLevelRefresh). 출처: SUNITPROXY_InitializeNpcControl — Act 1 은 Gheed·Charsi */
+export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed'];
+
 export class NpcServices {
   /** npc Id → 상점 재고 (원작 bVendorInit 인 동안 유지) */
   readonly stores = new Map<string, StoreItem[]>();
@@ -182,6 +185,32 @@ export class NpcServices {
     const t = h.data.gamble;
     this.gamble = t ? fillGamble(this.storeCtx(h), t, h.data.difficultyRows?.[h.difficulty], h.playerLevel) : [];
     return this.gamble;
+  }
+
+  /** 레벨업 때 거래 중이라 미뤄 둔 재고 갱신 (거래 창을 닫으면 비운다) */
+  private readonly pendingRefresh = new Set<string>();
+
+  /**
+   * 플레이어 레벨업 → 레벨 갱신 상인(bLevelRefresh)의 재고를 비워 다음 거래 때 새 레벨로 다시 채운다.
+   * 출처: D2MOO PlayerStats.cpp PLAYERSTATS_LevelUp → SUNITPROXY_InitializeNpcEventChain (재고가 채워진 상인마다 이벤트),
+   *       SUnitProxy.cpp SUNITPROXY_InitializeNpcControl — bLevelRefresh = 1 인 상인: Act 1 은 Charsi·Gheed (Akara 는 0)
+   * 근사(원작 미확인): 이벤트를 처리하는 쪽(pEvent 소비 함수)은 D2MOO 에 복원돼 있지 않아 bLevelRefresh 상인만 비우고,
+   *   지금 거래 창이 열려 있는 상인은 창을 닫을 때 비운다
+   */
+  levelUp(tradingNpc?: string): string[] {
+    const out: string[] = [];
+    for (const id of LEVEL_REFRESH) {
+      if (!this.stores.has(id)) continue;
+      if (id === tradingNpc) this.pendingRefresh.add(id);
+      else this.stores.delete(id);
+      out.push(id);
+    }
+    return out;
+  }
+
+  /** 거래를 마침: 미뤄 둔 레벨업 갱신 적용 */
+  endTrade(npc: string): void {
+    if (this.pendingRefresh.delete(npc)) this.stores.delete(npc);
   }
 
   /**

@@ -26,6 +26,8 @@ export interface WeaponDamageInput {
   weaponRange?: { min: number; max: number };
   /** 다른 장비의 ED% (힘 보너스와 같은 합산) */
   itemDamagePct?: number;
+  /** 기본 피해에 더할 최소/최대 (1/256) — Smite 에 Holy Shield 스킬 피해. 출처: SKILLS_SrvDo150_Smite (SKILLS_GetMin/MaxPhysDamage) */
+  extraBase?: { min: number; max: number };
 }
 
 /**
@@ -52,7 +54,10 @@ export function weaponDamagePercent(i: WeaponDamageInput): number {
 }
 
 /** 굴리지 않은 최소/최대 (1/256) — UI 표시·테스트용 */
-const baseOf = (i: WeaponDamageInput) => (i.weaponRange && !i.thrown ? { min: i.weaponRange.min * 256, max: i.weaponRange.max * 256 } : weaponBaseRange(i.weapon, i.thrown));
+const baseOf = (i: WeaponDamageInput) => {
+  const b = i.weaponRange && !i.thrown ? { min: i.weaponRange.min * 256, max: i.weaponRange.max * 256 } : weaponBaseRange(i.weapon, i.thrown);
+  return i.extraBase ? { min: b.min + i.extraBase.min, max: b.max + i.extraBase.max } : b;
+};
 
 export function weaponDamageRange(i: WeaponDamageInput): { min: number; max: number } {
   const base = baseOf(i);

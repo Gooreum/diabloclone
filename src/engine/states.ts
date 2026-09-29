@@ -48,6 +48,16 @@ export class StateList {
     return v;
   }
 
+  /** 상태마다 값을 바꿔 합산 (면역 몬스터의 저항 감소 1/5 등) */
+  statBy(stat: string, f: (v: number, s: UnitState) => number): number {
+    let v = 0;
+    for (const s of this.list) {
+      const x = s.stats[stat];
+      if (x) v += f(x, s);
+    }
+    return v;
+  }
+
   /** 만료된 상태 제거, 제거된 이름 반환 */
   expire(frame: number): string[] {
     const gone: string[] = [];

@@ -89,6 +89,15 @@ declare global {
 
 interface Shared { assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt; loading: LoadingScreen; cursor: GameCursor }
 
+// dev 전용: 오류를 개발 서버 로그로 보낸다 (vite.config.ts clientErrorLog)
+function reportClientError(kind: string, e: unknown): void {
+  if (!import.meta.env.DEV) return;
+  const text = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+  void fetch('/__clientlog', { method: 'POST', body: `[${kind}] ${location.href} ${text}` }).catch(() => undefined);
+}
+window.addEventListener('error', (e) => reportClientError('error', e.error ?? e.message));
+window.addEventListener('unhandledrejection', (e) => reportClientError('rejection', e.reason));
+
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const canvas = document.createElement('canvas');
@@ -646,8 +655,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
-    const frame = (now: number) => {
-      if (!running) return;
+    const frameBody = (now: number) => {
       acc += Math.min(now - last, 250);
       last = now;
       input.enabled = !panels.menuOpen;
@@ -815,6 +823,22 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         repair: storePanel.mode === 'repair' && !!inter && inter.mode === 'trade' && !panels.menuOpen,
         hover: !panels.menuOpen && (overInv || (hoverNow !== null && hoverNow.kind !== 'body')),
       }), now);
+    };
+    // 한 프레임에서 예외가 나도 루프가 멈추지 않게 한다 (예외 후 다음 프레임 예약이 빠져 화면이 검게 멈추던 문제).
+    // 같은 오류는 한 번만 콘솔에 남긴다.
+    const reported = new Set<string>();
+    const frame = (now: number) => {
+      if (!running) return;
+      try {
+        frameBody(now);
+      } catch (e) {
+        const key = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+        if (!reported.has(key)) {
+          reported.add(key);
+          console.error('[frame]', e);
+          reportClientError('frame', e);
+        }
+      }
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);

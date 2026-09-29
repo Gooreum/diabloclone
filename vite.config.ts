@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
-import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 const GAME_DATA = resolve(import.meta.dirname, 'game-data');
@@ -45,6 +46,32 @@ function serveGameData(): Plugin {
   };
 }
 
+// dev 전용: 브라우저에서 난 오류를 로컬 로그 파일에 남긴다 (사용자가 콘솔을 복사하지 않아도 원인을 볼 수 있게)
+export const CLIENT_LOG = resolve(tmpdir(), 'diabloclone-client-errors.log');
+function clientErrorLog(): Plugin {
+  return {
+    name: 'client-error-log',
+    configureServer(server) {
+      server.middlewares.use('/__clientlog', (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        let body = '';
+        req.on('data', (c: Buffer) => {
+          if (body.length < 20000) body += c.toString();
+        });
+        req.on('end', () => {
+          appendFileSync(CLIENT_LOG, `${new Date().toISOString()} ${body}\n`);
+          res.statusCode = 204;
+          res.end();
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [serveGameData()],
+  plugins: [serveGameData(), clientErrorLog()],
 });

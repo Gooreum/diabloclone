@@ -4,7 +4,10 @@
 // 원작처럼 막 단위로 한 번에 만든다: 플레이어가 그 막에 처음 들어갈 때 (world.ts buildActWorld → Game.onActChange).
 // Act 2~4 는 Phase 2~4 가 여기 ACT_DRLG 에 항목을 더한다 (outdesr.ts / outjung.ts / logic.ts 등 새 파일). Act 1 파일(act1*.ts)은 건드리지 않는다.
 import { ACT1_ALL, generateAct1World, type Act1Level, type EdgeExit } from './act1';
+import { ACT2_ALL, generateAct2World } from './act2';
+import { ACT3_ALL, generateAct3World } from './act3';
 import { LEVEL, type DrlgData } from './types';
+import { ACT4_ALL, LEVEL4, generateAct4World } from './act4';
 
 /** 막 DRLG 한 레벨 (Act 1 과 같은 모양: 배치 결과·특수 위치·가장자리 접촉) */
 export type DrlgLevel = Act1Level;
@@ -37,6 +40,9 @@ export const ACT_COUNT = 4;
 /** 막별 DRLG 등록표. 없는 막은 아직 만들지 않은 것 (Phase 2~4) */
 export const ACT_DRLG: Readonly<Record<number, ActDrlg>> = {
   0: { act: 0, town: LEVEL.ROGUEENCAMPMENT, levels: ACT1_ALL, generate: (data, seed) => generateAct1World(data, seed) },
+  1: { act: 1, town: 40, levels: ACT2_ALL, generate: (data, seed) => generateAct2World(data, seed) },
+  3: { act: 3, town: LEVEL4.FORTRESS, levels: ACT4_ALL, generate: (data, seed) => generateAct4World(data, seed) },
+  2: { act: 2, town: 75, levels: ACT3_ALL, generate: (data, seed) => generateAct3World(data, seed) },
 };
 
 /** 막 DRLG (없으면 "아직 없음" 오류) */

@@ -96,16 +96,26 @@ interface Shared {
 
 /** 막 월드가 읽는 원작 파일 (DS1/DT1·막 팔레트) 미리 읽기. 출처: 원작도 막에 들어갈 때 그 막 DRLG 를 할당 (DRLG_AllocDrlg) */
 const prefetching = new Map<number, Promise<void>>();
-function prefetchAct(sh: Pick<Shared, 'assets' | 'tables' | 'prefetched'>, act: number): Promise<void> {
+function prefetchAct(sh: Pick<Shared, 'assets' | 'tables' | 'prefetched'>, act: number, background = false): Promise<void> {
   if (sh.prefetched.has(act) || !actAvailable(act)) return Promise.resolve();
   let p = prefetching.get(act);
   if (!p) {
-    p = sh.assets.preload([...actWorldPaths(sh.assets, sh.tables, act), actPalettePath(act)]).then(() => {
+    const paths = [...actWorldPaths(sh.assets, sh.tables, act), actPalettePath(act)];
+    p = (background ? preloadGently(sh.assets, paths) : sh.assets.preload(paths)).then(() => {
       sh.prefetched.add(act);
     });
     prefetching.set(act, p);
   }
   return p;
+}
+
+/** 배경 미리 읽기: 한 번에 몇 개씩만 읽는다 (막 파일 수백 개가 브라우저 연결을 다 차지해 몬스터 그림 같은 지금 필요한 파일이 밀리지 않게) */
+async function preloadGently(assets: AssetLoader, paths: string[], lanes = 2): Promise<void> {
+  let i = 0;
+  const lane = async () => {
+    while (i < paths.length) await assets.load(paths[i++] as string);
+  };
+  await Promise.all(Array.from({ length: lanes }, lane));
 }
 
 // dev 전용: 오류를 개발 서버 로그로 보낸다 (vite.config.ts clientErrorLog)
@@ -301,7 +311,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     return actLevels(actView(act).world);
   };
   // 만들 수 있는 다른 막 파일은 배경으로 미리 읽는다
-  for (let a = 0; a < ACT_COUNT; a++) void prefetchAct(sh, a).catch(() => undefined);
+  // 한 막씩 차례로, 적은 동시 요청으로 (지금 막의 그림 읽기를 막지 않게)
+  void (async () => {
+    for (let a = 0; a < ACT_COUNT; a++) await prefetchAct(sh, a, true).catch(() => undefined);
+  })();
   // 웨이포인트 (levels.txt Waypoint 번호는 막을 가로질러 하나): 클래식 막 I~IV 탭
   const allWaypoints = data.objects ? waypointLevels([...data.objects.levels.values()]).filter((w) => w.act < ACT_COUNT) : [];
   const levelNameOf = new Map(tables.table('Levels').map((r) => [Number(r.Id), r.LevelName ?? '']));

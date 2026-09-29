@@ -158,7 +158,7 @@ d('막 사이 웨이포인트 (levels.txt Waypoint 번호는 전역)', () => {
     expect(data.objects!.levels.get(75)).toMatchObject({ act: 2, waypoint: 18 });
     expect(data.objects!.levels.get(103)).toMatchObject({ act: 3, waypoint: 27 });
     expect(ACT_TOWNS).toEqual([1, 40, 75, 103]);
-    expect([actTownKey(0), actTownKey(1), levelKey(41)]).toEqual(['town', 'lutgholein', 'level41']);
+    expect([actTownKey(0), actTownKey(1), levelKey(41), levelKey(200)]).toEqual(['town', 'lutgholein', 'rockywaste', 'level200']);
   });
 
   it('Act 1 웨이포인트에서 Act 2 마을로: 번호로 가면 그 막 월드를 요청하고 막을 바꾼다, 돌아올 수도 있다', () => {
@@ -211,7 +211,8 @@ d('막 등록표 (drlg/acts.ts · world.ts)', () => {
   it('Act 1 만 만들 수 있고, 다른 막은 "아직 없음" 오류', () => {
     expect(actAvailable(0)).toBe(true);
     expect(ACT_DRLG[0]!.levels).toContain(38);
-    for (const a of [1, 2, 3]) {
+    // Phase 2~4 가 등록한 막은 제외 (ACT_DRLG 에 없는 막만 "아직 없음")
+    for (const a of [1, 2, 3].filter((x) => !ACT_DRLG[x])) {
       expect(actAvailable(a)).toBe(false);
       expect(() => buildActWorld(gameChain(), tables, data, 1, a)).toThrow(/not implemented yet/);
     }

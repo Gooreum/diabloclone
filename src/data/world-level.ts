@@ -13,6 +13,7 @@ import type { GameData, LevelDef, LevelExit } from '../engine/game';
 import { tilePath } from './drlg-data';
 import type { AssetSource, GameTables } from './tables';
 import { AutomapTable } from '../engine/automap';
+import { ACT2_LEVEL_KEYS } from './act2-keys';
 
 /** 엔진 레벨 id (게임·저장·HUD 에서 쓰는 문자열) ← levels.txt Id. 표에 없는 레벨은 `level<Id>` */
 export const LEVEL_KEYS: Record<number, string> = {
@@ -56,8 +57,21 @@ export const LEVEL_KEYS: Record<number, string> = {
   [LEVEL.TRISTRAM]: 'tristram',
   // Act 2~4 마을 (나머지 레벨 이름은 Phase 2~4 가 더한다)
   40: 'lutgholein',
+  // Act 2 (act2-keys.ts)
+  ...ACT2_LEVEL_KEYS,
   75: 'kurastdocks',
+  // Act 3 (출처: levels.txt 76~102 LevelName)
+  76: 'spiderforest', 77: 'greatmarsh', 78: 'flayerjungle', 79: 'lowerkurast', 80: 'kurastbazaar', 81: 'upperkurast', 82: 'kurastcauseway',
+  83: 'travincal', 84: 'spidercave', 85: 'spidercavern', 86: 'swampypit1', 87: 'swampypit2', 88: 'flayerdungeon1', 89: 'flayerdungeon2',
+  90: 'swampypit3', 91: 'flayerdungeon3', 92: 'kurastsewers1', 93: 'kurastsewers2', 94: 'ruinedtemple', 95: 'disusedfane',
+  96: 'forgottenreliquary', 97: 'forgottentemple', 98: 'ruinedfane', 99: 'disusedreliquary', 100: 'durance1', 101: 'durance2', 102: 'durance3',
   103: 'pandemonium',
+  // Act 4 (출처: levels.txt 104~108 LevelName)
+  104: 'outersteppes',
+  105: 'plainsofdespair',
+  106: 'cityofthedamned',
+  107: 'riverofflame',
+  108: 'chaossanctuary',
 };
 
 /** levels.txt Id → 엔진 레벨 id (모든 막에서 겹치지 않는다) */
@@ -130,6 +144,9 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     const rec = data.level(lv.id);
     const dt1s = levelTypeDt1Paths(tables, rec.levelType).map(loadDt1);
     const preset = buildPresetLevel(lv.layout.ds1, dt1s, (seed ^ (lv.id * 0x9e3779b1)) >>> 0, { tileMask: lv.layout.tileMask, blockEmpty: true });
+    // 출처: DRLGROOMTILE_InitializeTileDataFlags — 바닥 bUnwalkable 타일은 통째로 막는다 (레이아웃이 표시한 경우만)
+    const unw = lv.layout.unwalkable;
+    if (unw) for (let i = 0; i < unw.length; i++) if (unw[i]) for (let k = 0; k < 25; k++) preset.collision.block((i % lv.layout.ds1.width) * 5 + (k % 5), Math.trunc(i / lv.layout.ds1.width) * 5 + Math.trunc(k / 5));
     const inTown = lv.id === town;
     let spawns: LevelDef['spawns'];
     let monsterPool: string[] | undefined;
@@ -188,7 +205,11 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     for (const w of lv.layout.warps) {
       const to = byId.get(w.toLevel), dst = world.levels.get(w.toLevel);
       if (!to || !dst) continue;
-      const back = dst.layout.warps.find((b) => b.toLevel === lv.id);
+      // 같은 레벨로 가는 vis 칸이 여럿이면 (Lut Gholein ↔ 하수도 두 입구, 할렘 ↔ 할렘 2 두 계단) vis 순서가 같은 짝끼리 잇는다
+      // 근사(원작 미확인): 원작은 방 타일끼리 연결 (DRLGWARP_GetDestinationRoom). vis 가 하나면 이전과 같다
+      const visOf = (ws: typeof lv.layout.warps, to: number) => [...new Set(ws.filter((b) => b.toLevel === to).map((b) => b.visIndex))].sort((a, b) => a - b);
+      const backVis = visOf(dst.layout.warps, lv.id)[visOf(lv.layout.warps, w.toLevel).indexOf(w.visIndex)];
+      const back = dst.layout.warps.find((b) => b.toLevel === lv.id && (backVis === undefined || b.visIndex === backVis));
       if (!back) continue;
       const rec = data.lvlWarp.find((r) => r.id === w.warpId), brec = data.lvlWarp.find((r) => r.id === back.warpId);
       const exit: LevelExit = { ...warpRect(from.def.map, w.x, w.y), to: to.key, toX: back.x + (brec?.exitWalkX ?? 0), toY: back.y + (brec?.exitWalkY ?? 0) };

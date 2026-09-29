@@ -78,7 +78,14 @@ export function actWorldPaths(src: AssetSource, tables: GameTables, act: number)
     const p = data.lvlPrestByLevel(id);
     if (p) for (const f of p.file) if (f) set.add(tilePath(f));
   }
-  for (const s of data.lvlSub) if (s.file) set.add(tilePath(s.file));
+  // LvlSub: 테두리 규칙 0~3 (DRLGOUTDOORS_AddAct124SecondaryBorder) + 이 막 레벨의 SubType/SubWaypoint/SubShrine 행만
+  // (클래식 MPQ 에 없는 확장팩 LvlSub 파일 — Expansion/Siege — 은 넣지 않는다)
+  const subTypes = new Set<number>([0, 1, 2, 3]);
+  for (const id of drlg.levels) {
+    const r = data.level(id);
+    for (const t of [r.subType, r.subWaypoint, r.subShrine]) if (t >= 0) subTypes.add(t);
+  }
+  for (const s of data.lvlSub) if (s.file && subTypes.has(s.type)) set.add(tilePath(s.file));
   const types = new Set<number>();
   for (const id of drlg.levels) types.add(data.level(id).levelType);
   for (const t of types) for (const p of levelTypeDt1Paths(tables, t)) if (p) set.add(p);

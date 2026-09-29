@@ -40,7 +40,7 @@ export interface OutdoorLevel {
   placed: PlacedLevel;
 }
 
-interface Ctx { data: DrlgData; world: Act1Placement }
+export interface Ctx { data: DrlgData; world: Act1Placement }
 
 const g2 = (lv: OutdoorLevel, x: number, y: number) => lv.grid[2].get(x, y);
 
@@ -53,7 +53,7 @@ export function spawnValid(lv: OutdoorLevel, x: number, y: number): boolean {
 const nonLvlLink = (lv: OutdoorLevel, x: number, y: number) => (g2(lv, x, y) & G2.LVL_LINK) === 0;
 
 /** 출처: DRLGOUTDOORS_TestOutdoorLevelPreset */
-function testPreset(ctx: Ctx, lv: OutdoorLevel, x: number, y: number, prest: number, offset: number, flags: number): boolean {
+export function testPreset(ctx: Ctx, lv: OutdoorLevel, x: number, y: number, prest: number, offset: number, flags: number): boolean {
   let sx = 1, sy = 1, x0 = x, y0 = y;
   if (prest) {
     const r = ctx.data.lvlPrest(prest);
@@ -122,7 +122,7 @@ function spawnPresetFarAway(ctx: Ctx, lv: OutdoorLevel, from: Box, prest: number
 }
 
 /** 원작 공통 패턴: 내부 셀((gw-2)×(gh-2)) 좌표를 두 번 롤로 섞은 목록 */
-function shuffledCells(lv: OutdoorLevel): { x: number; y: number }[] {
+export function shuffledCells(lv: OutdoorLevel): { x: number; y: number }[] {
   const w = lv.gw - 2, area = w * (lv.gh - 2);
   const c: { x: number; y: number }[] = [];
   for (let i = 0; i < area; i++) c.push({ x: i % w, y: Math.trunc(i / w) });
@@ -136,7 +136,7 @@ function shuffledCells(lv: OutdoorLevel): { x: number; y: number }[] {
 }
 
 /** 출처: DRLGOUTDOORS_SpawnOutdoorLevelPreset */
-function spawnPreset(ctx: Ctx, lv: OutdoorLevel, prest: number, rand: number, offset: number, flags: number): boolean {
+export function spawnPreset(ctx: Ctx, lv: OutdoorLevel, prest: number, rand: number, offset: number, flags: number): boolean {
   const area = (lv.gw - 2) * (lv.gh - 2);
   if (!area) return false;
   for (const c of shuffledCells(lv)) {
@@ -149,7 +149,7 @@ function spawnPreset(ctx: Ctx, lv: OutdoorLevel, prest: number, rand: number, of
 }
 
 /** 출처: DRLGOUTDOORS_SpawnRandomOutdoorDS1 — 흙길 셀 이웃에 우선 배치, 실패하면 아무 곳 */
-function spawnRandomDs1(ctx: Ctx, lv: OutdoorLevel, prest: number, rand: number): boolean {
+export function spawnRandomDs1(ctx: Ctx, lv: OutdoorLevel, prest: number, rand: number): boolean {
   const OX = [-1, 0, 0, 1, -1, 1, 1, -1], OY = [0, -1, 1, 0, -1, 1, -1, 1];
   const area = (lv.gw - 2) * (lv.gh - 2);
   if (!area) return false;
@@ -190,7 +190,7 @@ function outLinkVisFlag(lv: OutdoorLevel, v: Vertex): number {
 }
 
 /** 출처: DRLGOUTPLACE_SetOutGridLinkFlags */
-function setOutGridLinkFlags(lv: OutdoorLevel): void {
+export function setOutGridLinkFlags(lv: OutdoorLevel): void {
   let v = lv.vertex;
   do {
     if (v.flags & 1) {
@@ -202,7 +202,7 @@ function setOutGridLinkFlags(lv: OutdoorLevel): void {
 }
 
 // 출처: DrlgOutPlace.cpp nBorderIndices (두 표가 메모리상 이어져 있어 한 배열로 둔다)
-const BORDER_INDICES = [
+export const BORDER_INDICES = [
   -1, 1, -1, 0, -1, 2, -1, 3, -1, 0,
   1, 9, 9, -1, -1, 1, 8, -1, -1, 12,
   -1, -1, -1, -1, 12, 4, -1, -1, 5, 2,
@@ -302,7 +302,7 @@ function placeBorders(ctx: Ctx, lv: OutdoorLevel): void {
 }
 
 /** 출처: DRLGOUTPLACE_SetBlankBorderGridCells — 네 모서리에서 테두리 안쪽까지 빈 셀 표시 */
-function setBlankBorderCells(lv: OutdoorLevel): void {
+export function setBlankBorderCells(lv: OutdoorLevel): void {
   const OFFS = [[[0, 0], [1, 1]], [[1, 0], [-1, 1]], [[0, 1], [1, -1]], [[1, 1], [-1, -1]]] as const;
   for (const [[sx, sy], [dx, dy]] of OFFS) {
     const x0 = sx ? lv.gw - 1 : 0, y0 = sy ? lv.gh - 1 : 0;
@@ -322,7 +322,7 @@ function subFile(ctx: Ctx, rec: LvlSubRec) {
 }
 
 /** 출처: DRLGOUTDOORS_AddAct124SecondaryBorder → DRLGTILESUB_AddSecondaryBorder */
-function addSecondaryBorder(ctx: Ctx, lv: OutdoorLevel, subId: number, prestBase: number): void {
+export function addSecondaryBorder(ctx: Ctx, lv: OutdoorLevel, subId: number, prestBase: number): void {
   const rows = ctx.data.lvlSub;
   let ri = rows.findIndex((r) => r.type === subId);
   let wildcard = -1;
@@ -631,7 +631,7 @@ function spawnSpecialPresets(ctx: Ctx, lv: OutdoorLevel): void {
 // ---------------- 웨이포인트·신전 (DrlgOutdoors.cpp) ----------------
 
 /** 출처: DRLGOUTDOORS_SpawnAct12Waypoint */
-function spawnWaypoint(lv: OutdoorLevel): void {
+export function spawnWaypoint(lv: OutdoorLevel): void {
   if (lv.id === LEVEL.COLDPLAINS) {
     let flag = 0;
     for (let i = 0; i < 8; i++) if (lv.placed.vis[i] === LEVEL.BLOODMOOR) { flag = 1 << (i + 4); break; }
@@ -661,7 +661,7 @@ function spawnWaypoint(lv: OutdoorLevel): void {
 }
 
 /** 출처: DRLGOUTDOORS_SpawnAct12Shrines */
-function spawnShrines(lv: OutdoorLevel, count: number): void {
+export function spawnShrines(lv: OutdoorLevel, count: number): void {
   const BITS = [0x1000, 0x2000, 0x4000, 0x8000];
   const area = (lv.gw - 2) * (lv.gh - 2);
   let idx = lv.seed.roll() & 3;
@@ -999,8 +999,9 @@ function spawnDirtPaths(ctx: Ctx, lv: OutdoorLevel): void {
 /**
  * 야외 레벨의 셀 격자 생성.
  * 출처: DRLGOUTDOORS_GenerateLevel (방 생성 직전까지) + DRLGOUTWILD_InitAct1OutdoorLevel
+ * @param init 막별 격자 초기화 (기본 = Act 1 DRLGOUTWILD_InitAct1OutdoorLevel — 다른 막은 DRLGOUTDOORS_GenerateLevel 의 막 분기)
  */
-export function generateOutdoorGrid(data: DrlgData, world: Act1Placement, id: number): OutdoorLevel {
+export function generateOutdoorGrid(data: DrlgData, world: Act1Placement, id: number, init: (ctx: Ctx, lv: OutdoorLevel) => void = initAct1Outdoor): OutdoorLevel {
   const placed = world.levels.get(id);
   if (!placed) throw new Error(`generateOutdoorGrid: level ${id} not placed`);
   const rec = data.level(id);
@@ -1038,7 +1039,7 @@ export function generateOutdoorGrid(data: DrlgData, world: Act1Placement, id: nu
     v = v.next;
   } while (v !== lv.vertex);
 
-  initAct1Outdoor(ctx, lv);
+  init(ctx, lv);
   return lv;
 }
 

@@ -36,6 +36,8 @@ export interface LevelLayout {
   rooms: LayoutRoom[];
   /** 야외 레벨만: 셀 격자 생성 상태 (테스트·디버그용) */
   outdoor?: OutdoorLevel;
+  /** 타일별 이동 불가 (원작 바닥 bUnwalkable 0x20000 → MAPTILE_UNWALKABLE). 없으면 DT1 서브타일 플래그만 — Act 3 정글 빈 블록 등 */
+  unwalkable?: Uint8Array;
 }
 
 const MAX_WALL_LAYERS = 4, MAX_FLOOR_LAYERS = 2;

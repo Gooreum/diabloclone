@@ -27,6 +27,8 @@ export interface MissileDef {
   params: number[]; hitParams: number[]; dmgCalc: CalcNode | null; dmgParams: number[];
   hitShift: number; hitClass: number;
   minDamage: number; maxDamage: number;
+  /** 레벨 구간별 물리 증가 (MinLevDam1~5, MaxLevDam1~5) */
+  minDamLev: number[]; maxDamLev: number[];
   eType: string; eMin: number; eMax: number; eLen: number;
   /** 미사일 레벨 구간별 원소 증가 (MinELev1~5, MaxELev1~5), 지속 증가 (ELevLen1~3) */
   eMinLev: number[]; eMaxLev: number[]; eLevLen: number[];
@@ -55,6 +57,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       dmgCalc: parseCalc(r.DmgCalc1), dmgParams: [n(r.dParam1), n(r.dParam2)],
       hitShift: n(r.HitShift), hitClass: n(r.HitClass),
       minDamage: n(r.MinDamage), maxDamage: n(r.MaxDamage),
+      minDamLev: [1, 2, 3, 4, 5].map((i) => n(r[`MinLevDam${i}`])), maxDamLev: [1, 2, 3, 4, 5].map((i) => n(r[`MaxLevDam${i}`])),
       eType: r.EType ?? '', eMin: n(r.EMin), eMax: n(r.Emax), eLen: n(r.ELen),
       eMinLev: [1, 2, 3, 4, 5].map((i) => n(r[`MinELev${i}`])), eMaxLev: [1, 2, 3, 4, 5].map((i) => n(r[`MaxELev${i}`])), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])),
       explosionMissile: r.ExplosionMissile ?? '', subMissile1: r.SubMissile1 ?? '', hitSubMissile1: r.HitSubMissile1 ?? '',

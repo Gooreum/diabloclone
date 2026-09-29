@@ -33,6 +33,8 @@ async function standNear(page: Page, level: string, id: number, dist = 4): Promi
           const x = Math.floor(o.x + Math.cos((a / 16) * Math.PI * 2) * r), y = Math.floor(o.y + Math.sin((a / 16) * Math.PI * 2) * r);
           if (m.walkable(x, y)) {
             g.changeLevel(level as string, x + 0.5, y + 0.5);
+            g.tick();
+            g.monsters.splice(0); // 몬스터가 클릭·이동을 가로채지 않게
             return;
           }
         }

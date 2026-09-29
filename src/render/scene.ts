@@ -90,13 +90,19 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const t = d.monsters?.types.get(m.typeId);
     if (!t) continue;
     const equip: Record<string, string> = {};
+    // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
     for (const [layer, variants] of Object.entries(t.layers)) {
-      const v = variants[m.id % variants.length] ?? 'lit';
+      const v = variants[(m.components?.[layer] ?? m.id) % variants.length] ?? 'lit';
       if (v !== 'nil') equip[layer] = v;
     }
-    const comp = d.units.get({ root: 'MONSTERS', token: t.code, mode: m.mode, wclass: t.baseW, equip });
-    const loop = !(m.mode === 'DT' || m.mode === 'DD');
-    const frame = m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${m.mode}${t.baseW}`, m.modeTick, loop);
+    // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
+    const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
+    if (shift === undefined) continue;
+    // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
+    const mode = m.anim?.mode ?? m.mode;
+    const comp = d.units.get({ root: 'MONSTERS', token: t.code, mode, wclass: t.baseW, equip, shift });
+    const loop = !(m.mode === 'DT' || m.mode === 'DD') && ['NU', 'WL', 'RN'].includes(m.mode);
+    const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
       depth: m.x + m.y,
       draw: (ctx, cm) => {

@@ -32,6 +32,7 @@ import { SUBCLASS } from './engine/objects';
 import { waypointLevels } from './engine/waypoints';
 import { AutomapRenderer, type AutomapMode } from './render/automap';
 import { WaypointPanel } from './ui/waypanel';
+import { drawMonsterBar, MonsterNamer } from './ui/monbar';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
@@ -45,7 +46,7 @@ declare global {
     __game?: {
       game: Game; ready: boolean; input?: InputController; save?: () => Promise<void>;
       /** e2e: 웨이포인트 패널·자동 지도 상태 */
-      ui?: { waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number };
+      ui?: { waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number; hoverMonster: () => { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null; camera: () => Camera };
     };
     __menuReady?: boolean;
   }
@@ -219,6 +220,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     return false;
   };
   const nameOf = (code: string) => tables.string(data.items.base(code)?.namestr ?? code);
+  // 화면 위 몬스터 이름·생명 막대 (마우스를 올린 몬스터)
+  const namer = new MonsterNamer(data.monsters, data.uniques, (k) => tables.string(k));
+  let hoverMonster: { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null = null;
   const skillName = (id: number) => data.skills?.byId.get(id)?.displayName ?? 'Attack';
 
 
@@ -280,7 +284,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       resolve();
     }
     window.addEventListener('keydown', onKey);
-    if (import.meta.env.DEV) window.__game = { game, ready: true, input, save: saveAndExit, ui: { waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn } };
+    if (import.meta.env.DEV) window.__game = { game, ready: true, input, save: saveAndExit, ui: { waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam } };
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
@@ -337,6 +341,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
       });
       drawBelt(ctx, game.store, icons);
+      hoverMonster = null;
+      if (input.mouse) {
+        const mx = input.mouse.x, my = input.mouse.y;
+        const pick = [...input.pickBoxes].reverse().find((b) => b.kind === 'monster' && mx >= b.x && my >= b.y && mx < b.x + b.w && my < b.y + b.h);
+        const hm = pick ? s.monsters.find((x) => x.id === pick.id && x.mode !== 'DT' && x.mode !== 'DD') : undefined;
+        if (hm) {
+          const label = namer.label(hm);
+          hoverMonster = { id: hm.id, name: label.name, box: drawMonsterBar(ctx, hm, label) };
+        }
+      }
       const reqCtx = { level: ch.level, str: game.effStat('str'), dex: game.effStat('dex'), cls: ch.cls };
       invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx);
       invPanel.drawCursor(ctx, game.store, input.mouse);

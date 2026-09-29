@@ -27,7 +27,7 @@ test('아마존 생성 → Jab 배우고 오른쪽 버튼에 지정 → 우클�
   await walkToBloodMoor(page);
   await page.evaluate(() => {
     const g = window.__game!.game;
-    for (const m of g.monsters) m.nextThink = 1e9;
+    g.monsters.splice(0); // 주변 몬스터 제거 (AI 가 끼어들지 않게)
     const p = g.snapshot().player;
     const z = g.spawnMonster('zombie1', p.x + 2.5, p.y);
     z.hp = z.stats.maxHp = 10000;
@@ -72,7 +72,7 @@ test('소서리스 Fire Bolt 미사일과 네크로맨서 스켈레톤이 원작
   await walkToBloodMoor(page);
   await page.evaluate(() => {
     const g = window.__game!.game;
-    for (const m of g.monsters) m.nextThink = 1e9;
+    g.monsters.splice(0);
     const ch = g.character!;
     ch.skills[36] = 1; // Fire Bolt
     ch.rightSkill = 36;
@@ -88,7 +88,7 @@ test('소서리스 Fire Bolt 미사일과 네크로맨서 스켈레톤이 원작
   await walkToBloodMoor(page);
   const petType = await page.evaluate(() => {
     const g = window.__game!.game;
-    for (const m of g.monsters) m.nextThink = 1e9;
+    g.monsters.splice(0);
     const ch = g.character!;
     ch.skills[70] = 1; // Raise Skeleton
     const p = g.snapshot().player;

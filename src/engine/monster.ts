@@ -13,26 +13,53 @@ const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
 export interface AttackDef { min: number; max: number; toHit: number }
 
+/** monstats Skill1~8 / Sk1mode~ / Sk1lvl~ (mode = MonMode 토큰 또는 monseq.txt 시퀀스 이름) */
+export interface MonSkillDef { name: string; mode: string; lvl: number }
+
+/** monstats El1~3 (Mode/Type/Pct/MinD/MaxD/Dur, Normal 컬럼) */
+export interface MonElemDef { mode: string; type: string; pct: number; min: number; max: number; dur: number }
+
+/** monseq.txt 한 프레임 (mode 의 frame 번째 그림, event 0 없음 / 1 공격 / 2 미사일·스킬 / 4 스킬 …) */
+export interface MonSeqFrame { mode: string; frame: number; event: number }
+
 export interface MonsterType {
   id: string;
+  /** monstats.txt 행 번호 (hcIdx) */
+  hcIdx: number;
   nameStr: string;
   code: string;
   ai: string;
   baseW: string;
+  /** 같은 계열의 첫 몬스터 (BaseId) · 다음 몬스터 (NextInClass) */
+  baseId: string; nextInClass: string;
+  /** 팔레트 변형 번호 (monstats TransLvl) */
+  transLvl: number;
+  monType: string;
   level: number;
   minGrp: number; maxGrp: number;
+  /** 파티(동반) 몬스터: minion1/2, PartyMin~PartyMax, SetBoss/BossXfer */
+  minions: string[]; partyMin: number; partyMax: number; setBoss: boolean; bossXfer: boolean;
+  /** 스폰 몬스터 (Nest 등): spawn / spawnx / spawny / spawnmode, placespawn */
+  spawn: string; spawnX: number; spawnY: number; spawnMode: string; placeSpawn: boolean;
   rarity: number;
+  sparsePopulate: number;
   /** 야드/초 (플레이어 WalkVelocity 와 같은 단위) */
   velocity: number; run: number;
   minHpPct: number; maxHpPct: number; acPct: number; expPct: number;
-  a1: AttackDef; a2: AttackDef;
-  missA1: string; missA2: string;
+  a1: AttackDef; a2: AttackDef; s1: AttackDef;
+  missA1: string; missA2: string; missS1: string; missC: string; missSQ: string;
   aiParams: number[];
   aiDelay: number;
   aiDist: number;
   toBlock: number;
   damageRegen: number;
+  crit: number;
+  /** TreasureClass1~4 (일반/챔피언/유니크/퀘스트) */
   treasure: string[];
+  /** 퀘스트 드롭 (TCQuestId, TCQuestCP) */
+  tcQuestId: number; tcQuestCP: number;
+  skills: MonSkillDef[];
+  elem: MonElemDef[];
   sizeX: number;
   meleeRange: number;
   hitClass: number;
@@ -45,18 +72,28 @@ export interface MonsterType {
   /** monstats2 레이어별 외형 변형 (예: TR → ['lit','med','hvy']) */
   layers: Record<string, string[]>;
   undead: boolean; demon: boolean;
+  /** monstats 플래그 */
+  isMelee: boolean; rangedType: boolean; noMultishot: boolean; flying: boolean; boss: boolean; primeEvil: boolean;
+  npc: boolean; isSpawn: boolean; killable: boolean; inTown: boolean; neverCount: boolean;
+  /** monstats2: 유니크 색 (Utrans, Normal), 유니크 색 바꿈 없음 (noUniqueShift), 부활 모드·스킬, 스폰 충돌, 움직이지 않음 (inert) */
+  utrans: number; noUniqueShift: boolean; resurrectMode: string; resurrectSkill: string; spawnCol: number; inert: boolean;
+  critter: boolean; corpseSel: boolean;
 }
 
 export class MonsterDb {
   readonly types = new Map<string, MonsterType>();
+  /** hcIdx 순서 (monpreset·superuniques 가 행 번호로 참조) */
+  readonly list: MonsterType[] = [];
+  /** monseq.txt 시퀀스 이름 → 프레임 */
+  readonly seqs = new Map<string, MonSeqFrame[]>();
   private readonly monLvl: TxtRow[];
 
-  constructor(monstats: TxtRow[], monstats2: TxtRow[], monLvl: TxtRow[]) {
+  constructor(monstats: TxtRow[], monstats2: TxtRow[], monLvl: TxtRow[], monSeq: TxtRow[] = []) {
     this.monLvl = monLvl;
     const s2 = new Map(monstats2.map((r) => [r.Id, r]));
     for (const r of monstats) {
       if (!r.Id || r.Id === 'Expansion') continue;
-      const r2 = s2.get(r.Id) ?? {};
+      const r2 = s2.get(r.MonStatsEx || r.Id) ?? s2.get(r.Id) ?? {};
       const modes = new Set<string>();
       for (const m of ['DT', 'NU', 'WL', 'GH', 'A1', 'A2', 'BL', 'SC', 'S1', 'S2', 'S3', 'S4', 'DD', 'KB', 'SQ', 'RN']) if (n(r2[`m${m}`]) === 1) modes.add(m);
       const layers: Record<string, string[]> = {};
@@ -66,22 +103,93 @@ export class MonsterDb {
         const v = (r2[vcol] ?? '').replace(/"/g, '').split(',').map((x) => x.trim()).filter(Boolean);
         layers[name] = v.length ? v : ['lit'];
       }
-      this.types.set(r.Id, {
-        id: r.Id, nameStr: r.NameStr ?? r.Id, code: r.Code ?? '', ai: r.AI ?? '', baseW: (r2.BaseW ?? 'hth').toUpperCase(),
-        level: n(r.Level), minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp), rarity: n(r.Rarity), velocity: n(r.Velocity), run: n(r.Run),
+      const skills: MonSkillDef[] = [];
+      for (let i = 1; i <= 8; i++) {
+        const name = r[`Skill${i}`] ?? '';
+        skills.push({ name, mode: r[`Sk${i}mode`] ?? '', lvl: n(r[`Sk${i}lvl`]) });
+      }
+      const elem: MonElemDef[] = [];
+      for (let i = 1; i <= 3; i++) {
+        elem.push({ mode: r[`El${i}Mode`] ?? '', type: r[`El${i}Type`] ?? '', pct: n(r[`El${i}Pct`]), min: n(r[`El${i}MinD`]), max: n(r[`El${i}MaxD`]), dur: n(r[`El${i}Dur`]) });
+      }
+      const t: MonsterType = {
+        id: r.Id, hcIdx: n(r.hcIdx), nameStr: r.NameStr ?? r.Id, code: r.Code ?? '', ai: r.AI ?? '', baseW: (r2.BaseW ?? 'hth').toUpperCase(),
+        baseId: r.BaseId || r.Id, nextInClass: r.NextInClass ?? '', transLvl: n(r.TransLvl), monType: r.MonType ?? '',
+        level: n(r.Level), minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp),
+        minions: [r.minion1 ?? '', r.minion2 ?? ''].filter(Boolean), partyMin: n(r.PartyMin), partyMax: n(r.PartyMax),
+        setBoss: n(r.SetBoss) === 1, bossXfer: n(r.BossXfer) === 1,
+        spawn: r.spawn ?? '', spawnX: n(r.spawnx), spawnY: n(r.spawny), spawnMode: r.spawnmode ?? '', placeSpawn: n(r.placespawn) === 1,
+        rarity: n(r.Rarity), sparsePopulate: n(r.sparsePopulate), velocity: n(r.Velocity), run: n(r.Run),
         minHpPct: n(r.minHP), maxHpPct: n(r.maxHP), acPct: n(r.AC), expPct: n(r.Exp),
         a1: { min: n(r.A1MinD), max: n(r.A1MaxD), toHit: n(r.A1TH) }, a2: { min: n(r.A2MinD), max: n(r.A2MaxD), toHit: n(r.A2TH) },
-        missA1: r.MissA1 ?? '', missA2: r.MissA2 ?? '',
+        s1: { min: n(r.S1MinD), max: n(r.S1MaxD), toHit: n(r.S1TH) },
+        missA1: r.MissA1 ?? '', missA2: r.MissA2 ?? '', missS1: r.MissS1 ?? '', missC: r.MissC ?? '', missSQ: r.MissSQ ?? '',
         aiParams: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => n(r[`aip${i}`])),
-        aiDelay: n(r.aidel), aiDist: n(r.aidist), toBlock: n(r.ToBlock), damageRegen: n(r.DamageRegen),
+        aiDelay: n(r.aidel), aiDist: n(r.aidist), toBlock: n(r.ToBlock), damageRegen: n(r.DamageRegen), crit: n(r.Crit),
         treasure: [r.TreasureClass1 ?? '', r.TreasureClass2 ?? '', r.TreasureClass3 ?? '', r.TreasureClass4 ?? ''],
+        tcQuestId: n(r.TCQuestId), tcQuestCP: n(r.TCQuestCP), skills, elem,
         sizeX: n(r2.SizeX) || 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
         resist: { dm: n(r.ResDm), ma: n(r.ResMa), fi: n(r.ResFi), li: n(r.ResLi), co: n(r.ResCo), po: n(r.ResPo) },
         coldEffect: r.coldeffect === undefined || r.coldeffect === '' ? -50 : n(r.coldeffect),
         noRatio: n(r.noRatio) === 1,
         modes, layers, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
-      });
+        isMelee: n(r.isMelee) === 1, rangedType: n(r.rangedtype) === 1, noMultishot: n(r.nomultishot) === 1, flying: n(r.flying) === 1,
+        boss: n(r.boss) === 1, primeEvil: n(r.primeevil) === 1, npc: n(r.npc) === 1, isSpawn: n(r.isSpawn) === 1, killable: n(r.killable) === 1,
+        inTown: n(r.inTown) === 1, neverCount: n(r.neverCount) === 1,
+        utrans: n(r2.Utrans), noUniqueShift: n(r2.noUniqueShift) === 1, resurrectMode: r2.ResurrectMode ?? 'NU', resurrectSkill: r2.ResurrectSkill ?? '',
+        spawnCol: n(r2.spawnCol), inert: n(r2.inert) === 1, critter: n(r2.critter) === 1, corpseSel: n(r2.corpseSel) === 1,
+      };
+      this.types.set(r.Id, t);
+      this.list.push(t);
     }
+    for (const r of monSeq) {
+      if (!r.sequence) continue;
+      const list = this.seqs.get(r.sequence) ?? [];
+      list.push({ mode: r.mode ?? 'NU', frame: n(r.frame), event: n(r.event) });
+      this.seqs.set(r.sequence, list);
+    }
+  }
+
+  /** 같은 계열 안의 순번 (BaseId = 0). 출처: D2Common DATATBLS_GetMonsterChainInfo (BaseId 부터 NextInClass 를 따라간 위치) */
+  chainIndex(t: MonsterType): number {
+    let cur = this.types.get(t.baseId);
+    for (let i = 0; cur && i < 16; i++) {
+      if (cur.id === t.id) return i;
+      cur = this.types.get(cur.nextInClass);
+    }
+    return 0;
+  }
+
+  /** 계열 길이. 출처: DATATBLS_GetMonsterChainInfo (nMonstersInChain) */
+  chainLength(t: MonsterType): number {
+    let cur = this.types.get(t.baseId), k = 0;
+    while (cur && k < 16) {
+      k++;
+      cur = this.types.get(cur.nextInClass);
+    }
+    return k;
+  }
+
+  /**
+   * 레벨에 맞는 같은 계열 몬스터.
+   * 출처: D2Common Monsters.cpp D2Common_11063 — 레벨 몬스터 풀(mon1~)에 같은 BaseId 가 있으면 그것,
+   *       없으면 NextInClass 를 따라가며 몬스터 Level ≤ 레벨 MonLvlEx(Normal) + 1 인 마지막 것
+   */
+  forLevel(id: string, levelPool: readonly string[], monLvlEx: number): string {
+    const t = this.types.get(id);
+    if (!t || !levelPool.length) return id;
+    const base = this.types.get(t.baseId);
+    if (!base) return id;
+    for (const p of levelPool) if (this.types.get(p)?.baseId === base.id) return p;
+    let result = id, next = base.nextInClass;
+    const count = this.chainLength(t);
+    for (let i = 0; i < count; i++) {
+      const nt = this.types.get(next);
+      if (!nt || nt.level > monLvlEx + 1) return result;
+      result = nt.id;
+      next = nt.nextInClass;
+    }
+    return result;
   }
 
   get(id: string): MonsterType {
@@ -104,6 +212,9 @@ export interface MonsterStats {
   exp: number;
   a1: AttackDef;
   a2: AttackDef;
+  s1: AttackDef;
+  /** El1~3 원소 피해 (MonLvl DM 비율 적용) */
+  elem: { min: number; max: number }[];
 }
 
 /**
@@ -122,6 +233,9 @@ export function rollMonsterStats(db: MonsterDb, t: MonsterType, rng: Rng, level 
     exp: ratio('XP', t.expPct),
     a1: atk(t.a1),
     a2: atk(t.a2),
+    s1: atk(t.s1),
+    // 출처: DATATBLS_CalculateMonsterStatsByLevel (nFlags 0x40+i) — 원소 피해도 MonLvl DM 비율
+    elem: t.elem.map((e) => ({ min: ratio('DM', e.min), max: ratio('DM', e.max) })),
   };
 }
 

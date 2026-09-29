@@ -27,7 +27,10 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
 }
 
 interface LayerGfx { dcc: Dcc; canvases: Map<number, Drawable> }
-export interface Composite { cof: Cof; layers: Map<number, LayerGfx> }
+export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array }
+
+/** 팔레트 색 바꿈 표 (256 바이트: 원래 색 번호 → 바뀐 색 번호) */
+export interface ColorShift { key: string; map: Uint8Array }
 
 export interface CompositeSpec {
   /** 'CHARS', 'MONSTERS' 또는 'OBJECTS' */
@@ -37,18 +40,54 @@ export interface CompositeSpec {
   wclass: string;
   /** 레이어 이름(HD, TR, RH …) → 외형 코드 (lit, hax, buc …) */
   equip: Record<string, string>;
+  /** 팔레트 색 바꿈 (몬스터 변종 palshift.dat · 유니크 RandTransforms.dat) */
+  shift?: ColorShift | null;
 }
 
-const specKey = (s: CompositeSpec) => `${s.root}/${s.token}/${s.mode}/${s.wclass}/${Object.entries(s.equip).sort().map(([k, v]) => `${k}=${v}`).join(',')}`;
+const specKey = (s: CompositeSpec) => `${s.root}/${s.token}/${s.mode}/${s.wclass}/${Object.entries(s.equip).sort().map(([k, v]) => `${k}=${v}`).join(',')}/${s.shift?.key ?? ''}`;
 
 export class UnitGfx {
   private readonly assets: AsyncAssets;
   private readonly pal: Palette;
   private readonly cache = new Map<string, Composite | null | Promise<void>>();
+  private readonly shiftFiles = new Map<string, Uint8Array | null | 'loading'>();
 
   constructor(assets: AsyncAssets, pal: Palette) {
     this.assets = assets;
     this.pal = pal;
+  }
+
+  private shiftFile(path: string): Uint8Array | null | undefined {
+    const hit = this.shiftFiles.get(path);
+    if (hit === 'loading') return undefined;
+    if (hit !== undefined) return hit;
+    this.shiftFiles.set(path, 'loading');
+    this.assets.load(path).then((b) => this.shiftFiles.set(path, b)).catch(() => this.shiftFiles.set(path, null));
+    return undefined;
+  }
+
+  /**
+   * 몬스터 색 바꿈 표. 유니크 = RandTransforms.dat 의 (Utrans − 2) 번째, 아니면 변종 = <토큰>\COF\palshift.dat 의 (TransLvl + 2) 번째.
+   * 출처: 원작 파일 data\global\monsters\RandTransforms.dat (30 × 256), <토큰>\COF\palshift.dat (8 × 256), monstats TransLvl, SuperUniques/MonStats2 Utrans
+   * 근사(원작 미확인): 번호 오프셋 +2 / −2 — 기본 몬스터(TransLvl 0)가 항등 표(2 번)에 오고 Utrans 최댓값 31 이 30 개 표에 맞는 배치로 추정
+   * 반환: 표 (없으면 null, 불러오는 중이면 undefined)
+   */
+  monsterShift(token: string, transLvl: number, uniqueTrans?: number): ColorShift | null | undefined {
+    if (uniqueTrans !== undefined) {
+      const rt = this.shiftFile('data\\global\\monsters\\RandTransforms.dat');
+      if (rt === undefined) return undefined;
+      const i = uniqueTrans - 2;
+      if (!rt || i < 0 || (i + 1) * 256 > rt.length) return null;
+      return { key: `rt${i}`, map: rt.subarray(i * 256, i * 256 + 256) };
+    }
+    const ps = this.shiftFile(`data\\global\\monsters\\${token}\\COF\\palshift.dat`);
+    if (ps === undefined) return undefined;
+    const i = transLvl + 2;
+    if (!ps || (i + 1) * 256 > ps.length) return null;
+    const map = ps.subarray(i * 256, i * 256 + 256);
+    let identity = true;
+    for (let k = 0; k < 256 && identity; k++) if (map[k] !== k) identity = false;
+    return identity ? null : { key: `ps${token}${i}`, map };
   }
 
   /** 준비되면 Composite, 로딩 중이면 undefined, 없으면 null */
@@ -67,6 +106,7 @@ export class UnitGfx {
     if (!cofBytes) return null;
     const cof = parseCof(cofBytes);
     const layers = new Map<number, LayerGfx>();
+    const trans = s.shift?.map;
     await Promise.all(
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
@@ -75,7 +115,7 @@ export class UnitGfx {
         if (b) layers.set(l.type, { dcc: parseDcc(b), canvases: new Map() });
       }),
     );
-    return { cof, layers };
+    return trans ? { cof, layers, trans } : { cof, layers };
   }
 
   /** 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환 */
@@ -95,7 +135,8 @@ export class UnitGfx {
       const key = d * 1000 + f;
       let c = lg.canvases.get(key);
       if (!c) {
-        c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
+        const tr = comp.trans;
+        c = indexedToCanvas(tr ? fr.pixels.map((p) => (p ? tr[p] ?? p : 0)) : fr.pixels, dir.box.width, dir.box.height, this.pal);
         lg.canvases.set(key, c);
       }
       // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사

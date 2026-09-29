@@ -15,7 +15,20 @@ import { ROOM, type DrlgData, type LvlSubRec } from './types';
 export const asI32 = (a: Uint32Array): Int32Array => new Int32Array(a.buffer, a.byteOffset, a.length);
 
 /** 방 안의 프리셋 유닛 (좌표: 방 기준 서브타일) */
-export interface RoomUnit { type: number; id: number; x: number; y: number; code?: string }
+export interface RoomUnit {
+  type: number; id: number; x: number; y: number; code?: string;
+  /** DS1 유닛 플래그 (bit 1 = 배치 안 함 — 원작 bSpawned & 1) */
+  flags?: number;
+  /** DS1 유닛 경로 (서브타일, 유닛과 같은 좌표계) — 원작 pMapAI (Countess 불벽 지점) */
+  path?: { x: number; y: number }[];
+}
+
+/** 유닛과 경로를 함께 옮긴다 */
+export function shiftUnit<T extends RoomUnit>(u: T, dx: number, dy: number): T {
+  const out = { ...u, x: u.x + dx, y: u.y + dy };
+  if (u.path) out.path = u.path.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  return out;
+}
 
 export interface RoomBuild {
   /** 레벨 기준 타일 좌표 */
@@ -62,7 +75,11 @@ export function ds1Units(d: Ds1): RoomUnit[] {
       else if (id === 573) id = -1;
       // 원작: 표 값 0 은 ObjPreset 끝 표시 — 번호 0 오브젝트로 그대로 둔다
     }
-    if (id >= 0) out.push({ type: o.type, id, x: o.x, y: o.y });
+    if (id < 0) continue;
+    const u: RoomUnit = { type: o.type, id, x: o.x, y: o.y };
+    if (o.flags) u.flags = o.flags;
+    if (o.type === 1 && o.path.length) u.path = o.path.map((p) => ({ x: p.x, y: p.y }));
+    out.push(u);
   }
   return out;
 }
@@ -174,7 +191,7 @@ function substApply(c: SubCtx, nx: number, ny: number, g: Grp, s: SubGrids, a7: 
   const minX = g.x * 5, minY = g.y * 5, maxX = g.w * 5, maxY = g.h * 5;
   for (const u of s.units) {
     if (u.x > minX && u.x < minX + maxX && u.y > minY && u.y < minY + maxY) {
-      room.units.push({ type: u.type, id: u.id, x: nx * 5 + u.x - minX, y: ny * 5 + u.y - minY });
+      room.units.push(shiftUnit(u, nx * 5 - minX, ny * 5 - minY));
     }
   }
 }
@@ -311,7 +328,7 @@ export function buildPresetRooms(d: Ds1, prest: { def: number; killEdge: boolean
         dt1Mask: prest.dt1Mask, flags: prest.populate ? 0 : ROOM.POPULATION_ZERO, units: [], prest: prest.def,
       };
       for (const u of units) {
-        if (u.x >= ox * 5 && u.y >= oy * 5 && u.x < (ox + w) * 5 && u.y < (oy + h) * 5) room.units.push({ ...u, x: u.x - ox * 5, y: u.y - oy * 5 });
+        if (u.x >= ox * 5 && u.y >= oy * 5 && u.x < (ox + w) * 5 && u.y < (oy + h) * 5) room.units.push(shiftUnit(u, -ox * 5, -oy * 5));
       }
       rooms.push(room);
     }

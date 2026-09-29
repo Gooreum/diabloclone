@@ -771,9 +771,9 @@ describe.skipIf(!hasGameData)('원작 skills.txt 수치', () => {
       b.hp = 100000;
       b.nextThink = 1e9;
       cast(game, 'Confuse', a.x, a.y);
-      run(game, 20);
+      const first = run(game, 20);
       expect(a.states.has('confuse')).toBe(true);
-      let hit = false;
+      let hit = first.some((e) => e.type === 'monsterHit' && e.targetId === b.id);
       for (let i = 0; i < 1000 && !hit; i++) for (const e of game.tick()) if (e.type === 'monsterHit' && e.targetId === b.id) hit = true;
       expect(hit).toBe(true);
     });

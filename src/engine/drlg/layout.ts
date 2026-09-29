@@ -13,10 +13,10 @@ import type { Rng } from '../rng';
 import { type Act1Placement, levelSeed } from './act1-link';
 import type { Box, DrlgGrid } from './grid';
 import { generateOutdoorGrid, type OutdoorLevel } from './outdoors';
-import { allocRoomSeed, buildOutdoorRoom, buildPresetRooms, type RoomBuild } from './rooms';
+import { allocRoomSeed, buildOutdoorRoom, buildPresetRooms, shiftUnit, type RoomBuild } from './rooms';
 import { G2, LEVEL, PREST, ROOM, TILE, TILETYPE, pickedFileOf, tileSequence, tileStyle, type DrlgData } from './types';
 
-export interface LayoutUnit { type: number; id: number; x: number; y: number; code?: string }
+export interface LayoutUnit { type: number; id: number; x: number; y: number; code?: string; flags?: number; path?: { x: number; y: number }[] }
 /** 레벨 이동 타일 (동굴 입구 등). 좌표 = 레벨 기준 서브타일 */
 export interface WarpPoint { x: number; y: number; toLevel: number; warpId: number; visIndex: number }
 export interface LayoutRoom { x: number; y: number; w: number; h: number; flags: number; prest: number }
@@ -135,7 +135,7 @@ export class Assembler {
 
   addRoom(room: RoomBuild): void {
     for (let ty = 0; ty < room.h; ty++) for (let tx = 0; tx < room.w; tx++) this.put(room, tx, ty, false);
-    for (const u of room.units) this.units.push({ ...u, x: u.x + room.x * 5, y: u.y + room.y * 5 });
+    for (const u of room.units) this.units.push(shiftUnit(u, room.x * 5, room.y * 5));
     this.rooms.push({ x: room.x * 5, y: room.y * 5, w: room.w * 5, h: room.h * 5, flags: room.flags, prest: room.prest });
   }
 

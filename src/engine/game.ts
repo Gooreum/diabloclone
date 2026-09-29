@@ -9,9 +9,10 @@ import type { AnimData } from '../formats/animdata';
 import { actionFrame } from '../formats/animdata';
 import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type TreasureDb } from './treasure';
-import type { MonsterDb } from './monster';
+import type { MonsterDb, MonsterStats, MonsterType, MonSeqFrame } from './monster';
 import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } from './monster';
-import { escape, hasAi, idle, think, walkToTarget, type AiWorld, type MonMode, type MonsterUnit, type PetInfo } from './ai';
+import { aiName, escape, hasAi, idle, MONMODE_INDEX, think, walkToTarget, type AiWorld, type MonCast, type MonMode, type MonsterUnit, type PetInfo, type SkillTarget } from './ai';
+import { applyUModInit, MONFLAG, rollMinionCount, UMOD, xferMods, type UniqueDb, type UModContext } from './uniques';
 import { addExperience, spendStat, type Character, type ClassName, type ClassStats, type ExpTable } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
@@ -73,6 +74,8 @@ export interface GameData {
   bookCharge?: Map<string, number>;
   /** objects.txt / ObjGroup.txt / shrines.txt / levels.txt (오브젝트) */
   objects?: ObjectDb;
+  /** MonUMod.txt / SuperUniques.txt / MonPreset.txt / 유니크 이름 표 */
+  uniques?: UniqueDb;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -125,8 +128,8 @@ export interface LevelDef {
   map: CollisionMap;
   inTown: boolean;
   exits: LevelExit[];
-  /** 처음 들어갈 때 배치할 몬스터 */
-  spawns?: { typeId: string; x: number; y: number; leaderIndex: number }[];
+  /** 처음 들어갈 때 배치할 몬스터 (boss = 챔피언/유니크 굴림, party = 동반 몬스터) */
+  spawns?: { typeId: string; x: number; y: number; leaderIndex: number; boss?: boolean; party?: boolean }[];
   /** levels.txt 번호 (오브젝트·웨이포인트·상자 TC) */
   levelNo?: number;
   /** DS1 프리셋 오브젝트 (objects.txt 번호, 574 이상은 원작 특수 표) — 레벨 서브타일 */
@@ -137,11 +140,17 @@ export interface LevelDef {
   monsterPool?: string[];
   /** 마을 포털이 열리는 자리 (원작 타일 정보 11 — DUNGEON_FindActSpawnLocationEx(…, 11, …)) */
   portalSpot?: { x: number; y: number };
+  /** DS1 프리셋 몬스터 (MonPreset 번호, 서브타일, DS1 경로) */
+  presetMonsters?: { id: number; x: number; y: number; path?: Pt[] }[];
+  /** 레벨 몬스터 정보: levels.txt 풀·고른 목록·보스 후보·MonLvlEx·막·WarpDist */
+  monsterInfo?: { pool: string[]; region: string[]; umon: string[]; monLvlEx: number; act: number; warpDist: number; warpPoints: Pt[] };
 }
 
 interface LevelState {
   def: LevelDef; monsters: MonsterUnit[]; ground: GroundItem[]; missiles: Missile[]; populated: boolean;
   objects: ObjectUnit[]; region: ObjectRegion | null; automap: AutomapReveal;
+  /** 몬스터 종류별 레이어 외형 세트 (원작 D2MonRegDataStrc nComponentVariants) */
+  variants: Map<string, Record<string, number>[]>;
 }
 
 export interface GameEvent { type: string; [k: string]: unknown }
@@ -158,6 +167,14 @@ export interface MonsterSnapshot {
   id: number; typeId: string; code: string; x: number; y: number; mode: MonMode; dir: number; modeTick: number; hp: number; maxHp: number; states: string[];
   /** 플레이어 소환수 */
   ally?: boolean;
+  /** MONTYPEFLAG (2 슈퍼유니크, 4 챔피언, 8 유니크, 16 미니언) · 수식어 · 이름 시드 · 슈퍼유니크 행 */
+  flags: number; umods: number[]; nameSeed: number; superUnique?: number;
+  /** 레이어 외형 선택 (레이어 → 변형 순번) */
+  components?: Record<string, number>;
+  /** 유니크 색 (RandTransforms 번호 + 2, 원작 Utrans 값) — 없으면 undefined */
+  uniqueTrans?: number;
+  /** 시퀀스(SQ) 모드면 지금 그릴 모드·프레임 */
+  anim?: { mode: string; frame: number };
 }
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number }
@@ -259,6 +276,14 @@ interface Missile {
   groundTrail?: { def: MissileDef; roll: () => DamagePacket };
   /** 나선 경로 (Blessed Hammer): 중심, 각, 반지름 */
   spiral?: { cx: number; cy: number; a: number; r: number };
+  /** 몬스터 미사일: 원소 등 추가 피해 (1/256) */
+  mpkt?: DamagePacket & { manaDrain?: number };
+  /** 몬스터 지면 불 (제자리, 닿아 있는 동안 매 프레임) */
+  groundFire?: boolean;
+  /** 명중 판정 없음 (missiles.txt ToHit 0) */
+  alwaysHit?: boolean;
+  /** 그림만 (충돌 없음) */
+  visual?: boolean;
 }
 
 /** 저주 상태 (한 몬스터에 하나만). 출처: states.txt curse = 1 (클래식 네크로맨서 저주) */
@@ -317,7 +342,7 @@ export class Game {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
     for (const d of defs) {
       this.levels.set(d.id, {
-        def: d, monsters: [], ground: [], missiles: [], populated: false, objects: [], region: null,
+        def: d, monsters: [], ground: [], missiles: [], populated: false, objects: [], region: null, variants: new Map(),
         automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
       });
     }
@@ -493,13 +518,21 @@ export class Game {
     level.populated = true;
     const prev = this.level;
     this.level = level;
+    // 출처: SUNIT_SpawnPresetUnitsInRoom (프리셋 오브젝트 → 프리셋 몬스터) 뒤 D2GAME_PopulateRoom (무리·보스)
+    this.createLevelObjects(level);
+    for (const p of level.def.presetMonsters ?? []) this.spawnPreset(p);
     const leaders: number[] = [];
     level.def.spawns?.forEach((sp, i) => {
+      if (sp.boss) {
+        const b = this.spawnBoss(sp.typeId, sp.x, sp.y, true);
+        leaders[i] = b?.id ?? -1;
+        return;
+      }
       const leader = sp.leaderIndex === i ? undefined : leaders[sp.leaderIndex];
-      const m = this.spawnMonster(sp.typeId, sp.x, sp.y, leader);
+      const m = this.spawnMonster(sp.typeId, sp.x, sp.y, leader !== undefined && leader >= 0 ? leader : undefined);
       leaders[i] = m.id;
+      if (sp.party) this.spawnParty(m);
     });
-    this.createLevelObjects(level);
     this.level = prev;
   }
 
@@ -582,10 +615,16 @@ export class Game {
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
         states: p.states.names(), leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
-      monsters: [...this.monsters, ...this.pets].map((m) => ({
-        id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
-        hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
-      })),
+      monsters: [...this.monsters, ...this.pets].map((m) => {
+        const anim = this.monsterSeqAnim(m);
+        const ut = this.uniqueTrans(m);
+        return {
+          id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
+          hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
+          flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
+          ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
+        };
+      }),
       items: this.ground.map((g) => ({ id: g.item.id, code: g.item.code, quality: g.item.quality, quantity: g.item.quantity, x: g.x, y: g.y })),
       missiles: this.missiles.map((m) => ({ id: m.id, name: m.def.name, x: m.x, y: m.y, dir: dir64(m.dx, m.dy), celFile: m.def.celFile, frame: m.age % m.def.animLen })),
       objects: this.level.objects.map((o) => ({
@@ -598,19 +637,352 @@ export class Game {
 
   // ---------------------------------------------------------------- spawning
 
-  spawnMonster(typeId: string, x: number, y: number, leaderId?: number): MonsterUnit {
+  /**
+   * 몬스터 한 마리 (파티·수식어 없음 — 원작 nFlags 64 스폰). leaderId = 주인(무리 리더).
+   * 레이어 외형은 레벨 몬스터 영역의 변형 세트에서 고른다 (출처: MonsterChoose.cpp sub_6FC62020)
+   */
+  spawnMonster(typeId: string, x: number, y: number, leaderId?: number, opts: { mode?: MonMode } = {}): MonsterUnit {
     if (!this.data) throw new Error('spawnMonster requires game data');
     const type = this.data.monsters.get(typeId);
     const rng = new Rng(Number(this.rng.next() & 0xffffffffn) || 1);
     const stats = rollMonsterStats(this.data.monsters, type, rng);
     const id = this.nextUnitId++;
-    const m: MonsterUnit = {
-      id, type, stats, x, y, hp: stats.maxHp, mode: 'NU', dir: 0, path: [], moveSpeed: 0,
-      nextThink: this.tickCount + rng.pick(Math.max(type.aiDelay, 1)), modeStart: this.tickCount, modeEnd: 0, hitTick: -1, hitDone: true,
-      rng, aggro: false, aiParam0: 0, command: 0, leaderId: leaderId ?? id, deathFrame: -1, states: new StateList(), corpseUsed: false,
-    };
+    const m = this.newMonsterUnit(id, type, stats, rng, x, y);
+    m.leaderId = leaderId ?? id;
+    m.nextThink = this.tickCount + rng.pick(Math.max(type.aiDelay, 1));
+    m.components = this.rollComponents(type);
+    m.levelKey = this.level.def.id;
+    if (opts.mode && opts.mode !== 'NU') this.startMonsterMode(m, opts.mode);
     this.monsters.push(m);
     return m;
+  }
+
+  private newMonsterUnit(id: number, type: MonsterType, stats: MonsterStats, rng: Rng, x: number, y: number): MonsterUnit {
+    return {
+      id, type, stats, x, y, hp: stats.maxHp, mode: 'NU', dir: 0, path: [], moveSpeed: 0,
+      nextThink: this.tickCount + 1, modeStart: this.tickCount, modeEnd: 0, hitTick: -1, hitDone: true,
+      rng, aggro: false, aiState: 1, aiParam0: 0, ai: [0, 0, 0], command: 0, leaderId: id, deathFrame: -1, states: new StateList(), corpseUsed: false,
+      flags: 0, umods: [], nameSeed: 0, bonus: {}, resist: { ...type.resist }, hpRegen: true, skillsAdded: [], noXp: false, noTc: false, velPct: 0, moveVelPct: 0,
+    };
+  }
+
+  /**
+   * 레이어 외형 변형 (레벨 몬스터 영역마다 최대 3 세트, 첫 세트는 레이어마다 무작위, 나머지는 두 레이어만 바꾼 세트).
+   * 출처: MonsterChoose.cpp sub_6FC62020 (nComponentVariants). 근사(원작 미확인): 몬스터가 세트를 고르는 규칙 — 무작위
+   */
+  private rollComponents(t: MonsterType): Record<string, number> | undefined {
+    const layers = Object.entries(t.layers);
+    if (!layers.length) return undefined;
+    const lv = this.level;
+    let sets = lv.variants.get(t.id);
+    if (!sets) {
+      sets = [];
+      const rng = this.rng;
+      const first: Record<string, number> = {};
+      for (const [k, v] of layers) first[k] = v.length > 1 ? rng.pick(v.length) : 0;
+      sets.push(first);
+      const multi = layers.filter(([, v]) => v.length > 1).map(([k]) => k);
+      if (multi.length) {
+        let i1 = multi[0] as string, i2 = i1;
+        if (multi.length !== 1) {
+          const r = rng.pick(multi.length);
+          i1 = multi[r] as string;
+          multi[r] = multi[multi.length - 1] as string;
+          i2 = multi[rng.pick(multi.length - 1)] as string;
+        }
+        for (let n2 = 0; n2 < 2; n2++) {
+          const d = { ...first };
+          let tries = 3, dup = true;
+          while (dup && tries) {
+            d[i1] = rng.pick(t.layers[i1]?.length ?? 1);
+            if (i1 !== i2) d[i2] = rng.pick(t.layers[i2]?.length ?? 1);
+            dup = sets.some((s) => layers.every(([k]) => s[k] === d[k]));
+            if (dup) tries--;
+          }
+          sets.push(d);
+        }
+      }
+      lv.variants.set(t.id, sets);
+    }
+    return { ...(sets[this.rng.pick(sets.length)] as Record<string, number>) };
+  }
+
+  /** 주변 빈칸 (원작 D2GAME_SpawnNormalMonster 의 field_20 반경 탐색 근사) */
+  private spawnSpot(x: number, y: number, radius: number, t: MonsterType): Pt | null {
+    const map = this.map;
+    const ok = (px: number, py: number) => map.walkable(px, py) && !this.blockedByUnit({}, px + 0.5, py + 0.5, t.sizeX);
+    if (ok(Math.floor(x), Math.floor(y))) return { x: Math.floor(x) + 0.5, y: Math.floor(y) + 0.5 };
+    for (let r = 1; r <= radius + 2; r++) {
+      for (let k = 0; k < 12; k++) {
+        const px = Math.floor(x) + this.rng.pick(2 * r + 1) - r, py = Math.floor(y) + this.rng.pick(2 * r + 1) - r;
+        if (ok(px, py)) return { x: px + 0.5, y: py + 0.5 };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 파티 (동반 몬스터). 출처: MonsterSpawn.cpp sub_6FC69C00 — PartyMin + rand(PartyMax − PartyMin + 1) 마리,
+   * minion1/minion2 번갈아, SetBoss 면 이 몬스터가 주인
+   */
+  private spawnParty(m: MonsterUnit): MonsterUnit[] {
+    const t = m.type, out: MonsterUnit[] = [];
+    if (!t.minions.length || !this.data) return out;
+    let count = t.partyMin;
+    if (count < t.partyMax) count += m.rng.pick(t.partyMax - count + 1);
+    const threshold = t.minions.length > 1 ? 1 : 0;
+    let idx = 0;
+    for (let i = 0; i < count; i++) {
+      const id = t.minions[idx] as string;
+      idx = idx + 1 > threshold ? 0 : idx + 1;
+      if (!this.data.monsters.types.has(id)) continue;
+      const spot = this.spawnSpot(m.x, m.y, 4, this.data.monsters.get(id));
+      if (!spot) continue;
+      out.push(this.spawnMonster(id, spot.x, spot.y, t.setBoss ? m.id : undefined));
+    }
+    return out;
+  }
+
+  private umodCtx(): UModContext | null {
+    const d = this.data;
+    if (!d?.uniques) return null;
+    const row = d.difficultyRows?.[this.difficulty];
+    return { db: d.uniques, monsters: d.monsters, difficulty: this.difficulty, championDmgBonus: Number(row?.ChampionDamageBonus ?? 90) || 90 };
+  }
+
+  private applyUMod(m: MonsterUnit, umod: number, bUnique: boolean): void {
+    const ctx = this.umodCtx();
+    if (ctx) applyUModInit(ctx, m, umod, bUnique);
+  }
+
+  /** 이 보스의 미니언 (살아 있는 것만) */
+  minionsOf(boss: MonsterUnit): MonsterUnit[] {
+    return this.monsters.filter((o) => o !== boss && o.leaderId === boss.id && (o.flags & MONFLAG.MINION) !== 0);
+  }
+
+  /**
+   * 미니언 생성 + 수식어 1~4 와 보스 수식어 적용 (보스 = bUnique, 미니언 = !bUnique).
+   * 출처: D2GAME_SpawnMinions_6FC6F440 — 챔피언은 미니언 없음, 미니언 종류 = monstats minion1 (없으면 같은 몬스터),
+   *       수 = nMin + rand(nMax − nMin + 1), xfer 수식어를 미니언에게 복사
+   */
+  private spawnMinions(boss: MonsterUnit, spawn: boolean, min: number, max: number): void {
+    const data = this.data;
+    if (!data) return;
+    if (spawn && !(boss.flags & MONFLAG.CHAMPION)) {
+      const minionId = boss.type.minions[0] && data.monsters.types.has(boss.type.minions[0]) ? boss.type.minions[0] : boss.type.id;
+      const count = rollMinionCount(boss.rng, min, max);
+      for (let i = 0; i < count; i++) {
+        const spot = this.spawnSpot(boss.x, boss.y, 3, data.monsters.get(minionId));
+        if (!spot) continue;
+        const mn = this.spawnMonster(minionId, spot.x, spot.y, boss.id);
+        if (data.uniques) mn.umods.push(...xferMods(data.uniques, boss.umods).slice(0, 9 - mn.umods.length));
+        mn.flags |= MONFLAG.MINION;
+      }
+    }
+    const minions = this.minionsOf(boss);
+    for (const u of [UMOD.RNDNAME, UMOD.HPMULTIPLY, UMOD.LIGHT, UMOD.LEVELADD]) {
+      this.applyUMod(boss, u, true);
+      for (const mn of minions) this.applyUMod(mn, u, false);
+    }
+    for (const u of boss.umods) {
+      this.applyUMod(boss, u, true);
+      for (const mn of minions) this.applyUMod(mn, u, false);
+    }
+  }
+
+  /**
+   * 보스 (챔피언 또는 유니크) 생성. 출처: sub_6FC6E8D0 → D2GAME_SpawnMonster_6FC6F220 (UNIQUE|OTHER),
+   * sub_6FC6E940 (수식어), D2GAME_SpawnMinions (3~6 미니언), D2GAME_PopulateRoom (챔피언이면 같은 몬스터 1~3 마리 더 챔피언)
+   */
+  spawnBoss(typeId: string, x: number, y: number, allowChampion = true): MonsterUnit | null {
+    const data = this.data;
+    if (!data?.uniques || !data.monsters.types.has(typeId)) return null;
+    const m = this.spawnMonster(typeId, x, y);
+    m.flags |= MONFLAG.UNIQUE | MONFLAG.OTHER;
+    const r = data.uniques.rollBossMods(m.type, m.rng, allowChampion, m.umods, this.difficulty);
+    m.umods = r.umods;
+    if (r.champion) m.flags |= MONFLAG.CHAMPION;
+    this.spawnMinions(m, true, 3, 6);
+    if (m.flags & MONFLAG.CHAMPION) {
+      const extra = m.rng.pick(3) + 1;
+      for (let j = 0; j < extra; j++) {
+        const spot = this.spawnSpot(m.x, m.y, 4, m.type);
+        if (!spot) continue;
+        const c = this.spawnMonster(typeId, spot.x, spot.y, m.id);
+        this.makeChampion(c);
+      }
+    }
+    return m;
+  }
+
+  /**
+   * 챔피언 무리 (monplace place_champion). 출처: D2GAME_SpawnPresetMonster_6FC66560 case 3 —
+   * 몬스터 (파티 포함) → 챔피언 수식어, rand % 3 + 1 마리 더 (각각 파티 + 챔피언)
+   */
+  spawnChampionPack(id: string, x: number, y: number): MonsterUnit[] {
+    if (!this.data?.monsters.types.has(id)) return [];
+    const m = this.spawnMonster(id, x, y);
+    this.spawnParty(m);
+    this.makeChampion(m);
+    const out = [m];
+    const extra = (m.rng.roll() >>> 0) % 3 + 1;
+    for (let i = 0; i < extra; i++) {
+      const spot = this.spawnSpot(m.x, m.y, 4, m.type);
+      if (!spot) continue;
+      const c = this.spawnMonster(id, spot.x, spot.y, m.id);
+      this.spawnParty(c);
+      this.makeChampion(c);
+      out.push(c);
+    }
+    return out;
+  }
+
+  /** 출처: D2GAME_MONSTERS_Unk_6FC6FFD0 (MONUMOD_CHAMPMODS) — 챔피언으로 만들고 수식어 16 추가 + 1~4 적용 */
+  private makeChampion(m: MonsterUnit): void {
+    if (m.flags & MONFLAG.CHAMPION) return;
+    m.flags |= MONFLAG.UNIQUE | MONFLAG.CHAMPION | MONFLAG.OTHER;
+    if (m.umods.length < 9) m.umods.push(UMOD.CHAMPION);
+    this.spawnMinions(m, true, 0, 0);
+  }
+
+  /** 방 안 무작위 지점 (출처: sub_6FC66260 — 가장자리 1 제외, 20 번, 이동 지점 WarpDist 밖) */
+  private roomSpot(room: { x: number; y: number; w: number; h: number }, t: MonsterType): Pt | null {
+    const info = this.level.def.monsterInfo;
+    for (let i = 0; i < 20; i++) {
+      const x = room.x + 1 + this.rng.pick(room.w - 1), y = room.y + 1 + this.rng.pick(room.h - 1);
+      if (info?.warpPoints.some((p) => (x - p.x) ** 2 + (y - p.y) ** 2 < info.warpDist)) continue;
+      if (!this.map.walkable(x, y) || this.blockedByUnit({}, x + 0.5, y + 0.5, t.sizeX)) continue;
+      return { x: x + 0.5, y: y + 0.5 };
+    }
+    return null;
+  }
+
+  private roomAt(x: number, y: number): { x: number; y: number; w: number; h: number } | undefined {
+    return this.level.def.rooms?.find((r) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h);
+  }
+
+  /** 이번 게임에 이미 나온 슈퍼유니크 (원작 pGame->nBossFlagList) */
+  private readonly bossFlags = new Set<number>();
+  /** 완료한 퀘스트 (TCQuestId — 퀘스트 드롭 한 번). 근사: Phase 10 퀘스트 기록 전까지 게임 안에서만 */
+  readonly questsDone = new Set<number>();
+
+  /**
+   * 슈퍼유니크. 출처: D2GAME_SpawnSuperUnique_6FC6F690 — AutoPos 면 방 안 무작위 지점, 한 게임에 한 번 (Stacks 0),
+   * UNIQUE|SUPERUNIQUE, 수식어 = SuperUniques Mod1~3 (Thief 제외), 미니언 MinGrp~MaxGrp, Countess 는 특수 AI, 퀘스트 수식어 22
+   */
+  spawnSuperUnique(idx: number, x: number, y: number, path?: Pt[]): MonsterUnit | null {
+    const data = this.data;
+    const su = data?.uniques?.superUnique(idx);
+    if (!data || !su || !data.monsters.types.has(su.cls)) return null;
+    if (!su.stacks && this.bossFlags.has(su.idx)) return null;
+    const t = data.monsters.get(su.cls);
+    let pos: Pt | null = { x: x + 0.5, y: y + 0.5 };
+    if (su.autoPos) {
+      const room = this.roomAt(x, y);
+      pos = (room && this.roomSpot(room, t)) || this.spawnSpot(x, y, 5, t);
+    } else if (!this.map.walkable(x, y)) pos = this.spawnSpot(x, y, 5, t);
+    if (!pos) return null;
+    const m = this.spawnMonster(su.cls, pos.x, pos.y);
+    m.flags |= MONFLAG.UNIQUE | MONFLAG.OTHER | MONFLAG.SUPERUNIQUE;
+    m.superUnique = su.idx;
+    this.bossFlags.add(su.idx);
+    for (const u of su.mods) {
+      if (!u) break;
+      if (u !== UMOD.THIEF) m.umods.push(u);
+    }
+    const used = new Set(m.umods);
+    for (let i = 0; i < this.difficulty; i++) {
+      const u = data.uniques!.pickUniqueMod(t, used, m.rng, this.difficulty);
+      if (!u) break;
+      m.umods.push(u);
+      used.add(u);
+    }
+    let min = su.minGrp, max = su.maxGrp;
+    if (min && max) {
+      min += this.difficulty;
+      max += this.difficulty;
+    }
+    this.spawnMinions(m, true, min, max);
+    if (su.key === 'The Countess') {
+      // 출처: STATES_ToggleState(STATE_CORPSE_NOSELECT), AITHINK_ExecuteAiFn(…, AISPECIALSTATE_COUNTESS)
+      m.aiOverride = 'Countess';
+      m.corpseUsed = true;
+      if (path?.length) m.mapPath = path.map((p) => ({ x: p.x + 0.5, y: p.y + 0.5 }));
+    }
+    // 출처: D2GAME_BOSSES_AssignUMod_6FC6FF10(…, MONUMOD_QUESTMOD, 1)
+    if (m.umods.length < 9) m.umods.push(UMOD.QUESTCOMPLETE);
+    return m;
+  }
+
+  /**
+   * DS1 프리셋 몬스터. 출처: D2GAME_SpawnPresetMonster_6FC66560 — 슈퍼유니크, monstats 몬스터 (파티 포함), monplace:
+   * 2 유니크 무리(umon, 챔피언 없음), 3 챔피언(umon + 1~3 챔피언), 5 Blood Raven, 17 Fallen, 18 Fallen Shaman (D2Common_11063 레벨 계열 + 레벨 보정)
+   */
+  private spawnPreset(p: { id: number; x: number; y: number; path?: Pt[] }): void {
+    const data = this.data, info = this.level.def.monsterInfo;
+    if (!data?.uniques) return;
+    const k = data.uniques.preset(info?.act ?? 1, p.id);
+    if (k.kind === 'super') {
+      this.spawnSuperUnique(k.idx, p.x, p.y, p.path);
+      return;
+    }
+    const spawnAt = (id: string, withParty = true): MonsterUnit | null => {
+      if (!data.monsters.types.has(id)) return null;
+      const t = data.monsters.get(id);
+      // 근사(원작 미확인): 중립 장식 몬스터(소 — Align 2, killable 0)·NPC·동물(critter)은 배치하지 않는다 (NPC 는 Phase 10)
+      if (t.critter || t.npc || (t.inTown && !t.killable)) return null;
+      const spot = this.map.walkable(p.x, p.y) ? { x: p.x + 0.5, y: p.y + 0.5 } : this.spawnSpot(p.x, p.y, 4, t);
+      if (!spot) return null;
+      const m = this.spawnMonster(id, spot.x, spot.y);
+      if (withParty) this.spawnParty(m);
+      return m;
+    };
+    if (k.kind === 'monster') {
+      spawnAt(k.id);
+      return;
+    }
+    if (k.kind !== 'place') return;
+    const umon = info?.umon ?? [];
+    const levelId = this.level.def.levelNo ?? 0;
+    switch (k.place) {
+      case 2: {
+        if (!umon.length) return;
+        const id = umon[this.rng.pick(umon.length)] as string;
+        const room = this.roomAt(p.x, p.y);
+        const spot = room && data.monsters.types.has(id) ? this.roomSpot(room, data.monsters.get(id)) : null;
+        if (spot) this.spawnBoss(id, spot.x, spot.y, false);
+        return;
+      }
+      case 3: {
+        if (!umon.length) return;
+        const id = umon[this.rng.pick(umon.length)] as string;
+        const t = data.monsters.types.get(id);
+        if (!t) return;
+        const spot = this.map.walkable(p.x, p.y) ? { x: p.x + 0.5, y: p.y + 0.5 } : this.spawnSpot(p.x, p.y, 4, t);
+        if (spot) this.spawnChampionPack(id, spot.x, spot.y);
+        return;
+      }
+      case 5:
+        spawnAt('bloodraven');
+        return;
+      case 17:
+      case 18: {
+        let id = data.monsters.forLevel(k.place === 17 ? 'fallen1' : 'fallenshaman1', info?.pool ?? [], info?.monLvlEx ?? 0);
+        const base = data.monsters.types.get(id)?.baseId;
+        // 출처: 같은 함수 — Black Marsh / Tamoe / Pit 레벨 보정 (LevelsIds: 6 Black Marsh, 7 Tamoe, 12/16 Pit)
+        if (base === 'fallen1') {
+          if (levelId === 6) id = 'fallen2';
+          else if (levelId === 7 || levelId === 12 || levelId === 16) id = 'fallen3';
+        } else if (base === 'fallenshaman1') {
+          if (levelId === 6 || levelId === 7) id = 'fallenshaman2';
+          else if (levelId === 12 || levelId === 16) id = 'fallenshaman3';
+        }
+        spawnAt(id);
+        return;
+      }
+      default:
+        return;
+    }
   }
 
   /** 경험치 얻기 (레벨업 이벤트 포함) */
@@ -2153,6 +2525,7 @@ export class Game {
       m.y = ny;
     }
     m.aggro = true;
+    m.aiState = 19;
     if (m.type.modes.has('GH')) this.startMonsterMode(m, 'GH');
   }
 
@@ -2263,6 +2636,9 @@ export class Game {
     const total = totalDamage(d);
     m.hp -= total / 256;
     m.aggro = true;
+    // 출처: SUnitDmg.cpp — 피격 경직 없이 맞으면 AI 상태 19 (방금 맞음)
+    m.aiState = 19;
+    if (m.hp > 0) this.onMonsterDamaged(m);
     // Howl 공포는 맞으면 풀린다 (Terror 저주는 유지)
     if (!m.states.get('terror')?.skill) m.states.remove('terror');
     // Life Tap: 저주받은 몬스터에게 준 피해의 calc1 % 만큼 회복 (auraevent damagedinmelee/damagedbymissile)
@@ -2294,7 +2670,7 @@ export class Game {
 
   /** 몬스터 저항 + 저주 (Amplify Damage: damageresist −100) */
   private monsterResists(m: MonsterUnit): { dm: number; fi: number; li: number; co: number; ma: number; po: number } {
-    const r = m.type.resist, st = m.states;
+    const r = m.resist, st = m.states;
     return {
       dm: r.dm + st.stat('damageresist'), fi: r.fi + st.stat('fireresist'), li: r.li + st.stat('lightresist'),
       co: r.co + st.stat('coldresist'), ma: r.ma + st.stat('magicresist'), po: r.po + st.stat('poisonresist'),
@@ -2305,24 +2681,114 @@ export class Game {
     m.hp = 0;
     m.path = [];
     m.states.clear();
+    m.cast = undefined;
     this.startMonsterMode(m, 'DT');
     m.deathFrame = this.tickCount;
-    this.events.push({ type: 'monsterKilled', targetId: m.id, typeId: m.type.id });
+    this.events.push({ type: 'monsterKilled', targetId: m.id, typeId: m.type.id, flags: m.flags, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}) });
     const c = this.character, cs = this.classStats, table = this.expTable;
     // 소환수가 죽인 몬스터도 주인이 경험치를 받는다. 혼란·가시 등 다른 원인도 플레이어 근처면 받음 (근사)
-    if (c && cs && table && (source !== 'other' || Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40)) {
+    // 부활·둥지 스폰 몬스터는 경험치·드롭 없음 (UNITFLAG_NOXP | NOTC)
+    if (!m.noXp && c && cs && table && (source !== 'other' || Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40)) {
       // 경험 신전: item_addexperience % 만큼 더 (출처: shrines.txt Experience Boost Arg0 = 50, itemstatcost item_addexperience)
       const bonus = this.playerStat('item_addexperience');
       this.gainExperience(Math.trunc((adjustedExperience(m.stats.exp, c.level, m.stats.level) * (100 + bonus)) / 100));
     }
+    this.onMonsterDeathMods(m);
     const data = this.data;
-    const tc = m.type.treasure[0];
+    const tc = m.noTc ? '' : this.monsterTc(m, source);
     if (data && tc) {
       for (const item of data.treasure.drop(tc, m.stats.level, m.rng, this.derived()?.stat('item_magicbonus') ?? 0)) {
         this.dropItem(item, m.x + 1, m.y + 1);
-        this.events.push({ type: 'itemDropped', itemId: item.id, code: item.code, quality: item.quality });
+        this.events.push({ type: 'itemDropped', itemId: item.id, code: item.code, quality: item.quality, tc });
       }
     }
+    if (m.type.tcQuestId && m.type.treasure[3] && tc === m.type.treasure[3]) this.questsDone.add(m.type.tcQuestId);
+  }
+
+  /**
+   * 몬스터 드롭 TC. 출처: MonsterMode.cpp sub_6FC631B0 — 슈퍼유니크 = SuperUniques TC, 챔피언 = TreasureClass2, 유니크 = TreasureClass3,
+   * 그 밖 = TreasureClass1; TCQuestId 가 있고 플레이어가 그 퀘스트를 끝내지 않았으면 TreasureClass4 (Andariel → Andarielq).
+   * TC 레벨 업그레이드는 몬스터 레벨 (챔피언 +2, 유니크 +3) 로 TreasureDb.resolve 가 처리
+   */
+  monsterTc(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player'): string {
+    const t = m.type;
+    let tc = t.treasure[0] ?? '';
+    if (m.superUnique !== undefined) tc = this.data?.uniques?.superUnique(m.superUnique)?.tc || t.treasure[2] || '';
+    else if (m.flags & MONFLAG.CHAMPION) tc = t.treasure[1] ?? '';
+    else if (m.flags & MONFLAG.UNIQUE) tc = t.treasure[2] ?? '';
+    if (t.tcQuestId && t.treasure[3] && source !== 'other' && !this.questsDone.has(t.tcQuestId)) tc = t.treasure[3];
+    return tc;
+  }
+
+  /**
+   * 보스 수식어의 죽음 효과 (MonUMod 표 1·2번 칸).
+   * 출처: MONSTERUNIQUE_CastCorpseExplode (Fire Enchanted: 최대 = monstats 생명(현재 레벨) × MonsterCEDamagePercent / 100, 최소 60%,
+   *       물리·화염 반씩, 반경 난이도+4), MONSTERUNIQUE_CastColdUniqueMissile (Cold Enchanted: coldunique 노바, 레벨 mlvl/2)
+   * 근사(원작 미확인): 원작은 죽고 4 프레임 뒤 — 여기서는 죽는 순간
+   */
+  private onMonsterDeathMods(m: MonsterUnit): void {
+    const data = this.data;
+    if (!data || !m.umods.length) return;
+    const unique = (m.flags & MONFLAG.UNIQUE) !== 0;
+    if (m.umods.includes(UMOD.FIRE) && unique) {
+      const hp = Math.trunc((m.type.maxHpPct * data.monsters.levelBase(Math.max(1, m.stats.level), 'HP')) / 100);
+      const pct = Number(data.difficultyRows?.[this.difficulty]?.MonsterCEDamagePercent ?? 50) || 50;
+      const max = Math.trunc((hp * pct) / 100), min = Math.trunc((max * 60) / 100);
+      const dmg = min + m.rng.pick(Math.max(0, max - min));
+      const explode = data.missiles.get('monstercorpseexplode');
+      if (explode) this.missiles.push({ id: this.nextUnitId++, def: explode, x: m.x, y: m.y, dx: 0, dy: 0, left: explode.range, age: 0, owner: 'monster', ownerId: m.id, ownerLevel: m.stats.level, hitClass: 0, hit: new Set(), lvl: 1, visual: true });
+      if (Math.hypot(this.player.x - m.x, this.player.y - m.y) <= this.difficulty + 4) {
+        const pkt = emptyDamage();
+        pkt.phys = (dmg << 8) >> 1;
+        pkt.fire = (dmg << 8) >> 1;
+        this.damagePlayerDirect(pkt, 'fireEnchanted');
+      }
+      this.events.push({ type: 'enchantEffect', monsterId: m.id, effect: 'fireExplosion', damage: dmg });
+    }
+    if (m.umods.includes(UMOD.COLD) && unique) {
+      const lvl = Math.max(1, Math.trunc(m.stats.level / 2));
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        this.launchMonsterMissile(m, 'coldunique', m.x + Math.cos(a) * 10, m.y + Math.sin(a) * 10, { lvl, mode: 'A1', noMulti: true });
+      }
+      this.events.push({ type: 'enchantEffect', monsterId: m.id, effect: 'coldNova' });
+    }
+  }
+
+  /**
+   * 부활. 출처: SkillMonst.cpp SKILLS_ResurrectUnit / SrvDo097_Resurrect — 생명 가득, NOTC|NOXP, MonStats2 ResurrectMode
+   * (ResurrectSkill 이 있으면 그 스킬 시퀀스: 스켈레톤 SkeletonRaise = 죽음 애니메이션 거꾸로)
+   */
+  private resurrectMonster(t: MonsterUnit): void {
+    t.hp = t.stats.maxHp;
+    t.noXp = true;
+    t.noTc = true;
+    t.corpseUsed = false;
+    t.deathFrame = -1;
+    t.states.clear();
+    t.path = [];
+    t.aiState = 1;
+    t.nextThink = this.tickCount + 1;
+    const skill = t.type.resurrectSkill ? t.type.skills.find((s) => s.name === t.type.resurrectSkill) : undefined;
+    const seq = skill?.mode.startsWith('seq_') ? this.data?.monsters.seqs.get(skill.mode) : undefined;
+    t.mode = 'NU';
+    if (seq?.length) this.startMonsterMode(t, 'SQ', this.makeCast(t, -2, 'resurrect', 1, null, seq));
+    else {
+      const mode = (t.type.resurrectMode in MONMODE_INDEX ? t.type.resurrectMode : 'NU') as MonMode;
+      this.startMonsterMode(t, mode);
+    }
+    this.events.push({ type: 'monsterResurrected', targetId: t.id, typeId: t.type.id });
+  }
+
+  /** Lightning Enchanted: 맞을 때 (10 프레임에 한 번) 사방으로 충전 볼트 8 개. 출처: MONSTERUNIQUE_CastLightUniqueMissile (레벨 mlvl/2) */
+  private onMonsterDamaged(m: MonsterUnit): void {
+    if (!m.umods.includes(UMOD.LIGHTNING) || !(m.flags & MONFLAG.UNIQUE)) return;
+    if (m.lastBolt !== undefined && Math.abs(this.tickCount - m.lastBolt) < 10) return;
+    m.lastBolt = this.tickCount;
+    const lvl = Math.max(1, Math.trunc(m.stats.level / 2));
+    const offs = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
+    for (const [ox, oy] of offs) for (let j = 0; j < 2; j++) this.launchMonsterMissile(m, 'lightunique', m.x + ox * 8 + j, m.y + oy * 8 - j, { lvl, mode: 'A1', noMulti: true });
+    this.events.push({ type: 'enchantEffect', monsterId: m.id, effect: 'chargedBolts' });
   }
 
   // ---------------------------------------------------------------- 플레이어 미사일
@@ -2455,24 +2921,117 @@ export class Game {
 
   // ---------------------------------------------------------------- monsters
 
-  private startMonsterMode(m: MonsterUnit, mode: MonMode): void {
+  /**
+   * 모드 전환 + 원작 AI 상태 갱신.
+   * 출처: MonsterMode.cpp D2GAME_ModeChange — 중립이 아닌 모드를 벗어날 때 dwAiState = 그 모드 번호 (19 이상이면 −16), AI 속도 인자 초기화
+   */
+  private setMonMode(m: MonsterUnit, mode: MonMode): void {
+    if (m.mode !== 'NU') m.aiState = m.aiState >= 16 ? m.aiState - 16 : MONMODE_INDEX[m.mode];
     m.mode = mode;
     m.modeStart = this.tickCount;
+    m.velPct = 0;
+  }
+
+  private startMonsterMode(m: MonsterUnit, mode: MonMode, cast?: MonCast): void {
+    this.setMonMode(m, mode);
     m.hitDone = true;
-    if (!this.data) return;
-    if (mode === 'A1' || mode === 'A2' || mode === 'S2' || mode === 'GH' || mode === 'DT') {
-      // 냉기: attackrate / other_animrate 감소 → 애니메이션이 느려진다 (출처: SUNITDMG_ApplyColdState)
-      const rate = mode === 'A1' || mode === 'A2' || mode === 'S2' ? m.states.stat('attackrate') : m.states.stat('other_animrate');
+    m.cast = cast;
+    if (mode === 'NU' || mode === 'DD') m.path = [];
+    if (mode === 'NU' || mode === 'WL' || mode === 'RN' || mode === 'DD' || !this.data) return;
+    m.path = [];
+    const action = mode === 'A1' || mode === 'A2' || mode === 'S1' || mode === 'S2' || mode === 'S3' || mode === 'S4' || mode === 'SC' || mode === 'SQ';
+    // 냉기: attackrate / other_animrate 감소 → 애니메이션이 느려진다 (출처: SUNITDMG_ApplyColdState)
+    const rate = action ? m.states.stat('attackrate') : m.states.stat('other_animrate');
+    if (cast?.seq) {
+      // 몬스터 시퀀스 (monseq.txt): 한 줄 = 한 프레임, SQ 애니메이션 속도로 진행. 근사(원작 미확인): 원작 시퀀스 프레임 진행 세부
+      const r = this.data.anim.get(`${m.type.code}SQ${m.type.baseW}`) ?? this.data.anim.get(`${m.type.code}${cast.seq[0]?.mode ?? 'A1'}${m.type.baseW}`);
+      const speed = Math.max(1, ((r?.speed ?? 256) * (100 + rate)) / 100);
+      m.seqRate = speed;
+      m.modeEnd = this.tickCount + Math.max(1, Math.ceil((cast.seq.length * 256) / speed));
+      cast.events = [];
+      cast.seq.forEach((f, i) => {
+        if (f.event) cast.events.push(Math.floor((i * 256) / speed));
+      });
+      if (!cast.events.length) cast.events.push(Math.max(0, m.modeEnd - this.tickCount - 1));
+      m.hitTick = cast.events[0] ?? 0;
+    } else {
       const t = modeTiming(this.data.anim, m.type.code, mode, m.type.baseW, 100 + rate);
       m.modeEnd = this.tickCount + t.duration;
-      m.hitTick = t.hitTick;
-      m.hitDone = !(mode === 'A1' || mode === 'A2');
-      m.path = [];
-      if (mode === 'A1' || mode === 'A2') {
-        const t = this.targetOf(m);
-        m.dir = dir64(t.x - m.x, t.y - m.y);
+      m.hitTick = t.hitTick >= 0 ? t.hitTick : Math.trunc(t.duration / 2);
+      if (cast) cast.events = [m.hitTick];
+    }
+    m.hitDone = !(mode === 'A1' || mode === 'A2' || cast);
+    if (action) {
+      const t = cast && cast.targetId === undefined ? { x: cast.tx, y: cast.ty } : this.targetOf(m);
+      if (t.x !== m.x || t.y !== m.y) m.dir = dir64(t.x - m.x, t.y - m.y);
+    }
+  }
+
+  /** 날아다니는 몬스터 (monstats flying): 벽(0x01)이 아니라 미사일 벽·문만 막힌다. 출처: D2Collision.h COLLIDE_MASK_FLYING_UNIT */
+  private flyMap(): WalkMap {
+    const map = this.map;
+    return { width: map.width, height: map.height, walkable: (x, y) => map.inBounds(x, y) && !(map.mask(x, y) & (0x04 | 0x0800 | 0x0020)) };
+  }
+
+  /**
+   * 몬스터 이동 (걷기/달리기). steps = 원작 PATH_SetStepNum (곧은 구간 수), 한 번에 최대 20 서브타일 (PATH_SetDistance(20)).
+   * 속도 = (RN 모드면 Run, 아니면 Velocity) × (100 + AI 속도% + velocitypercent) / 100.
+   * 출처: MonsterMode.cpp D2GAME_ModeChange (AI 인자 nVelocity → STAT_VELOCITYPERCENT), MONSTERMODE_GetModeChangeInfo
+   */
+  private monsterMoveTo(m: MonsterUnit, x: number, y: number, run: boolean, steps?: number): boolean {
+    const map = m.type.flying ? this.flyMap() : this.map;
+    const t = nearestWalkable(map, { x, y }, 4);
+    let path = t ? findPath(map, m, { x: t.x + 0.5, y: t.y + 0.5 }, 3000) : null;
+    if (!path || path.length === 0) return false;
+    if (steps) path = firstSegments(path, steps);
+    if (path.length > 20) path = path.slice(0, 20);
+    const vel = m.velPct;
+    const hasRun = m.type.modes.has('RN');
+    const mode: MonMode = run && hasRun ? 'RN' : 'WL';
+    if (!m.type.modes.has(mode)) return false;
+    if (m.mode !== mode) this.setMonMode(m, mode);
+    m.cast = undefined;
+    m.path = path;
+    m.moveVelPct = vel;
+    const base = mode === 'RN' ? m.type.run : m.type.velocity;
+    m.moveSpeed = Math.max(0, (base * (100 + vel + (m.bonus.velocitypercent ?? 0))) / 100);
+    return true;
+  }
+
+  /** 미사일 벽(COLLIDE_MISSILE_BARRIER 0x04) 에 막히지 않는 직선인가 (서브타일 브레젠험). 근사(원작 미확인): 원작 D2Common_11025 경로 검사 */
+  private lineOfSight(ax: number, ay: number, bx: number, by: number): boolean {
+    let x0 = Math.floor(ax), y0 = Math.floor(ay);
+    const x1 = Math.floor(bx), y1 = Math.floor(by);
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy;
+    for (let i = 0; i < 200; i++) {
+      if (this.map.mask(x0, y0) & 0x04) return false;
+      if (x0 === x1 && y0 === y1) return true;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
       }
     }
+    return true;
+  }
+
+  /** 원작 sub_6FCF2CC0: 미사일로 쏠 수 있는 가장 가까운 대상 (플레이어·소환수, 거리 48 이내) */
+  private monsterMissileTarget(m: MonsterUnit): { x: number; y: number; dist: number; unitId?: number } | null {
+    const p = this.player;
+    let best: { x: number; y: number; dist: number; unitId?: number } | null = null;
+    const consider = (x: number, y: number, unitId?: number) => {
+      const d = aiDistance(m.x, m.y, x, y);
+      if (d > 48 || (best && d >= best.dist) || !this.lineOfSight(m.x, m.y, x, y)) return;
+      best = { x, y, dist: d, ...(unitId !== undefined ? { unitId } : {}) };
+    };
+    if (p.mode !== 'DT' && p.mode !== 'DD' && !this.inTown) consider(p.x, p.y);
+    for (const pet of this.pets) if (pet.mode !== 'DT' && pet.mode !== 'DD' && pet.pet?.petType !== 'none') consider(pet.x, pet.y, pet.id);
+    return best;
   }
 
   private aiWorld(): AiWorld {
@@ -2480,18 +3039,23 @@ export class Game {
     return {
       frame: this.tickCount,
       target: { x: p.x, y: p.y, size: PLAYER_SIZE, dead: p.mode === 'DT' || p.mode === 'DD', inTown: this.inTown },
+      levelId: this.level.def.id,
+      difficulty: this.difficulty,
       monsters: this.monsters,
       startMode: (m, mode) => this.startMonsterMode(m, mode),
-      moveTo: (m, x, y, run) => {
-        const t = nearestWalkable(this.map, { x, y }, 4);
-        const path = t ? findPath(this.map, m, { x: t.x + 0.5, y: t.y + 0.5 }, 3000) : null;
-        if (!path || path.length === 0) return false;
-        m.path = path;
-        const mode = run ? 'RN' : 'WL';
-        if (m.mode !== mode) m.modeStart = this.tickCount;
-        m.mode = mode;
-        m.moveSpeed = run ? m.type.run : m.type.velocity;
-        return true;
+      moveTo: (m, x, y, run, steps) => this.monsterMoveTo(m, x, y, run, steps),
+      useSkill: (m, slot, t) => this.monsterUseSkill(m, slot, t),
+      missileTarget: (m) => this.monsterMissileTarget(m),
+      lifePct: (m) => Math.trunc((100 * Math.max(0, m.hp)) / Math.max(1, m.stats.maxHp)),
+      targetLifePct: () => {
+        const c = this.character;
+        return c ? Math.trunc((100 * c.life) / Math.max(1, this.maxLife())) : 100;
+      },
+      canUseSkill: (m, slot, t) => this.monsterCanUseSkill(m, slot, t),
+      dieQuietly: (m) => {
+        m.noXp = true;
+        m.noTc = true;
+        this.killMonster(m, 'other');
       },
     };
   }
@@ -2504,10 +3068,13 @@ export class Game {
 
   private updateMonsters(): void {
     const w = this.aiWorld();
-    for (const m of this.monsters) {
+    for (const m of [...this.monsters]) {
       if (m.mode === 'DD') continue;
       if (m.mode === 'DT') {
-        if (this.tickCount >= m.modeEnd) m.mode = 'DD';
+        if (this.tickCount >= m.modeEnd) {
+          this.setMonMode(m, 'DD');
+          m.cast = undefined;
+        }
         continue;
       }
       // 빙결·기절: 행동 정지 (진행 중 모드의 종료 시점도 함께 미룬다)
@@ -2516,38 +3083,335 @@ export class Game {
         m.nextThink = Math.max(m.nextThink, this.tickCount + 1);
         if (m.mode === 'WL' || m.mode === 'RN') {
           m.path = [];
-          m.mode = 'NU';
-          m.modeStart = this.tickCount;
+          this.setMonMode(m, 'NU');
         }
         continue;
       }
-      if (m.mode === 'A1' || m.mode === 'A2' || m.mode === 'S2' || m.mode === 'GH') {
-        if (!m.hitDone && this.tickCount - m.modeStart >= m.hitTick) {
+      if (m.mode !== 'NU' && m.mode !== 'WL' && m.mode !== 'RN') {
+        if (m.cast) this.updateMonsterCast(m);
+        else if (!m.hitDone && this.tickCount - m.modeStart >= m.hitTick) {
           m.hitDone = true;
           this.resolveMonsterAttack(m);
         }
-        if (this.tickCount < m.modeEnd) continue;
-        m.mode = 'NU';
-        m.modeStart = this.tickCount;
+        if (this.tickCount < m.modeEnd || (m.mode as MonMode) === 'DT' || (m.mode as MonMode) === 'DD') continue;
+        this.setMonMode(m, 'NU');
+        m.cast = undefined;
         m.nextThink = this.tickCount + m.type.aiDelay;
       }
       if (m.mode === 'WL' || m.mode === 'RN') {
         if (m.path.length) {
-          const v = (m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS * (100 + m.states.stat('velocitypercent')) / 100;
+          const v = ((m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS) * (100 + m.states.stat('velocitypercent')) / 100;
           this.advance(m, v, (d) => (m.dir = d), m.type.sizeX);
+          if (m.states.has('spiderlay') && this.tickCount % 8 === 0) this.dropSpiderGoo(m);
           continue;
         }
-        m.mode = 'NU';
-        m.modeStart = this.tickCount;
+        this.setMonMode(m, 'NU');
         m.nextThink = this.tickCount + m.type.aiDelay;
       }
-      if (this.tickCount >= m.nextThink && hasAi(m.type.ai)) {
+      if (this.tickCount >= m.nextThink && hasAi(aiName(m))) {
         w.frame = this.tickCount;
         this.chooseMonsterTarget(m, w);
         if (m.states.has('terror')) this.thinkTerror(w, m);
         else if (m.states.has('taunt')) this.thinkTaunt(w, m);
-        else think(w, m);
+        else if (!this.aiPreThink(w, m)) think(w, m);
+        // 판단이 아무 행동도 정하지 않았으면 aidel 뒤 다시 (원작: AI 틱 이벤트)
+        if (m.nextThink <= this.tickCount && m.mode === 'NU') m.nextThink = this.tickCount + Math.max(1, m.type.aiDelay);
       }
+    }
+  }
+
+  /**
+   * AI 공통 처리 (원작 AI 틱 함수의 AI 함수 호출 전 단계).
+   * 출처: AiThink.cpp D2GAME_AICORE_MinionLeash_6FCF0D10 (주인에게서 20 넘게 떨어지면 주인 쪽 거리 19 배회),
+   *       sub_6FCF0E40 (유니크·보스는 대상이 20 안에 처음 들어오면 20 프레임 멈춤, 순간이동 수식어: 40% × (생명 30% 미만 또는 원거리·10 미만) × 15%)
+   */
+  private aiPreThink(w: AiWorld, m: MonsterUnit): boolean {
+    if (m.leaderId !== m.id && m.type.modes.has('WL')) {
+      const owner = this.monsters.find((o) => o.id === m.leaderId && o.mode !== 'DT' && o.mode !== 'DD');
+      if (!owner) m.leaderId = m.id;
+      else if (aiDistance(m.x, m.y, owner.x, owner.y) > 20) {
+        const [ox, oy] = [owner.x + m.rng.pick(39) - 19, owner.y + m.rng.pick(39) - 19];
+        if (this.monsterMoveTo(m, ox, oy, false, 1)) return true;
+      }
+    }
+    const t = w.target;
+    if (t.dead || t.inTown) return false;
+    const dist = aiDistance(m.x, m.y, t.x, t.y);
+    if (((m.flags & MONFLAG.UNIQUE) || m.type.boss) && dist < 20 && t.id === undefined && !m.noticed) {
+      m.noticed = true;
+      idle(w, m, 20);
+      this.events.push({ type: 'monsterNotice', monsterId: m.id });
+      return true;
+    }
+    if (m.umods.includes(UMOD.TELEPORT) && m.rng.pick(100) < 40) {
+      const life = Math.trunc((100 * m.hp) / Math.max(1, m.stats.maxHp));
+      const melee = m.type.isMelee || m.type.baseId === 'bighead1';
+      if ((life >= 30 && (melee || dist >= 10)) || m.rng.pick(100) >= 15) return false;
+      const room = this.roomAt(m.x, m.y);
+      const spot = room ? this.roomSpot(room, m.type) : null;
+      if (!spot) return false;
+      if (life < 30 && m.rng.pick(100) < 25) m.hp = Math.min(m.stats.maxHp, m.hp + m.stats.level);
+      this.startMonsterMode(m, 'A1', this.makeCast(m, -1, 'MonTeleport', 1, { x: spot.x, y: spot.y }, undefined));
+      return true;
+    }
+    return false;
+  }
+
+  private makeCast(m: MonsterUnit, slot: number, skill: string, lvl: number, t: SkillTarget | null, seq: MonSeqFrame[] | undefined): MonCast {
+    const tx = t?.x ?? m.x, ty = t?.y ?? m.y;
+    return { slot, skill, lvl, tx, ty, fired: 0, events: [], ...(t?.unitId !== undefined ? { targetId: t.unitId } : {}), ...(seq ? { seq } : {}) };
+  }
+
+  /**
+   * 원작 AITACTICS_UseSkill / UseSequenceSkill: monstats Skill 칸의 스킬을 Sk*mode 로 (seq_ 이면 SQ 시퀀스).
+   * 스킬 레벨 = Sk*lvl + DifficultyLevels MonsterSkillBonus (Normal 0)
+   */
+  private monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean {
+    const def = m.type.skills[slot];
+    if (!def?.name || !this.data) return false;
+    let mode: MonMode, seq: MonSeqFrame[] | undefined;
+    if (def.mode.startsWith('seq_')) {
+      seq = this.data.monsters.seqs.get(def.mode);
+      if (!seq?.length) return false;
+      mode = 'SQ';
+    } else {
+      if (!(def.mode in MONMODE_INDEX)) return false;
+      mode = def.mode as MonMode;
+    }
+    const bonus = Number(this.data.difficultyRows?.[this.difficulty]?.MonsterSkillBonus ?? 0) || 0;
+    const cast = this.makeCast(m, slot, def.name, Math.max(1, def.lvl) + bonus, t ?? { unitId: m.targetId, ...this.targetOf(m) }, seq);
+    // Nest(둥지): 시작할 때 스폰 자리를 정한다 (출처: SKILLS_SrvSt49_Nest_EvilHutSpawner → MONSTERS_GetMinionSpawnInfo)
+    if (def.name === 'Nest') {
+      const sp = this.nestSpawnInfo(m, cast);
+      if (!sp) return false;
+      cast.tx = sp.x;
+      cast.ty = sp.y;
+    }
+    // AndrialSpray: 시작할 때 대상 좌표 고정 (SKILLS_SrvSt46_AndrialSpray)
+    this.startMonsterMode(m, mode, cast);
+    this.events.push({ type: 'monsterSkill', monsterId: m.id, skill: def.name });
+    return true;
+  }
+
+  /** 출처: MONSTERS_GetMinionSpawnInfo — Crow Nest: 계열 Foul Crow 를 (x, y+3) 에 NU, Blood Raven: zombie2 를 경로 첫 지점(스킬 대상)에 S1 (땅에서 일어남) */
+  private nestSpawnInfo(m: MonsterUnit, cast: MonCast): { id: string; x: number; y: number; mode: MonMode } | null {
+    const data = this.data;
+    if (!data) return null;
+    if (m.type.baseId === 'crownest1') {
+      const base = data.monsters.types.get('foulcrow1');
+      let id = 'foulcrow1';
+      const idx = data.monsters.chainIndex(m.type);
+      let cur = base;
+      for (let i = 0; i < idx && cur?.nextInClass; i++) {
+        cur = data.monsters.types.get(cur.nextInClass);
+        if (cur) id = cur.id;
+      }
+      const spot = nearestWalkable(this.flyMap(), { x: m.x, y: m.y + 3 }, 3);
+      return spot ? { id, x: spot.x + 0.5, y: spot.y + 0.5, mode: 'NU' } : null;
+    }
+    const spot = nearestWalkable(this.map, { x: cast.tx, y: cast.ty }, 4);
+    return spot ? { id: m.type.spawn || 'zombie2', x: spot.x + 0.5, y: spot.y + 0.5, mode: (m.type.spawnMode as MonMode) || 'S1' } : null;
+  }
+
+  /** 출처: MonsterSpawn.cpp sub_6FC68630 — 스킬 사용 가능 (부활: 대상 자리가 비어 있어야, AndrialSpray: 대상 필요, Nest: 스폰 자리) */
+  private monsterCanUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean {
+    const def = m.type.skills[slot];
+    if (!def?.name) return false;
+    if (def.name === 'Nest') return !!this.nestSpawnInfo(m, this.makeCast(m, slot, def.name, 1, t, undefined));
+    if (def.name === 'Resurrect') {
+      const u = t?.unitId !== undefined ? this.monsters.find((o) => o.id === t.unitId) : undefined;
+      return !!u && !this.blockedByUnit(u, u.x, u.y, u.type.sizeX);
+    }
+    if (def.name === 'AndrialSpray') return !!t;
+    return true;
+  }
+
+  /** 진행 중인 스킬의 판정 이벤트 (시퀀스 이벤트 프레임 또는 모드 판정 프레임) */
+  private updateMonsterCast(m: MonsterUnit): void {
+    const cast = m.cast;
+    if (!cast) return;
+    const el = this.tickCount - m.modeStart;
+    while (cast.fired < cast.events.length && el >= (cast.events[cast.fired] ?? 0)) {
+      this.monsterSkillEvent(m, cast, cast.fired);
+      cast.fired++;
+      if (m.cast !== cast) return;
+    }
+  }
+
+  /** 시퀀스(SQ) 모드에서 지금 그릴 모드·프레임 (렌더용) */
+  private monsterSeqAnim(m: MonsterUnit): { mode: string; frame: number } | undefined {
+    const seq = m.mode === 'SQ' ? m.cast?.seq : undefined;
+    if (!seq?.length) return undefined;
+    const i = Math.min(seq.length - 1, Math.floor(((this.tickCount - m.modeStart) * (m.seqRate ?? 256)) / 256));
+    const f = seq[i] as MonSeqFrame;
+    return { mode: f.mode, frame: f.frame };
+  }
+
+  /**
+   * 몬스터 스킬 효과 (skills.txt srvdofunc).
+   * 출처: SkillMonst.cpp SKILLS_SrvDo085_UnholyBolt_ShamanFire (미사일 = srvmissilea + 계열 순번), SrvDo088_AndrialSpray (방향·프레임 오프셋 표),
+   *       SrvDo091_Nest (소환, 경험치·드롭 없음), SrvDo092_QuickStrike (raven1), SrvDo093_GargoyleTrap, SrvDo097_Resurrect (생명 가득, NOTC|NOXP),
+   *       SrvDo098_MonTeleport; SkillSor.cpp SrvDo023 (SpiderLay: 상태), SrvDo024 (불벽 생성기)
+   */
+  private monsterSkillEvent(m: MonsterUnit, cast: MonCast, index: number): void {
+    const data = this.data;
+    if (!data) return;
+    const rec = data.skills?.byNameOf(cast.skill);
+    const target = cast.targetId !== undefined ? this.pets.find((x) => x.id === cast.targetId) ?? this.monsters.find((x) => x.id === cast.targetId) : undefined;
+    const tx = target ? target.x : cast.targetId === undefined && cast.skill !== 'Nest' && cast.slot >= 0 && !['Resurrect'].includes(cast.skill) ? this.targetOf(m).x : cast.tx;
+    const ty = target ? target.y : cast.targetId === undefined && cast.skill !== 'Nest' && cast.slot >= 0 && !['Resurrect'].includes(cast.skill) ? this.targetOf(m).y : cast.ty;
+    switch (cast.skill) {
+      case 'Resurrect': {
+        const t = this.monsters.find((o) => o.id === cast.targetId);
+        if (t && t.mode === 'DD') this.resurrectMonster(t);
+        return;
+      }
+      case 'ShamanFire': {
+        const base = data.missiles.get(rec?.srvMissileA ?? 'shafire1');
+        const name = base ? [...data.missiles.values()].find((d) => d.id === base.id + data.monsters.chainIndex(m.type))?.name ?? base.name : 'shafire1';
+        this.launchMonsterMissile(m, name, tx, ty, { lvl: cast.lvl, mode: 'A1' });
+        return;
+      }
+      case 'AndrialSpray': {
+        // 근사(원작 미확인): 원작 방향별 오프셋 표 대신 이벤트 순번에 따라 −40°~+40° 부채꼴
+        const a = Math.atan2(cast.ty - m.y, cast.tx - m.x) + ((index - 4) * Math.PI) / 22;
+        const d = Math.max(4, Math.hypot(cast.tx - m.x, cast.ty - m.y));
+        this.launchMonsterMissile(m, rec?.srvMissileA || 'andarielspray', m.x + Math.cos(a) * d, m.y + Math.sin(a) * d, { lvl: cast.lvl, mode: 'SQ' });
+        return;
+      }
+      case 'Nest': {
+        const sp = this.nestSpawnInfo(m, cast);
+        if (!sp || !data.monsters.types.has(sp.id)) return;
+        const s = this.spawnMonster(sp.id, sp.x, sp.y, m.type.baseId === 'crownest1' ? undefined : m.id);
+        s.noXp = true;
+        s.noTc = true;
+        if (sp.mode !== 'NU' && s.type.modes.has(sp.mode)) this.startMonsterMode(s, sp.mode);
+        return;
+      }
+      case 'Quick Strike':
+        this.launchMonsterMissile(m, rec?.srvMissileA || 'raven1', tx, ty, { lvl: cast.lvl, mode: 'A1' });
+        return;
+      case 'GargoyleTrap':
+        this.launchMonsterMissile(m, rec?.srvMissileA || 'shafire3', tx, ty, { lvl: cast.lvl, mode: 'A1' });
+        return;
+      case 'SpiderLay': {
+        // 근사(원작 미확인): 상태 지속 = skills.txt auralencalc 대신 5초
+        m.states.set('spiderlay', this.tickCount + 125);
+        return;
+      }
+      case 'CountessFirewall':
+      case 'VampireFirewall':
+        this.monsterFirewall(m, rec?.srvMissileA ?? '', rec?.srvMissileB ?? '', cast.tx, cast.ty, cast.lvl);
+        return;
+      case 'MonTeleport': {
+        const spot = nearestWalkable(this.map, { x: cast.tx, y: cast.ty }, 3);
+        if (spot) {
+          m.x = spot.x + 0.5;
+          m.y = spot.y + 0.5;
+        }
+        return;
+      }
+      default: {
+        // 미사일 스킬 (VampireFireball, AndyPoisonBolt …): skills.txt srvmissile
+        const miss = rec?.srvMissile || rec?.srvMissileA;
+        if (miss) this.launchMonsterMissile(m, miss, tx, ty, { lvl: cast.lvl, mode: m.mode === 'SQ' ? 'A1' : m.mode });
+      }
+    }
+  }
+
+  /** Arach 거미줄 (SpiderLay 상태로 걷는 동안 spidergoolay). 근사(원작 미확인): 둔화 효과 생략, 그림만 */
+  private dropSpiderGoo(m: MonsterUnit): void {
+    const def = this.data?.missiles.get('spidergoolay');
+    if (!def) return;
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: m.x, y: m.y, dx: 0, dy: 0, left: def.range, age: 0, owner: 'monster', ownerId: m.id, ownerLevel: m.stats.level,
+      hitClass: 0, hit: new Set(), lvl: 1, visual: true,
+    });
+  }
+
+  /** 불벽 생성기 (SrvDo024): 생성기 미사일이 대상 쪽으로 가며 지면 불을 남긴다. 근사(원작 미확인): 생성기 경로는 직선 */
+  private monsterFirewall(m: MonsterUnit, makerName: string, fireName: string, tx: number, ty: number, lvl: number): void {
+    const data = this.data;
+    const fire = data?.missiles.get(fireName), maker = data?.missiles.get(makerName);
+    if (!fire || !maker) return;
+    const steps = Math.max(1, Math.trunc((maker.range * missileStep(maker.vel)) / 1));
+    const d = Math.hypot(tx - m.x, ty - m.y) || 1;
+    const ux = (tx - m.x) / d, uy = (ty - m.y) / d;
+    for (let i = 0; i < steps; i++) {
+      const x = Math.floor(tx + ux * (i - steps / 2)), y = Math.floor(ty + uy * (i - steps / 2));
+      if (!this.map.walkable(x, y) || this.missiles.some((o) => o.def === fire && Math.floor(o.x) === x && Math.floor(o.y) === y)) continue;
+      const pkt = this.missileOwnDamage(fire, lvl);
+      this.missiles.push({
+        id: this.nextUnitId++, def: fire, x: x + 0.5, y: y + 0.5, dx: 0, dy: 0, left: Math.min(fire.range + lvl * fire.levRange, 250), age: 0, owner: 'monster', ownerId: m.id,
+        ownerLevel: m.stats.level, hitClass: fire.hitClass || 0x20, hit: new Set(), lvl, mpkt: pkt, groundFire: true,
+      });
+    }
+  }
+
+  /** 미사일 자체 피해 (1/256): MinDamage + 레벨 보너스, 원소 EMin~EMax + 레벨 보너스, 지속 ELen + ELevLen. 출처: MISSILE_CalculateDamageData */
+  private missileOwnDamage(def: MissileDef, lvl: number): DamagePacket {
+    const d = emptyDamage();
+    const sh = 2 ** def.hitShift;
+    const minP = (def.minDamage + levelDamageBonus(lvl, def.minDamLev)) * sh, maxP = (def.maxDamage + levelDamageBonus(lvl, def.maxDamLev)) * sh;
+    if (maxP > 0) d.phys += minP + this.rng.pick(Math.max(0, maxP - minP));
+    if (def.eType) {
+      const min = (def.eMin + levelDamageBonus(lvl, def.eMinLev)) * sh, max = (def.eMax + levelDamageBonus(lvl, def.eMaxLev)) * sh;
+      const len = def.eLen + levelDamageBonus(lvl, def.eLevLen);
+      if (max > 0) addElemental(d, def.eType, min + this.rng.pick(Math.max(0, max - min)), len);
+    }
+    d.hitClass = def.hitClass;
+    return d;
+  }
+
+  /**
+   * 몬스터 미사일 발사. 피해 = 모드 공격 피해 × SrcDamage/128 (+ 몬스터 원소 피해) + 미사일 자체 피해 (레벨 = 스킬 레벨, 공격 미사일은 1).
+   * 출처: MonsterMode.cpp 공격 이벤트 (미사일 레벨 = MonsterSkillBonus + 1), MISSILE_CalculateDamageData
+   *       MonsterUnique.cpp sub_6FC6DA40 (Multiple Shots: 대상 좌우로 두 발 더)
+   */
+  private launchMonsterMissile(m: MonsterUnit, name: string, tx: number, ty: number, o: { lvl: number; mode: MonMode; noMulti?: boolean }): void {
+    const data = this.data;
+    const md = data?.missiles.get(name);
+    if (!data || !md) return;
+    let speed = missileStep(md.vel);
+    // Slow Missiles: skill_handofathena % 로 미사일 속도. 출처: MISSILES_CreateMissileFromParams (CanSlow + STATE_SLOWMISSILES)
+    const slow = m.states.get('slowmissiles');
+    if (slow) speed = (speed * (slow.stats.skill_handofathena ?? 100)) / 100;
+    const dx = tx - m.x, dy = ty - m.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const atk = this.monsterAttack(m, o.mode);
+    const src = md.srcDamage > 0 ? md.srcDamage : 0;
+    const own = this.missileOwnDamage(md, o.lvl);
+    const pkt = emptyDamage();
+    if (src) {
+      pkt.fire = Math.trunc((atk.elem.fire * src) / 128);
+      pkt.ltng = Math.trunc((atk.elem.ltng * src) / 128);
+      pkt.cold = Math.trunc((atk.elem.cold * src) / 128);
+      pkt.coldLen = atk.elem.coldLen;
+      pkt.pois = Math.trunc((atk.elem.pois * src) / 128);
+      pkt.poisLen = atk.elem.poisLen;
+      pkt.mag = Math.trunc((atk.elem.mag * src) / 128);
+    }
+    pkt.phys += own.phys;
+    pkt.fire += own.fire;
+    pkt.ltng += own.ltng;
+    pkt.cold += own.cold;
+    pkt.coldLen = Math.max(pkt.coldLen, own.coldLen);
+    pkt.pois += own.pois;
+    pkt.poisLen = Math.max(pkt.poisLen, own.poisLen);
+    pkt.mag += own.mag;
+    pkt.manaDrain = src ? atk.elem.manaDrain : 0;
+    this.missiles.push({
+      id: this.nextUnitId++, def: md, x: m.x, y: m.y, dx: (dx / d) * speed, dy: (dy / d) * speed, left: md.range, age: 0,
+      owner: 'monster', ownerId: m.id, ownerLevel: m.stats.level,
+      damage: src ? { min: Math.floor((atk.min * src) / 128), max: Math.floor((atk.max * src) / 128) } : { min: 0, max: 0 },
+      toHit: atk.toHit, hitClass: md.hitClass || 10, hit: new Set(), lvl: o.lvl, mpkt: pkt, alwaysHit: !src,
+      ...(md.name === 'lightunique' ? { wander: true } : {}),
+    });
+    // Multiple Shots (유니크 수식어 29): 대상 좌우 (수직 방향 ±1) 로 두 발 더
+    if (!o.noMulti && m.umods.includes(UMOD.MULTISHOT) && (m.flags & MONFLAG.UNIQUE)) {
+      const sx = Math.sign(Math.floor(m.x) - Math.floor(tx)), sy = Math.sign(Math.floor(m.y) - Math.floor(ty));
+      this.launchMonsterMissile(m, name, tx - sy, ty + sx, { ...o, noMulti: true });
+      this.launchMonsterMissile(m, name, tx + sy, ty - sx, { ...o, noMulti: true });
     }
   }
 
@@ -2587,7 +3451,7 @@ export class Game {
     const blind = m.states.has('dimvision') && bd > 4;
     m.targetId = best?.id;
     w.target = best && !blind
-      ? { x: best.x, y: best.y, size: best.size, dead: false, inTown: this.inTown && best.id === undefined }
+      ? { x: best.x, y: best.y, size: best.size, dead: false, inTown: this.inTown && best.id === undefined, ...(best.id !== undefined ? { id: best.id } : {}) }
       : { x: p.x, y: p.y, size: PLAYER_SIZE, dead: true, inTown: this.inTown };
   }
 
@@ -2613,35 +3477,79 @@ export class Game {
     else walkToTarget(w, m, false);
   }
 
-  private resolveMonsterAttack(m: MonsterUnit): void {
-    const data = this.data;
-    const base = m.mode === 'A2' ? m.stats.a2 : m.stats.a1;
-    // 저주: damagepercent (Taunt, Battle Cry), item_tohit_percent (Taunt)
-    const dmgPct = m.states.stat('damagepercent'), thPct = m.states.stat('item_tohit_percent');
-    const atk = {
+  /**
+   * 몬스터 공격 수치 (모드별). 원소 피해는 1/256 단위로 굴린 값.
+   * 출처: MonsterMode.cpp sub_6FC627B0 — A2 = A2 피해, BL/SC/S1 = S1 피해, 그 밖 = A1 피해; El1~3 (모드 일치, Pct% 확률,
+   *       독 = 10 × 피해 (프레임당 1/256) · 길이 2 × Dur, 냉기 길이 = Dur); 수식어 스탯 (firemindam … damagepercent, item_tohit_percent)
+   *       MonsterUnique.cpp MONSTERUNIQUE_ApplyElementalDamage (Spectral Hit: 공격마다 무작위 원소)
+   */
+  private monsterAttack(m: MonsterUnit, mode: MonMode): { min: number; max: number; toHit: number; elem: DamagePacket & { manaDrain: number } } {
+    const base = mode === 'A2' ? m.stats.a2 : mode === 'S1' || mode === 'SC' || mode === 'BL' ? m.stats.s1 : m.stats.a1;
+    const dmgPct = m.states.stat('damagepercent') + (m.bonus.damagepercent ?? 0), thPct = m.states.stat('item_tohit_percent') + (m.bonus.item_tohit_percent ?? 0);
+    const elem = { ...emptyDamage(), manaDrain: 0 };
+    const roll = (lo: number, hi: number) => (hi > lo ? lo + m.rng.pick(hi - lo + 1) : lo);
+    const addEl = (type: string, min: number, max: number, dur: number) => {
+      switch (type) {
+        case 'fire': elem.fire += roll(min, max) * 256; break;
+        case 'ltng': elem.ltng += roll(min, max) * 256; break;
+        case 'mag': elem.mag += roll(min, max) * 256; break;
+        case 'cold': elem.cold += roll(min, max) * 256; elem.coldLen = Math.max(elem.coldLen, dur); break;
+        case 'pois': elem.pois += roll(10 * min, 10 * max); elem.poisLen = Math.max(elem.poisLen, 2 * dur); break;
+        case 'mana': elem.manaDrain += roll(min, max) * 256; break;
+        case 'stun': elem.stunLen = Math.max(elem.stunLen, dur); break;
+        default: break;
+      }
+    };
+    m.type.elem.forEach((e, i) => {
+      if (!e.mode || e.mode !== mode || !e.pct) return;
+      if (e.pct < 100 && (m.rng.roll() >>> 0) % 100 >= e.pct) return;
+      const v = m.stats.elem[i];
+      if (v) addEl(e.type, v.min, v.max, e.dur);
+    });
+    const b = m.bonus;
+    if (b.firemaxdam) addEl('fire', b.firemindam ?? 0, b.firemaxdam, 0);
+    if (b.lightmaxdam) addEl('ltng', b.lightmindam ?? 0, b.lightmaxdam, 0);
+    if (b.coldmaxdam) addEl('cold', b.coldmindam ?? 0, b.coldmaxdam, b.coldlength ?? 0);
+    if (b.poisonmaxdam) {
+      elem.pois += roll(b.poisonmindam ?? 0, b.poisonmaxdam);
+      elem.poisLen = Math.max(elem.poisLen, b.poisonlength ?? 0);
+    }
+    if (b.manadrainmaxdam) elem.manaDrain += roll(b.manadrainmindam ?? 0, b.manadrainmaxdam);
+    if (m.umods.includes(UMOD.SPECTRALHIT) && (m.flags & MONFLAG.UNIQUE) && this.data) {
+      const dm = this.data.monsters.levelBase(Math.max(1, m.stats.level), 'DM');
+      const lo = Math.trunc((dm * (this.data.uniques?.constant(28) ?? 0)) / 100), hi = Math.trunc((dm * (this.data.uniques?.constant(31) ?? 0)) / 100);
+      const kind = ['fire', 'ltng', 'mag', 'cold', 'pois'][(m.rng.roll() >>> 0) % 5] as string;
+      addEl(kind, lo, hi, kind === 'cold' || kind === 'pois' ? 40 : 0);
+    }
+    return {
       min: Math.max(0, base.min + Math.trunc((base.min * dmgPct) / 100)),
       max: Math.max(0, base.max + Math.trunc((base.max * dmgPct) / 100)),
       toHit: Math.max(0, base.toHit + Math.trunc((base.toHit * thPct) / 100)),
+      elem,
     };
-    const missName = m.mode === 'A2' ? m.type.missA2 : m.mode === 'A1' ? m.type.missA1 : '';
-    if (missName && data) {
-      const md = data.missiles.get(missName);
-      if (md) {
-        let speed = missileStep(md.vel);
-        // Slow Missiles: skill_handofathena % 로 미사일 속도. 출처: MISSILES_CreateMissileFromParams (CanSlow + STATE_SLOWMISSILES)
-        const slow = m.states.get('slowmissiles');
-        if (slow) speed = (speed * (slow.stats.skill_handofathena ?? 100)) / 100;
-        const tp = this.targetOf(m);
-        const dx = tp.x - m.x, dy = tp.y - m.y;
-        const d = Math.hypot(dx, dy) || 1;
-        this.missiles.push({
-          id: this.nextUnitId++, def: md, x: m.x, y: m.y, dx: (dx / d) * speed, dy: (dy / d) * speed, left: md.range, age: 0,
-          owner: 'monster', ownerId: m.id, ownerLevel: m.stats.level,
-          damage: { min: Math.floor((atk.min * md.srcDamagePct) / 128) + md.minDamage, max: Math.floor((atk.max * md.srcDamagePct) / 128) + md.maxDamage },
-          toHit: atk.toHit, hitClass: 10, hit: new Set(), lvl: 0,
-        });
-        return;
+  }
+
+  private resolveMonsterAttack(m: MonsterUnit): void {
+    const data = this.data;
+    const atk = this.monsterAttack(m, m.mode);
+    const missName = m.mode === 'A2' ? m.type.missA2 : m.mode === 'A1' ? m.type.missA1 : m.mode === 'S1' ? m.type.missS1 : m.mode === 'SC' ? m.type.missC : m.mode === 'SQ' ? m.type.missSQ : '';
+    if (missName && data?.missiles.has(missName)) {
+      const tp = this.targetOf(m);
+      // 출처: MonsterMode.cpp 공격 이벤트 — 미사일 레벨 = MonsterSkillBonus + 1
+      const lvl = (Number(data.difficultyRows?.[this.difficulty]?.MonsterSkillBonus ?? 0) || 0) + 1;
+      this.launchMonsterMissile(m, missName, tp.x, tp.y, { lvl, mode: m.mode });
+      // 출처: 같은 곳 — Quill Rat 계열은 aip3 개수만큼 대상 ±5 지점에도 (시드 'SEIS')
+      if (m.type.baseId === 'quillrat1') {
+        const n = m.type.aiParams[2] ?? 0;
+        const seed = new Rng(0x53454953);
+        let ox = 5, oy = 5;
+        for (let i = 0; i < n; i++) {
+          if (seed.roll() & 1) ox = -ox;
+          if (seed.roll() & 1) oy = -oy;
+          this.launchMonsterMissile(m, missName, tp.x + ox, tp.y + oy, { lvl: 1, mode: m.mode, noMulti: true });
+        }
       }
+      return;
     }
     if (m.mode === 'S2') return;
     const tgt = this.targetOf(m);
@@ -2653,7 +3561,7 @@ export class Game {
     const p = this.player;
     if (!isInMeleeRange(m.x, m.y, m.type.sizeX, m.type.meleeRange, p.x, p.y, PLAYER_SIZE, 1)) return;
     this.onAttackedInMelee(m);
-    this.hitPlayer(atk, m.stats.level, m.type.hitClass, false, m);
+    this.hitPlayer(atk, m.stats.level, m.type.hitClass, false, m, atk.elem);
   }
 
   /** 몬스터가 소환수(또는 혼란으로 다른 몬스터)를 근접 공격. 출처: SUNITDMG_IsHitSuccessful (몬스터 AR vs 방어, 레벨 비교) */
@@ -2718,19 +3626,22 @@ export class Game {
    * 몬스터 → 플레이어 피해.
    * 출처: SUNITDMG_GetResultFlags — 달리는 플레이어는 항상 맞는다, 명중 후 막기(달리기 1/3) → 회피
    *       SUNITDMG_ApplyDodge — 걷기/달리기 중이면 Evade, 아니면 근접은 Dodge, 미사일은 Avoid
+   *       SUNITDMG_ApplyResistancesAndAbsorb — 저항 % (Normal 저항 감소 0), damageresist %, normal_damage_reduction,
+   *       냉기 = 느려짐 (속도·공격 −50%, 길이 × (100 − 냉기 저항)/100), 독 = 프레임당 hpregen 감소
+   * 근사(원작 미확인): 플레이어 냉기 둔화 50% 고정, 독 길이도 독 저항으로 줄인다
    */
-  private hitPlayer(atk: { min: number; max: number; toHit: number }, attackerLevel: number, hitClass: number, missile: boolean, attacker?: MonsterUnit): void {
+  private hitPlayer(atk: { min: number; max: number; toHit: number }, attackerLevel: number, hitClass: number, missile: boolean, attacker?: MonsterUnit, elem?: DamagePacket & { manaDrain?: number }, alwaysHit = false): void {
     const c = this.character, cs = this.classStats;
     const p = this.player;
     if (!c || !cs || p.mode === 'DT' || p.mode === 'DD') return;
     const running = p.mode === 'RN';
-    if (!running && !rollPercent(hitChance(atk.toHit, this.playerDefenseValue(), attackerLevel, c.level), this.rng)) {
+    if (!alwaysHit && !running && !rollPercent(hitChance(atk.toHit, this.playerDefenseValue(), attackerLevel, c.level), this.rng)) {
       this.events.push({ type: 'playerMissed' });
       return;
     }
     const shield = this.equipment.larm ? this.data?.items.base(this.equipment.larm.code) : undefined;
     const dv = this.derived();
-    const block = shield?.block ? blockChance(dv?.block ?? shield.block, cs.blockFactor, this.effStat('dex'), c.level, running) : 0;
+    const block = shield?.block && !alwaysHit ? blockChance(dv?.block ?? shield.block, cs.blockFactor, this.effStat('dex'), c.level, running) : 0;
     if (block > 0 && rollPercent(block, this.rng)) {
       this.events.push({ type: 'playerBlocked' });
       return;
@@ -2743,7 +3654,15 @@ export class Game {
       return;
     }
     if (!missile) this.wearArmor();
-    let dmg = rollDamage({ min: atk.min, max: atk.max }, this.rng);
+    let dmg = atk.max > 0 ? rollDamage({ min: atk.min, max: atk.max }, this.rng) : 0;
+    // 몬스터 치명타: monstats Crit % 로 모든 피해 ×2. 출처: D2GAME_MONSTER_ApplyCriticalDamage_6FC62E70
+    let crit = 1;
+    if (attacker && !missile && attacker.type.crit && (attacker.rng.roll() >>> 0) % 100 < attacker.type.crit) crit = 2;
+    dmg *= crit;
+    // 물리 피해 감소: damageresist % (Amplify Damage −100) · normal_damage_reduction
+    const dr = (dv?.stat('damageresist') ?? 0) + this.player.states.stat('damageresist');
+    if (dr) dmg = Math.max(0, dmg - (dmg * Math.min(dr, 50)) / 100);
+    dmg = Math.max(0, dmg - (dv?.stat('normal_damage_reduction') ?? 0));
     // Bone Armor: 근접 물리 피해를 흡수량(bonearmor, 1/256)이 남는 동안 흡수 (auraevent absorbdamage, EventFunc22)
     const ba = missile ? undefined : this.player.states.get('bonearmor');
     if (ba && (ba.stats.bonearmor ?? 0) > 0 && dmg > 0) {
@@ -2752,22 +3671,63 @@ export class Game {
       dmg -= absorb / 256;
       if ((ba.stats.bonearmor ?? 0) <= 0) this.player.states.remove('bonearmor');
     }
-    c.life = Math.max(0, c.life - dmg);
-    this.events.push({ type: 'playerHit', damage: dmg });
+    let elemental = 0;
+    if (elem) {
+      const res = (k: 'fi' | 'co' | 'li' | 'po' | 'ma', st: string) => Math.min(95, (dv?.res[k] ?? 0) + this.player.states.stat(st));
+      const cut = (v: number, r: number) => (v > 0 ? Math.trunc((v * (100 - Math.max(-100, r))) / 100) : 0);
+      const fire = cut(elem.fire * crit, res('fi', 'fireresist')), ltng = cut(elem.ltng * crit, res('li', 'lightresist')), cold = cut(elem.cold * crit, res('co', 'coldresist'));
+      const mag = cut(elem.mag * crit, res('ma', 'magicresist')) - (dv?.stat('magic_damage_reduction') ?? 0) * 256;
+      elemental = (fire + ltng + cold + Math.max(0, mag) + elem.phys) / 256;
+      const coldLen = cut(elem.coldLen, res('co', 'coldresist'));
+      if (cold > 0 && coldLen > 0) this.player.states.set('cold', this.tickCount + coldLen, { velocitypercent: -50, attackrate: -50, other_animrate: -50 });
+      const pois = cut(elem.pois * crit, res('po', 'poisonresist')), poisLen = cut(elem.poisLen, res('po', 'poisonresist'));
+      if (pois > 0 && poisLen > 0) {
+        const cur = this.player.states.get('poison');
+        if (!cur || -(cur.stats.hpregen ?? 0) <= pois) this.player.states.set('poison', this.tickCount + poisLen, { hpregen: -pois });
+      }
+      if (elem.manaDrain) c.mana = Math.max(0, c.mana - elem.manaDrain / 256);
+    }
+    const total = dmg + elemental;
+    c.life = Math.max(0, c.life - total);
+    this.events.push({ type: 'playerHit', damage: total, ...(elemental ? { elemental } : {}) });
     if (!missile && attacker && dmg > 0) {
       this.onDamagedInMelee(attacker, dmg);
       this.ironMaiden(attacker, dmg);
     }
+    if (attacker && total > 0) this.onMonsterHitPlayer(attacker);
     if (c.life <= 0) {
       this.playerDie();
       return;
     }
     // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
-    if (dmg * 12 >= this.maxLife() && !p.cast) {
+    if (total * 12 >= this.maxLife() && !p.cast) {
       p.path = [];
       this.setPlayerMode('GH');
     }
     void hitClass;
+  }
+
+  /**
+   * 보스 수식어의 적중 효과 (MonUMod 표 3번 칸). 출처: MONSTERUNIQUE_CastAmplifyDamage (Cursed: rand & 3 ≥ 1 이면 레벨 mlvl/5+1 Amplify Damage)
+   */
+  private onMonsterHitPlayer(m: MonsterUnit): void {
+    if (!m.umods.includes(UMOD.CURSE) || !(m.flags & MONFLAG.UNIQUE)) return;
+    if (((m.rng.roll() >>> 0) & 3) < 1) return;
+    const s = this.data?.skills?.byNameOf('Amplify Damage'), calc = this.data?.skillCalc;
+    if (!s || !calc) return;
+    const lvl = Math.max(1, Math.trunc(m.stats.level / 5) + 1);
+    const len = calc.eval(s, s.auraLenCalc, lvl, this.owner()) || 200;
+    const stats: Record<string, number> = {};
+    for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, this.owner());
+    if (!('damageresist' in stats)) stats.damageresist = -100;
+    this.player.states.set('amplifydamage', this.tickCount + len, stats);
+    this.events.push({ type: 'playerCursed', curse: 'amplifydamage', by: m.id });
+  }
+
+  /** 플레이어에게 직접 피해 (폭발 등, 명중 판정 없음) */
+  private damagePlayerDirect(pkt: DamagePacket, source: string): void {
+    this.hitPlayer({ min: 0, max: 0, toHit: 0 }, 1, 0, true, undefined, pkt, true);
+    void source;
   }
 
   // ---------------------------------------------------------------- 내구도
@@ -2869,11 +3829,7 @@ export class Game {
     for (const a of s.auraStats) bonus(a.stat, calc.eval(s, a.calc, lvl, o));
     stats.maxHp += Math.trunc((stats.maxHp * calc.calc(s, 1, lvl, o)) / 100);
     const id = this.nextUnitId++;
-    const pet: MonsterUnit = {
-      id, type, stats, x: spot.x + 0.5, y: spot.y + 0.5, hp: stats.maxHp, mode: 'NU', dir: 0, path: [], moveSpeed: 0,
-      nextThink: this.tickCount + 1, modeStart: this.tickCount, modeEnd: 0, hitTick: -1, hitDone: true,
-      rng, aggro: false, aiParam0: 0, command: 0, leaderId: id, deathFrame: -1, states: new StateList(), corpseUsed: true, pet: info,
-    };
+    const pet: MonsterUnit = { ...this.newMonsterUnit(id, type, stats, rng, spot.x + 0.5, spot.y + 0.5), corpseUsed: true, pet: info };
     const max = this.petMax(s, lvl);
     const same = this.pets.filter((x) => x.pet?.skillId === s.id && x.mode !== 'DT' && x.mode !== 'DD');
     while (same.length >= max && petType !== 'none') {
@@ -3071,23 +4027,62 @@ export class Game {
       const ms = this.missiles[i] as Missile;
       ms.age++;
       if (ms.owner === 'monster') {
-        ms.x += ms.dx;
-        ms.y += ms.dy;
-        ms.left--;
-        const blocked = !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
-        const hit = Math.hypot(ms.x - p.x, ms.y - p.y) <= 1;
-        if (hit && ms.damage) this.hitPlayer({ min: ms.damage.min, max: ms.damage.max, toHit: ms.toHit ?? 0 }, ms.ownerLevel, ms.hitClass, true);
-        const petHit = hit ? undefined : this.pets.find((pt) => pt.mode !== 'DT' && pt.mode !== 'DD' && Math.hypot(ms.x - pt.x, ms.y - pt.y) <= 1 + pt.type.sizeX / 2);
-        if (petHit && ms.damage) {
-          const d = emptyDamage();
-          d.phys = rollDamage(ms.damage, this.rng) * 256;
-          this.damagePet(petHit, d);
-        }
-        if (hit || petHit || blocked || ms.left <= 0) this.missiles.splice(i, 1);
+        if (this.updateMonsterMissile(ms, p)) this.missiles.splice(i, 1);
         continue;
       }
       if (this.updatePlayerMissile(ms)) this.missiles.splice(this.missiles.indexOf(ms), 1);
     }
+  }
+
+  /**
+   * 몬스터 미사일 한 프레임. 반환 true = 소멸.
+   * 근사(원작 미확인): 충돌 = 플레이어와 1 서브타일 이내, 벽 = COLLIDE_MISSILE_BARRIER(0x04)·문, 지면 불 피해 = 원소 × DamageRate / 1024 매 프레임
+   */
+  private updateMonsterMissile(ms: Missile, p: PlayerState): boolean {
+    ms.left--;
+    if (ms.visual) return ms.left <= 0;
+    const pAlive = p.mode !== 'DT' && p.mode !== 'DD';
+    if (ms.groundFire) {
+      if (pAlive && ms.mpkt && Math.hypot(ms.x - p.x, ms.y - p.y) <= 1) {
+        const rate = ms.def.damageRate || 1024;
+        const pk = { ...ms.mpkt, fire: Math.trunc((ms.mpkt.fire * rate) / 1024), phys: 0 };
+        this.hitPlayer({ min: 0, max: 0, toHit: 0 }, ms.ownerLevel, 0, true, undefined, pk, true);
+      }
+      return ms.left <= 0;
+    }
+    if (ms.wander && ms.age % 3 === 0) {
+      // 근사(원작 미확인): 충전 볼트(PATHTYPE_CHARGEDBOLT) 불규칙 경로를 3프레임마다 무작위 방향 전환으로
+      const sp = Math.hypot(ms.dx, ms.dy);
+      const a = Math.atan2(ms.dy, ms.dx) + ((this.rng.pick(5) - 2) * Math.PI) / 8;
+      ms.dx = Math.cos(a) * sp;
+      ms.dy = Math.sin(a) * sp;
+    }
+    ms.x += ms.dx;
+    ms.y += ms.dy;
+    const blocked = (this.map.mask(Math.floor(ms.x), Math.floor(ms.y)) & (0x04 | 0x0800 | 0x0020)) !== 0;
+    const hit = pAlive && Math.hypot(ms.x - p.x, ms.y - p.y) <= 1;
+    if (hit) this.hitPlayer({ min: ms.damage?.min ?? 0, max: ms.damage?.max ?? 0, toHit: ms.toHit ?? 0 }, ms.ownerLevel, ms.hitClass, true, undefined, ms.mpkt, ms.alwaysHit);
+    const petHit = hit ? undefined : this.pets.find((pt) => pt.mode !== 'DT' && pt.mode !== 'DD' && Math.hypot(ms.x - pt.x, ms.y - pt.y) <= 1 + pt.type.sizeX / 2);
+    if (petHit) {
+      const d = ms.mpkt ? { ...ms.mpkt } : emptyDamage();
+      if (ms.damage && ms.damage.max > 0) d.phys += rollDamage(ms.damage, this.rng) * 256;
+      this.damagePet(petHit, d);
+    }
+    return hit || !!petHit || blocked || ms.left <= 0;
+  }
+
+  /**
+   * 유니크 색 (원작 Utrans 번호 2~31 → RandTransforms.dat 의 번호 − 2 번째 색표).
+   * 슈퍼유니크 = SuperUniques.txt Utrans, 유니크 = MonStats2 Utrans (없으면 이름 시드 % 30 + 2), noUniqueShift 면 없음.
+   * 근사(원작 미확인): 무작위 유니크 색 번호 공식 (이름 시드 기반), 챔피언·미니언은 색 바꿈 없음
+   */
+  private uniqueTrans(m: MonsterUnit): number | undefined {
+    if (m.type.noUniqueShift || !(m.flags & MONFLAG.UNIQUE) || (m.flags & MONFLAG.CHAMPION)) return undefined;
+    if (m.superUnique !== undefined) {
+      const u = this.data?.uniques?.superUnique(m.superUnique)?.utrans ?? 0;
+      return u >= 2 ? u : undefined;
+    }
+    return m.type.utrans >= 2 ? m.type.utrans : (m.nameSeed % 30) + 2;
   }
 
   /** 플레이어 미사일 한 프레임. 반환 true = 소멸 */
@@ -3968,10 +4963,16 @@ export class Game {
         }
         continue;
       }
-      if (m.hp >= m.stats.maxHp) continue;
+      if (m.hp >= m.stats.maxHp || !m.hpRegen) continue;
       m.hp = Math.min(m.stats.maxHp, m.hp + (m.stats.maxHp * m.type.damageRegen) / 4096);
     }
     const c = this.character;
+    // 플레이어 독: 상태 hpregen (1/256/프레임) 만큼 감소 (출처: SUNITDMG_ApplyPoisonDamage)
+    const ppois = this.player.states.get('poison')?.stats.hpregen ?? 0;
+    if (c && ppois < 0 && !this.isDead) {
+      c.life = Math.max(0, c.life + ppois / 256);
+      if (c.life <= 0) this.playerDie();
+    }
     // 물약: 매 프레임 회복 (1/256 단위)
     if (c && !this.isDead) {
       const hp = this.player.states.get('healthpot'), mp = this.player.states.get('manapot');
@@ -4039,5 +5040,22 @@ const reachOf = (d: MissileDef, m: MonsterUnit): number => (d.size + 1) / 2 + m.
 const isGroundFire = (d: MissileDef): boolean => d.srvDmgFunc === 3;
 /** 지속 피해 미사일 (Inferno 불꽃: DamageRate 가 있고 관통) */
 const isContinuous = (d: MissileDef): boolean => isGroundFire(d) || (d.damageRate > 0 && !d.collideKill);
+
+/** 경로의 처음 steps 개 곧은 구간 (원작 PATH_SetStepNum — 경로 점 사이 한 구간씩) */
+function firstSegments(path: Pt[], steps: number): Pt[] {
+  if (steps <= 0 || path.length <= 1) return path;
+  let seg = 1, pdx = NaN, pdy = NaN;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1] as Pt, b = path[i] as Pt;
+    const dx = Math.sign(b.x - a.x), dy = Math.sign(b.y - a.y);
+    if (i > 1 && (dx !== pdx || dy !== pdy)) {
+      seg++;
+      if (seg > steps) return path.slice(0, i);
+    }
+    pdx = dx;
+    pdy = dy;
+  }
+  return path;
+}
 
 export { aiDistance };

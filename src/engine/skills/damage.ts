@@ -9,6 +9,8 @@ export interface DamagePacket {
   /** HitClass.txt 행 번호 (피격 경직 판정) */
   hitClass: number;
   crit: boolean;
+  /** 마나 흡수 (1/256, 몬스터 Mana Burn) */
+  manaDrain?: number;
 }
 
 export const emptyDamage = (): DamagePacket => ({

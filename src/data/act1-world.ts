@@ -5,7 +5,7 @@ import { buildPresetLevel, type PresetLevel } from '../engine/drlg/preset';
 import { ACT1_ALL, generateAct1World, type Act1World } from '../engine/drlg/act1';
 import { townStartSubtile } from '../engine/drlg/layout';
 import { LEVEL, PREST, ROOM, type DrlgData } from '../engine/drlg/types';
-import { levelMonsterInfo, planSpawns } from '../engine/spawn';
+import { levelMonsterInfo, planLevel } from '../engine/spawn';
 import { nearestWalkable } from '../engine/path';
 import { Rng } from '../engine/rng';
 import type { GameData, LevelDef, LevelExit } from '../engine/game';
@@ -163,19 +163,31 @@ export function buildAct1World(src: AssetSource, tables: GameTables, gameData: G
     const inTown = lv.id === LEVEL.ROGUEENCAMPMENT;
     let spawns: LevelDef['spawns'];
     let monsterPool: string[] | undefined;
+    let monsterInfo: LevelDef['monsterInfo'];
     if (!inTown) {
       // 출처: levels.txt 몬스터 풀 + 방 단위 배치 (spawn.ts). 원작처럼 몬스터 없는 방(POPULATION_ZERO: Populate=0 프리셋·이동 타일 방)은 제외
+      // 출처: sub_6FC66260 — 이동 지점·마을 포털 자리에서 levels.txt WarpDist(거리²) 안에는 놓지 않는다
       const info = levelMonsterInfo(tables.table('Levels'), rec.levelName);
       const rooms = lv.layout.rooms.filter((r) => !(r.flags & ROOM.POPULATION_ZERO));
-      spawns = planSpawns(info, rooms, preset.collision, gameData.monsters, new Rng((seed ^ (lv.id * 0x5bd1e995)) >>> 0));
-      monsterPool = info.pool;
+      const warpPts = lv.layout.warps.map((w) => ({ x: w.x, y: w.y }));
+      const ti11 = lv.layout.tileInfo.find((t) => t.index === 11);
+      if (ti11) warpPts.push({ x: ti11.x * 5, y: ti11.y * 5 });
+      const exclude = (x: number, y: number) => warpPts.some((p) => (x - p.x) ** 2 + (y - p.y) ** 2 < info.warpDist);
+      const plan = planLevel(info, rooms, preset.collision, gameData.monsters, new Rng((seed ^ (lv.id * 0x5bd1e995)) >>> 0), exclude);
+      spawns = plan.requests;
+      monsterPool = plan.region;
+      monsterInfo = { pool: info.pool, region: plan.region, umon: info.umon, monLvlEx: info.monLvlEx, act: 1, warpDist: info.warpDist, warpPoints: warpPts };
     }
+    // 프리셋 몬스터 (DS1 유닛 type 1: MonPreset 번호 — 슈퍼유니크·Andariel·Blood Raven·place_* 자리). 원작 bSpawned & 1 이면 배치 안 함
+    const presetMonsters = inTown ? [] : lv.layout.units.filter((u) => u.type === 1 && u.id >= 0 && !u.code && !((u.flags ?? 0) & 1))
+      .map((u) => ({ id: u.id, x: u.x, y: u.y, ...(u.path ? { path: u.path } : {}) }));
     // 오브젝트: DS1 프리셋 유닛(type 2 = 오브젝트, 번호는 DRLGPRESET_ParseDS1File 에서 objects.txt 번호로 변환됨)과 방 목록 (오브젝트 그룹 배치)
     // 출처: Objects.cpp OBJECTS_PopulationHandler — 웨이포인트 방(DUNGEON_HasWaypoint)은 배치 안 함
     const objects = lv.layout.units.filter((u) => u.type === 2).map((u) => ({ classId: u.id, x: u.x, y: u.y }));
     const popRooms = lv.layout.rooms.map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h, hasWaypoint: (r.flags & ROOM.WAYPOINT_MASK) !== 0, noPopulate: (r.flags & ROOM.POPULATION_ZERO) !== 0 }));
-    const def: LevelDef = { id: key, map: preset.collision, inTown, exits: [], spawns, levelNo: lv.id, objects, rooms: popRooms };
+    const def: LevelDef = { id: key, map: preset.collision, inTown, exits: [], spawns, levelNo: lv.id, objects, rooms: popRooms, presetMonsters };
     if (monsterPool) def.monsterPool = monsterPool;
+    if (monsterInfo) def.monsterInfo = monsterInfo;
     // 마을 포털 자리: 원작 D2GAME_CreateLinkPortal → DUNGEON_FindActSpawnLocationEx(…, 11, …) = 타일 정보 11 (+ 서브타일 3, sub_6FD788D0 규칙)
     const ti = lv.layout.tileInfo.find((t) => t.index === 11);
     if (ti) def.portalSpot = { x: ti.x * 5 + 3, y: ti.y * 5 + 3 };

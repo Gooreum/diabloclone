@@ -9,6 +9,7 @@ import { SkillCalc } from '../engine/skills/formulas';
 import { parseBookCharges, parseNpcPrices } from '../engine/price';
 import { ItemGen } from '../engine/itemgen';
 import { ObjectDb } from '../engine/objects';
+import { UniqueDb } from '../engine/uniques';
 import type { GameData } from '../engine/game';
 import { GameTables, type AssetSource } from './tables';
 
@@ -23,7 +24,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     qualityitems: tables.table('QualityItems'), lowqualityitems: tables.table('LowQualityItems'),
     properties: tables.table('Properties'), itemstatcost: tables.table('ItemStatCost'), skills: tables.table('skills'), gems: tables.table('Gems'),
   });
-  const monsters = new MonsterDb(tables.table('MonStats'), tables.table('MonStats2'), tables.table('MonLvl'));
+  const monsters = new MonsterDb(tables.table('MonStats'), tables.table('MonStats2'), tables.table('MonLvl'), tables.table('MonSeq'));
   const animBytes = src.read('data\\global\\AnimData.d2');
   if (!animBytes) throw new Error('AnimData.d2 not found');
   const hitClassIndex = new Map<string, number>();
@@ -37,5 +38,9 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     skills, skillCalc: new SkillCalc(skills), coldDivisor: n(normal?.MonsterColdDivisor) || 1, freezeDivisor: n(normal?.MonsterFreezeDivisor) || 1,
     difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
     objects: new ObjectDb({ objects: tables.table('Objects'), objGroup: tables.table('ObjGroup'), shrines: tables.table('shrines'), levels: tables.table('Levels') }),
+    uniques: new UniqueDb(monsters, {
+      monUMod: tables.table('MonUMod'), superUniques: tables.table('SuperUniques'), monPreset: tables.table('MonPreset'), monPlace: tables.table('MonPlace'),
+      prefix: tables.table('UniquePrefix'), suffix: tables.table('UniqueSuffix'), appellation: tables.table('UniqueAppellation'),
+    }),
   };
 }

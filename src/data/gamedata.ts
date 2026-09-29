@@ -19,7 +19,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     magicprefix: tables.table('MagicPrefix'), magicsuffix: tables.table('MagicSuffix'), rareprefix: tables.table('RarePrefix'), raresuffix: tables.table('RareSuffix'),
     uniqueitems: tables.table('UniqueItems'), setitems: tables.table('SetItems'), sets: tables.table('Sets'),
     qualityitems: tables.table('QualityItems'), lowqualityitems: tables.table('LowQualityItems'),
-    properties: tables.table('Properties'), itemstatcost: tables.table('ItemStatCost'), skills: tables.table('skills'),
+    properties: tables.table('Properties'), itemstatcost: tables.table('ItemStatCost'), skills: tables.table('skills'), gems: tables.table('Gems'),
   });
   const monsters = new MonsterDb(tables.table('MonStats'), tables.table('MonStats2'), tables.table('MonLvl'));
   const animBytes = src.read('data\\global\\AnimData.d2');

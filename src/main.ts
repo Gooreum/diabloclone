@@ -22,6 +22,11 @@ import { HeroStore } from './ui/storage';
 import { drawHud } from './ui/hud';
 import { Panels } from './ui/panels';
 import { SkillPanels } from './ui/skillpanel';
+import { ItemText } from './ui/itemtext';
+import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
+import { drawBelt } from './ui/hud';
+import { playerLayers } from './render/appearance';
+import type { Placed } from './engine/inventory';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
@@ -85,11 +90,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const token = CLASS_TOKEN[cls];
   const itemRng = new Rng(seed ^ 7);
 
-  let equipment: Record<string, ItemInstance>, inventory: ItemInstance[];
+  let equipment: Record<string, ItemInstance>, inventory: ItemInstance[] = [];
+  let inventoryGrid: Placed[] = [], stash: Placed[] = [], belt: (ItemInstance | null)[] = [];
   if (save) {
     equipment = save.equipment;
-    inventory = save.inventory;
-    data.treasure.reserveIds(Math.max(0, ...[...inventory, ...Object.values(equipment)].map((i) => i.id)));
+    inventoryGrid = save.inventory;
+    stash = save.stash;
+    belt = save.belt;
+    const all = [...inventoryGrid.map((p) => p.item), ...stash.map((p) => p.item), ...belt.filter((x): x is ItemInstance => !!x), ...Object.values(equipment)];
+    data.treasure.reserveIds(Math.max(0, ...all.map((i) => i.id)));
   } else {
     // 출처: charstats.txt 클래스별 시작 장비 (예: 바바리안 hax 오른손·buc 왼손, 아마존 jav·buc, 소서리스 sst …, hp1 ×4, 두루마리)
     equipment = {};
@@ -106,23 +115,58 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   }
   const game = new Game({
     map: world.town.collision, levels: world.levels, player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
-    seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, gold: save?.gold ?? 0,
+    seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
   });
+  // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
+  const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
+  const icons = new ItemIcons(assets, pal, data.items);
+  const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText);
 
   const cam: Camera = { x: world.start.x, y: world.start.y, width: WIDTH, height: HEIGHT };
   const ch = game.character!;
   const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
+  // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
+  input.intercept = (x, y, button) => {
+    const store = game.store;
+    const hit = invPanel.hit(x, y);
+    if (hit) {
+      if (button === 2) {
+        const it = invPanel.itemAt(store, x, y);
+        if (it) game.enqueue({ type: 'useItem', itemId: it.id });
+        return true;
+      }
+      const cur = store.cursor;
+      // 원작: 보석을 든 채 빈 소켓이 있는 아이템을 클릭하면 박힌다
+      const under = invPanel.itemAt(store, x, y);
+      const curBase = cur ? data.items.base(cur.code) : undefined;
+      if (cur && under && curBase && data.items.isType(curBase, 'sock') && under.socketed.length < under.sockets) {
+        game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'socket', itemId: under.id } });
+        return true;
+      }
+      if (hit.kind === 'inventory') {
+        if (cur) game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'inventory', ...invPanel.placeAt(cur, x, y) } });
+        else {
+          const it = store.inv.at(hit.x, hit.y)?.item;
+          if (it) game.enqueue({ type: 'moveItem', itemId: it.id, to: { kind: 'cursor' } });
+        }
+      } else if (hit.kind === 'equip') {
+        if (cur) game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'equip', slot: hit.slot } });
+        else {
+          const it = store.equipment[hit.slot];
+          if (it) game.enqueue({ type: 'moveItem', itemId: it.id, to: { kind: 'cursor' } });
+        }
+      }
+      return true;
+    }
+    if (store.cursor && button === 0) {
+      game.enqueue({ type: 'moveItem', itemId: store.cursor.id, to: { kind: 'ground' } });
+      return true;
+    }
+    return false;
+  };
   const nameOf = (code: string) => tables.string(data.items.base(code)?.namestr ?? code);
   const skillName = (id: number) => data.skills?.byId.get(id)?.displayName ?? 'Attack';
-  // 무기 레이어: 활·석궁은 왼손(LH), 그 외 무기는 오른손(RH). 왼손 슬롯의 방패는 SH, 화살통은 그리지 않는다.
-  const layerFor = (it: { code: string } | undefined, slot: 'rarm' | 'larm'): Record<string, string> => {
-    const b = it ? data.items.base(it.code) : undefined;
-    if (!it || !b) return {};
-    if (data.items.isType(b, 'bow') || data.items.isType(b, 'xbow')) return { LH: it.code };
-    if (data.items.isType(b, 'misl')) return {};
-    if (slot === 'larm') return data.items.isType(b, 'shld') ? { SH: it.code } : { LH: it.code };
-    return { RH: it.code };
-  };
+
 
   return new Promise((resolve) => {
     let running = true;
@@ -146,13 +190,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
           if (skillPanels.skills.style.display === 'block') skillPanels.toggleSkills();
           else skillPanels.toggleChar();
         } else panels.toggleMenu();
-      } else if (e.key === 'i' || e.key === 'I') panels.toggleInventory();
+      } else if (e.key === 'i' || e.key === 'I') invPanel.open = !invPanel.open;
+      // 원작 벨트 단축키 1~4 (아래 줄)
+      else if (e.key >= '1' && e.key <= '4') game.enqueue({ type: 'useBelt', slot: Number(e.key) - 1 });
       // 원작 단축키: T 스킬 트리, C 캐릭터
       else if (e.key === 't' || e.key === 'T') skillPanels?.toggleSkills();
       else if (e.key === 'c' || e.key === 'C') skillPanels?.toggleChar();
     };
     async function saveAndExit(): Promise<void> {
-      await HeroStore.save(makeSave(name, game.character!, game.gold, game.inventory, game.equipment));
+      const st = game.store;
+      await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment }));
       running = false;
       input.dispose();
       panels.dispose();
@@ -182,7 +229,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       cam.y = s.player.y;
       const rarm = game.equipment.rarm, larm = game.equipment.larm;
       const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
-      const equip: Record<string, string> = { ...BODY, ...layerFor(rarm, 'rarm'), ...layerFor(larm, 'larm') };
+      void larm;
+      const equip: Record<string, string> = { ...BODY, ...playerLayers(data.items, game.equipment) };
       (renderers[game.levelId] as WorldRenderer).render(
         ctx,
         cam,
@@ -191,7 +239,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       drawHud(ctx, s, table, LEVEL_NAMES[game.levelId] ?? '', game.isDead, {
         leftSkill: skillName(ch.leftSkill), rightSkill: skillName(ch.rightSkill), statPoints: ch.statPoints, skillPoints: ch.skillPoints,
       });
-      panels.renderInventory(s.inventory, game.equipment, s.player.gold);
+      drawBelt(ctx, game.store, icons);
+      const reqCtx = { level: ch.level, str: game.effStat('str'), dex: game.effStat('dex'), cls: ch.cls };
+      invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx);
+      invPanel.drawCursor(ctx, game.store, input.mouse);
       skillPanels?.render();
       requestAnimationFrame(frame);
     };

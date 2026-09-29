@@ -16,6 +16,10 @@ import { addExperience, spendStat, type Character, type ClassName, type ClassSta
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
 import { StateList } from './states';
+import { ItemStore } from './itemstore';
+import { computeDerived, type Derived } from './charstats';
+import { gemStats } from './itemgen';
+import type { Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import type { SkillDb, SkillRecord } from './skills/db';
@@ -66,10 +70,14 @@ export interface GameInit {
   character?: Character;
   classStats?: ClassStats;
   expTable?: ExpTable;
-  /** 장착 아이템 (슬롯 코드 → 아이템). 슬라이스: rarm, larm */
+  /** 장착 아이템 (itemtypes BodyLoc 코드 → 아이템: head neck tors rarm larm rrin lrin belt feet glov) */
   equipment?: Record<string, ItemInstance>;
   inTown?: boolean;
+  /** 인벤토리 — 자리 없이 주면 벨트/빈 자리에 자동 배치, 자리 있으면 그대로 */
   inventory?: ItemInstance[];
+  inventoryGrid?: Placed[];
+  stash?: Placed[];
+  belt?: (ItemInstance | null)[];
   gold?: number;
   /** 여러 레벨 (지정 시 map/inTown 대신 사용). 첫 레벨이 시작 레벨 */
   levels?: LevelDef[];
@@ -209,8 +217,12 @@ export class Game {
   readonly character: Character | undefined;
   readonly classStats: ClassStats | undefined;
   private readonly expTable: ExpTable | undefined;
-  readonly equipment: Record<string, ItemInstance>;
-  readonly inventory: ItemInstance[] = [];
+  /** 인벤토리 격자·창고·벨트·장착·커서 */
+  readonly store: ItemStore;
+  /** 장착이 바뀌어 파생 스탯을 다시 계산해야 함 */
+  private statsDirty = true;
+  private derivedCache: Derived | null = null;
+  private derivedKey = '';
   gold = 0;
   private tickCount = 0;
   private readonly queue: Command[] = [];
@@ -234,8 +246,20 @@ export class Game {
     this.character = init.character;
     this.classStats = init.classStats;
     this.expTable = init.expTable;
-    this.equipment = init.equipment ?? {};
-    this.inventory.push(...(init.inventory ?? []));
+    // 유니크 한 번만 드롭 규칙은 게임(판)마다 새로 시작 (출처: pGame->dwUniqueFlags)
+    init.data?.treasure.droppedUniques.clear();
+    // 위치가 있는 인벤토리는 그대로, 없는 것(x < 0, 예전 저장)은 빈 자리에 자동 배치
+    const placed = (init.inventoryGrid ?? []).filter((p) => p.x >= 0);
+    const loose = [...(init.inventoryGrid ?? []).filter((p) => p.x < 0).map((p) => p.item), ...(init.inventory ?? [])];
+    this.store = new ItemStore(init.data?.items, { inventory: placed, stash: init.stash, belt: init.belt, equipment: init.equipment });
+    for (const it of loose) {
+      const b = init.data?.items.base(it.code);
+      if (b) {
+        it.invW = b.invWidth;
+        it.invH = b.invHeight;
+      }
+      this.store.store(it);
+    }
     this.gold = init.gold ?? 0;
     const p = init.player;
     this.player = {
@@ -247,6 +271,14 @@ export class Game {
 
   get frame(): number {
     return this.tickCount;
+  }
+  /** 장착 아이템 (store 와 같은 객체) */
+  get equipment(): Record<string, ItemInstance> {
+    return this.store.equipment as Record<string, ItemInstance>;
+  }
+  /** 인벤토리 격자 안 아이템 목록 */
+  get inventory(): ItemInstance[] {
+    return this.store.inventoryItems;
   }
   get map(): CollisionMap {
     return this.level.def.map;
@@ -302,8 +334,8 @@ export class Game {
     p.modeStart = this.tickCount;
     p.states.clear();
     if (this.character) {
-      this.character.life = this.character.maxLife;
-      this.character.mana = this.character.maxMana;
+      this.character.life = this.maxLife();
+      this.character.mana = this.maxMana();
     }
     this.changeLevel(levelId, x, y);
   }
@@ -365,7 +397,7 @@ export class Game {
       tick: this.tickCount,
       player: {
         id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir, modeTick: this.tickCount - p.modeStart, anim: this.seqAnim(),
-        life: c?.life ?? 0, maxLife: c?.maxLife ?? 0, mana: c?.mana ?? 0, maxMana: c?.maxMana ?? 0,
+        life: c?.life ?? 0, maxLife: this.maxLife(), mana: c?.mana ?? 0, maxMana: this.maxMana(),
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
         states: p.states.names(), leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
@@ -448,6 +480,37 @@ export class Game {
           this.passiveCache = null;
           this.events.push({ type: 'skillLearned', skill: s.id, level: c.skills[s.id] });
         }
+        return;
+      }
+      case 'moveItem': {
+        if (!c) return;
+        const found = this.store.find(cmd.itemId);
+        if (!found) return;
+        const r = this.store.move(cmd.itemId, cmd.to, { cls: c.cls, level: c.level, str: this.effStat('str'), dex: this.effStat('dex') });
+        if (!r.ok) {
+          this.events.push({ type: 'itemMoveFailed', itemId: cmd.itemId, reason: r.reason });
+          return;
+        }
+        if (cmd.to.kind === 'ground') this.dropItem(found.item, p.x, p.y);
+        if (cmd.to.kind === 'socket') {
+          // 박힌 보석은 대상 종류에 맞는 속성을 갖는다 (gems.txt)
+          const target = this.store.find(cmd.to.itemId);
+          const tb = target ? this.data?.items.base(target.item.code) : undefined;
+          const gen = this.data?.treasure.gen;
+          if (tb && gen) found.item.stats = gemStats(gen, found.item, tb);
+          this.statsDirty = true;
+        }
+        if (found.where.kind === 'equip' || cmd.to.kind === 'equip') this.statsDirty = true;
+        this.events.push({ type: 'itemMoved', itemId: cmd.itemId, to: cmd.to.kind });
+        return;
+      }
+      case 'useBelt': {
+        const it = this.store.belt[cmd.slot];
+        if (it) this.useItem(it.id);
+        return;
+      }
+      case 'useItem': {
+        this.useItem(cmd.itemId);
         return;
       }
       case 'setSkill': {
@@ -544,19 +607,54 @@ export class Game {
     return passiveStat(this.passives(), stat) + this.player.states.stat(stat);
   }
 
+  /**
+   * 파생 스탯 (기본 + 장착). 장착·레벨·스탯 포인트가 바뀌면 다시 계산.
+   */
+  derived(): Derived | null {
+    const c = this.character, cs = this.classStats, data = this.data;
+    if (!c || !cs || !data) return null;
+    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}`;
+    if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
+      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen);
+      this.derivedKey = key;
+      this.statsDirty = false;
+    }
+    return this.derivedCache;
+  }
+
+  /** 아이템 포함 능력치 */
+  effStat(stat: 'str' | 'dex' | 'vit' | 'ene'): number {
+    const d = this.derived();
+    return d ? d[stat] : (this.character?.[stat] ?? 0);
+  }
+  maxLife(): number {
+    return this.derived()?.maxLife ?? this.character?.maxLife ?? 0;
+  }
+  maxMana(): number {
+    return this.derived()?.maxMana ?? this.character?.maxMana ?? 0;
+  }
+
   private playerDefenseValue(): number {
     const c = this.character;
     if (!c) return 0;
+    const d = this.derived();
     const armor = Object.values(this.equipment).reduce((s, it) => s + it.defense, 0);
-    const base = playerDefense(c.dex, armor);
+    const base = d ? d.defense : playerDefense(c.dex, armor);
     // 출처: itemstatcost.txt skill_armor_percent — 방어력 % 증가 (Iron Skin, Shout, Concentrate)
     return Math.trunc((base * (100 + this.playerStat('skill_armor_percent'))) / 100);
   }
 
   /** 플레이어 AR (명중% 보너스 적용 전). 출처: combat.ts playerAttackRating */
+  /** AR = (민첩 − 7) × 5 + 클래스 상수 + 장비 추가 명중 (명중% 는 판정 때 곱). 출처: combat.ts playerAttackRating */
   private playerAR(): number {
     const c = this.character, cs = this.classStats;
-    return c && cs ? playerAttackRating(c.dex, cs.toHitFactor) : 0;
+    return c && cs ? playerAttackRating(this.effStat('dex'), cs.toHitFactor, this.derived()?.toHit ?? 0) : 0;
+  }
+
+  /** 무기 공격 속도 %: 100 − WSM + EIAS (EIAS = ⌊120 × IAS / (120 + IAS)⌋). 출처: Maxroll Attack Speed */
+  private attackSpeedPct(): number {
+    const ias = this.derived()?.stat('item_fasterattackrate') ?? 0;
+    return 100 - (this.weaponBase()?.speed ?? 0) + Math.trunc((120 * ias) / (120 + ias));
   }
 
   // ---------------------------------------------------------------- player update
@@ -610,7 +708,9 @@ export class Game {
   /** 1프레임 이동량 (서브타일) = 속도(야드/초) × 1.5 / 25 × (100 + velocitypercent)/100 */
   private stepLength(): number {
     const v = this.player.running ? this.player.runVelocity : this.player.walkVelocity;
-    return ((v * SUBTILES_PER_YARD) / ENGINE_FPS) * (100 + this.playerStat('velocitypercent')) / 100;
+    // 이동 속도: 스킬 velocitypercent + 장비 FRW (EFRW = ⌊150 × FRW / (150 + FRW)⌋). 출처: Maxroll Movement Speed
+    const frw = this.derived()?.stat('item_fastermovevelocity') ?? 0;
+    return ((v * SUBTILES_PER_YARD) / ENGINE_FPS) * (100 + this.playerStat('velocitypercent') + Math.trunc((150 * frw) / (150 + frw))) / 100;
   }
 
   private movePlayer(): void {
@@ -691,15 +791,88 @@ export class Game {
     }
   }
 
+  /**
+   * 줍기: 골드는 소지 한도(캐릭터 레벨 × 10000)까지, 물약·두루마리는 벨트 먼저, 나머지는 인벤토리 빈 자리. 자리가 없으면 그대로.
+   * 출처: The Arreat Summit — Gold: 소지 한도 = 레벨 × 10,000
+   */
   private pickUp(g: GroundItem): void {
-    this.ground.splice(this.ground.indexOf(g), 1);
     if (g.item.code === 'gld') {
-      this.gold += g.item.quantity;
-      this.events.push({ type: 'goldPickup', amount: g.item.quantity });
-    } else {
-      this.inventory.push(g.item);
-      this.events.push({ type: 'itemPickup', itemId: g.item.id, code: g.item.code });
+      const cap = (this.character?.level ?? 1) * 10000;
+      const take = Math.min(g.item.quantity, Math.max(0, cap - this.gold));
+      if (take <= 0) {
+        this.events.push({ type: 'goldFull' });
+        return;
+      }
+      this.gold += take;
+      if (take >= g.item.quantity) this.ground.splice(this.ground.indexOf(g), 1);
+      else g.item.quantity -= take;
+      this.events.push({ type: 'goldPickup', amount: take });
+      return;
     }
+    if (!this.store.store(g.item)) {
+      this.events.push({ type: 'noRoom', itemId: g.item.id });
+      return;
+    }
+    this.ground.splice(this.ground.indexOf(g), 1);
+    this.statsDirty = true;
+    this.events.push({ type: 'itemPickup', itemId: g.item.id, code: g.item.code });
+  }
+
+  // ---------------------------------------------------------------- 아이템 사용
+
+  /**
+   * 물약·두루마리 사용 (원작 우클릭 / 벨트 단축키).
+   * 출처: D2MOO SKILLITEM_pSpell03_Potion — 회복 총량 = calc << 8 × 클래스 보너스(생명: 바바리안 ×2, 아마존·팔라딘 ×1.5 /
+   *       마나: 소서리스·네크로맨서 ×2, 아마존·팔라딘 ×1.5), rand(100) < rand(활력 또는 에너지)/2 이면 ×2,
+   *       len 프레임에 걸쳐 나눠 회복 (이미 마시던 물약의 남은 양과 합쳐 다시 나눔)
+   *       SKILLITEM_pSpell05_RejuvPotion — 최대치의 calc % 즉시 회복 (ITEMS_GetBonusLife/ManaBasedOnClass)
+   * 근사(원작 미확인): 두루마리(Town Portal·Identify)의 효과는 Phase 8(포털)·Phase 7 Step 3(감정)에서 연결 — 지금은 사용만 거부
+   */
+  private useItem(id: number): void {
+    const c = this.character, data = this.data;
+    const found = this.store.find(id);
+    if (!c || !data || !found || this.isDead) return;
+    const b = data.items.base(found.item.code);
+    if (!b?.useable) return;
+    const cls = c.cls;
+    const lifeBonus = (v: number) => (cls === 'Barbarian' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
+    const manaBonus = (v: number) => (cls === 'Sorceress' || cls === 'Necromancer' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
+    const doubled = (stat: number) => stat > 0 && this.rng.pick(100) < Math.trunc(this.rng.pick(stat) / 2);
+    if (b.pSpell === 3) {
+      for (const us of b.useStats) {
+        let total = us.calc << 8;
+        let state = '';
+        if (us.stat === 'hpregen' || us.stat === 'hitpoints') {
+          total = lifeBonus(total);
+          if (doubled(this.effStat('vit'))) total *= 2;
+          state = 'healthpot';
+        } else if (us.stat === 'manarecovery' || us.stat === 'mana') {
+          total = manaBonus(total);
+          if (doubled(this.effStat('ene'))) total *= 2;
+          state = 'manapot';
+        } else continue;
+        const len = b.useLen;
+        const cur = this.player.states.get(state);
+        const remaining = cur && Number.isFinite(cur.until) ? Math.max(0, cur.until - this.tickCount) : 0;
+        const perFrame = (total + remaining * (cur?.stats.potion ?? 0)) / (remaining + len);
+        this.player.states.set(state, this.tickCount + remaining + len, { potion: perFrame });
+        const st = this.player.states.get(state);
+        if (st) {
+          st.until = this.tickCount + remaining + len;
+          st.stats = { potion: perFrame };
+        }
+      }
+    } else if (b.pSpell === 5) {
+      for (const us of b.useStats) {
+        if (us.stat === 'hitpoints') c.life = Math.min(this.maxLife(), c.life + (this.maxLife() * us.calc) / 100);
+        else if (us.stat === 'mana') c.mana = Math.min(this.maxMana(), c.mana + (this.maxMana() * us.calc) / 100);
+      }
+    } else {
+      this.events.push({ type: 'itemUseUnsupported', itemId: id, code: found.item.code });
+      return;
+    }
+    this.store.consume(id);
+    this.events.push({ type: 'itemUsed', itemId: id, code: found.item.code });
   }
 
   // ---------------------------------------------------------------- 오라
@@ -740,8 +913,8 @@ export class Game {
         if (!v) continue;
         if (a.stat === 'hitpoints') {
           // 직접 회복 스탯 (Prayer, Cleansing): 1/256 단위, 최대 생명까지
-          if (c.life < c.maxLife) {
-            c.life = Math.min(c.maxLife, c.life + v / 256);
+          if (c.life < this.maxLife()) {
+            c.life = Math.min(this.maxLife(), c.life + v / 256);
             used = true;
           }
         } else if (a.stat === 'item_poisonlengthresist') {
@@ -965,7 +1138,9 @@ export class Game {
     const wclass = this.weaponWclass();
     const token = this.playerToken();
     // 무기 공격 속도: weapons.txt speed (WSM, 음수 = 빠름). 출처: Maxroll Attack Speed — AnimRate − WSM
-    const speedPct = s.useAttackRate ? 100 - (this.weaponBase()?.speed ?? 0) : 100;
+    // 공격 속도: WSM + IAS / 시전 속도: FCR (EFCR = ⌊120 × FCR / (120 + FCR)⌋). 출처: Maxroll Attack Speed / Cast Rate
+    const fcr = this.derived()?.stat('item_fastercastrate') ?? 0;
+    const speedPct = s.useAttackRate ? this.attackSpeedPct() : s.anim === 'SC' ? 100 + Math.trunc((120 * fcr) / (120 + fcr)) : 100;
     const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0, targetItem };
     const seq = s.seqNum > 0 ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
     if (seq && seq.length) {
@@ -1734,7 +1909,7 @@ export class Game {
     const shieldBase = spec.shield && this.equipment.larm ? data.items.base(this.equipment.larm.code) : undefined;
     const w = spec.shield ? shieldBase : this.weaponBase();
     const passives = this.passives();
-    const pct = spec.toHitPct + masteryBonus(passives, data.items, w, 'th') + this.playerStat('item_tohit_percent');
+    const pct = spec.toHitPct + masteryBonus(passives, data.items, w, 'th') + this.playerStat('item_tohit_percent') + (this.derived()?.toHitPct ?? 0);
     const ar = this.playerAR();
     // Smite: 명중 판정 결과와 무관하게 성공 (출처: SKILLS_SrvDo150_Smite — GetResultFlags | SUCCESSFULHIT)
     if (!spec.shield && !rollPercent(hitChance(ar + Math.trunc((ar * pct) / 100), this.monsterDefense(m, false), c.level, m.stats.level), this.rng)) {
@@ -1742,9 +1917,12 @@ export class Game {
       return false;
     }
     const d = emptyDamage();
+    const dv = this.derived();
     d.phys = rollWeaponDamage({
-      weapon: w, str: c.str, dex: c.dex, enDmgPct: spec.enDmgPct, damagePercent: this.playerStat('damagepercent'),
+      weapon: w, str: this.effStat('str'), dex: this.effStat('dex'), enDmgPct: spec.enDmgPct, damagePercent: this.playerStat('damagepercent'),
       masteryDmg: spec.shield ? 0 : masteryBonus(passives, data.items, w, 'dmg'), srcDam: spec.srcDam,
+      weaponRange: !spec.shield && dv && w ? { min: dv.weaponMin + dv.addMin, max: dv.weaponMax + dv.addMax } : undefined,
+      itemDamagePct: dv?.offWeaponEdPct ?? 0,
     }, this.rng);
     if (spec.vengeance) {
       // Vengeance: 무기 기본 피해(보너스 전) 굴림의 calc1/2/3 % 를 화염·냉기·번개로 (출처: SKILLS_SrvSt35_Vengeance)
@@ -1768,6 +1946,14 @@ export class Game {
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
     this.damageMonster(m, d);
+    // 생명·마나 흡수: 준 물리 피해의 lifedrainmindam / manadrainmindam % (Normal LifeStealDivisor 1). 출처: itemstatcost.txt, DifficultyLevels.txt
+    const dvl = this.derived();
+    if (dvl) {
+      const phys = Math.min(applyMonsterResists(d, this.monsterResists(m)).phys / 256, Math.max(0, hpBefore));
+      const ll = dvl.stat('lifedrainmindam'), ml = dvl.stat('manadrainmindam');
+      if (ll > 0) c.life = Math.min(this.maxLife(), c.life + (phys * ll) / 100);
+      if (ml > 0) c.mana = Math.min(this.maxMana(), c.mana + (phys * ml) / 100);
+    }
     if (spec.selfDamagePct) {
       // Sacrifice: 준 물리 피해(대상 생명 이하)의 calc2 % 만큼 자신 피해 (출처: SKILLS_SrvDo064_Sacrifice)
       const dealt = Math.min(applyMonsterResists(d, m.type.resist).phys / 256, Math.max(0, hpBefore));
@@ -1821,7 +2007,7 @@ export class Game {
     const c = this.character;
     if (lt?.skill && source === 'player' && c) {
       const ls = this.skillRecord(lt.skill.id), calc = this.data?.skillCalc;
-      if (ls && calc) c.life = Math.min(c.maxLife, c.life + (total / 256) * calc.calc(ls, 1, lt.skill.lvl, this.owner()) / 100);
+      if (ls && calc) c.life = Math.min(this.maxLife(), c.life + (total / 256) * calc.calc(ls, 1, lt.skill.lvl, this.owner()) / 100);
     }
     this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));
@@ -1873,7 +2059,7 @@ export class Game {
     const data = this.data;
     const tc = m.type.treasure[0];
     if (data && tc) {
-      for (const item of data.treasure.drop(tc, m.stats.level, m.rng)) {
+      for (const item of data.treasure.drop(tc, m.stats.level, m.rng, this.derived()?.stat('item_magicbonus') ?? 0)) {
         this.dropItem(item, m.x + 1, m.y + 1);
         this.events.push({ type: 'itemDropped', itemId: item.id, code: item.code, quality: item.quality });
       }
@@ -1964,8 +2150,11 @@ export class Game {
       const d = emptyDamage();
       d.hitClass = def.hitClass || s.hitClass || 10;
       if (o.srcDam > 0) {
+        const dv = this.derived();
         d.phys += rollWeaponDamage({
-          weapon: w, thrown: o.thrown, str: c.str, dex: c.dex, enDmgPct: o.damagePct ?? 0, damagePercent: this.playerStat('damagepercent'),
+          weapon: w, thrown: o.thrown, str: this.effStat('str'), dex: this.effStat('dex'), enDmgPct: o.damagePct ?? 0, damagePercent: this.playerStat('damagepercent'),
+          weaponRange: dv && w && !o.thrown ? { min: dv.weaponMin + dv.addMin, max: dv.weaponMax + dv.addMax } : undefined,
+          itemDamagePct: dv?.offWeaponEdPct ?? 0,
           masteryDmg: masteryBonus(passives, data.items, w, 'dmg', o.thrown), srcDam: o.srcDam,
         }, this.rng);
         if (rollCritical(o.thrown ? masteryBonus(passives, data.items, w, 'crit', true) : 0, this.playerStat('passive_critical_strike'), this.rng)) {
@@ -2281,7 +2470,8 @@ export class Game {
       return;
     }
     const shield = this.equipment.larm ? this.data?.items.base(this.equipment.larm.code) : undefined;
-    const block = shield?.block ? blockChance(shield.block, cs.blockFactor, c.dex, c.level, running) : 0;
+    const dv = this.derived();
+    const block = shield?.block ? blockChance(dv?.block ?? shield.block, cs.blockFactor, this.effStat('dex'), c.level, running) : 0;
     if (block > 0 && rollPercent(block, this.rng)) {
       this.events.push({ type: 'playerBlocked' });
       return;
@@ -2313,7 +2503,7 @@ export class Game {
       return;
     }
     // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
-    if (dmg * 12 >= c.maxLife && !p.cast) {
+    if (dmg * 12 >= this.maxLife() && !p.cast) {
       p.path = [];
       this.setPlayerMode('GH');
     }
@@ -2732,10 +2922,22 @@ export class Game {
       m.hp = Math.min(m.stats.maxHp, m.hp + (m.stats.maxHp * m.type.damageRegen) / 4096);
     }
     const c = this.character;
-    if (c && this.player.mode !== 'DT' && this.player.mode !== 'DD' && c.mana < c.maxMana) {
+    // 물약: 매 프레임 회복 (1/256 단위)
+    if (c && !this.isDead) {
+      const hp = this.player.states.get('healthpot'), mp = this.player.states.get('manapot');
+      if (hp) c.life = Math.min(this.maxLife(), c.life + (hp.stats.potion ?? 0) / 256);
+      if (mp) c.mana = Math.min(this.maxMana(), c.mana + (mp.stats.potion ?? 0) / 256);
+    }
+    if (c) {
+      // 장비를 벗어 최대치가 줄면 현재 값도 줄인다
+      c.life = Math.min(c.life, this.maxLife());
+      c.mana = Math.min(c.mana, this.maxMana());
+    }
+    if (c && this.player.mode !== 'DT' && this.player.mode !== 'DD' && c.mana < this.maxMana()) {
       // Warmth: manarecoverybonus % 만큼 마나 재생 증가 (출처: itemstatcost.txt manarecoverybonus)
       const bonus = this.playerStat('manarecoverybonus');
-      c.mana = Math.min(c.maxMana, c.mana + (((256 * c.maxMana) / (25 * 120)) / 256) * (100 + bonus) / 100);
+      const mm = this.maxMana();
+      c.mana = Math.min(mm, c.mana + (((256 * mm) / (25 * 120)) / 256) * (100 + bonus) / 100);
     }
   }
 }

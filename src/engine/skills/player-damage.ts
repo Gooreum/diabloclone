@@ -22,6 +22,10 @@ export interface WeaponDamageInput {
   masteryDmg: number;
   /** 무기 피해 반영 비율 (128 = 100%) */
   srcDam: number;
+  /** 아이템 반영 무기 피해 (정수, 없으면 weapons.txt 기본값) — 무기 자체 ED·추가 피해 포함, 다른 장비 추가 피해 더함 */
+  weaponRange?: { min: number; max: number };
+  /** 다른 장비의 ED% (힘 보너스와 같은 합산) */
+  itemDamagePct?: number;
 }
 
 /**
@@ -36,7 +40,7 @@ export function weaponBaseRange(w: ItemBase | undefined, thrown = false): { min:
 }
 
 export function weaponDamagePercent(i: WeaponDamageInput): number {
-  let pct = i.enDmgPct + i.damagePercent;
+  let pct = i.enDmgPct + i.damagePercent + (i.itemDamagePct ?? 0);
   if (i.weapon) {
     if (i.weapon.strBonus) pct += Math.trunc((i.weapon.strBonus * i.str) / 100);
     if (i.weapon.dexBonus) pct += Math.trunc((i.weapon.dexBonus * i.dex) / 100);
@@ -48,8 +52,10 @@ export function weaponDamagePercent(i: WeaponDamageInput): number {
 }
 
 /** 굴리지 않은 최소/최대 (1/256) — UI 표시·테스트용 */
+const baseOf = (i: WeaponDamageInput) => (i.weaponRange && !i.thrown ? { min: i.weaponRange.min * 256, max: i.weaponRange.max * 256 } : weaponBaseRange(i.weapon, i.thrown));
+
 export function weaponDamageRange(i: WeaponDamageInput): { min: number; max: number } {
-  const base = weaponBaseRange(i.weapon, i.thrown);
+  const base = baseOf(i);
   let min = base.min < 256 ? 256 : base.min;
   let max = base.max <= min ? min + 256 : base.max;
   const pct = weaponDamagePercent(i);
@@ -63,7 +69,7 @@ export function weaponDamageRange(i: WeaponDamageInput): { min: number; max: num
 }
 
 export function rollWeaponDamage(i: WeaponDamageInput, rng: Rng): number {
-  const base = weaponBaseRange(i.weapon, i.thrown);
+  const base = baseOf(i);
   let min = base.min < 256 ? 256 : base.min;
   let max = base.max <= min ? min + 256 : base.max;
   const pct = weaponDamagePercent(i);

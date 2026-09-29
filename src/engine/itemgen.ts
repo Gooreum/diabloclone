@@ -48,10 +48,14 @@ const mods = (r: TxtRow, code: string, param: string, min: string, max: string, 
   return out;
 };
 
+/** 보석 속성 (gems.txt: 무기 / 투구·갑옷 / 방패 별) */
+export interface GemDef { code: string; weapon: Mod[]; helm: Mod[]; shield: Mod[] }
+
 export interface ItemTables {
   magicprefix: TxtRow[]; magicsuffix: TxtRow[]; rareprefix: TxtRow[]; raresuffix: TxtRow[];
   uniqueitems: TxtRow[]; setitems: TxtRow[]; sets: TxtRow[]; qualityitems: TxtRow[]; lowqualityitems: TxtRow[];
   properties: TxtRow[]; itemstatcost: TxtRow[]; skills: TxtRow[];
+  gems?: TxtRow[];
 }
 
 /** 품질 적용에 쓰는 게임 상태 (유니크 한 번만 드롭 규칙) */
@@ -76,6 +80,7 @@ export class ItemGen {
   /** 클래스 스킬 시작 Id (staffmods) */
   private readonly classFirstSkill = new Map<string, number>();
   private readonly skillRows: TxtRow[];
+  readonly gems = new Map<string, GemDef>();
 
   constructor(items: ItemDb, t: ItemTables) {
     this.items = items;
@@ -132,6 +137,15 @@ export class ItemGen {
     }
     for (const r of t.itemstatcost) if (r.Stat) this.valShift.set(r.Stat, n(r.ValShift));
     this.skillRows = t.skills;
+    for (const r of t.gems ?? []) {
+      if (!r.code) continue;
+      this.gems.set(r.code, {
+        code: r.code,
+        weapon: mods(r, 'weaponMod#Code', 'weaponMod#Param', 'weaponMod#Min', 'weaponMod#Max', 3),
+        helm: mods(r, 'helmMod#Code', 'helmMod#Param', 'helmMod#Min', 'helmMod#Max', 3),
+        shield: mods(r, 'shieldMod#Code', 'shieldMod#Param', 'shieldMod#Min', 'shieldMod#Max', 3),
+      });
+    }
     for (const r of t.skills) {
       const cls = r.charclass;
       if (cls && !this.classFirstSkill.has(cls)) this.classFirstSkill.set(cls, n(r.Id));
@@ -545,6 +559,19 @@ export class ItemGen {
     for (const i of item.suffixes) item.levelReq = Math.max(item.levelReq, this.suffixes[i]?.levelReq ?? 0);
     void base;
   }
+}
+
+/**
+ * 소켓에 박힌 보석의 속성: 무기면 weaponMod, 방패면 shieldMod, 그 외(투구·몸통 갑옷)는 helmMod.
+ * 출처: gems.txt 컬럼, D2MOO ITEMMODS_AssignProperty PROPMODE_GEM (gemapplytype)
+ */
+export function gemStats(gen: ItemGen, gem: ItemInstance, target: ItemBase): ItemStat[] {
+  const g = gen.gems.get(gem.code);
+  if (!g) return [];
+  const list = gen.items.isType(target, 'weap') ? g.weapon : gen.items.isType(target, 'shld') ? g.shield : g.helm;
+  const tmp: ItemInstance = { ...gem, stats: [], socketed: [] };
+  gen.assignMods(tmp, target, list, new Rng(1));
+  return tmp.stats;
 }
 
 export const statOf = (item: ItemInstance, stat: string, param = 0): number => {

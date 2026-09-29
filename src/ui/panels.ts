@@ -60,7 +60,7 @@ export class Panels {
   renderInventory(items: readonly ItemInstance[], equipment: Record<string, ItemInstance>, gold: number): void {
     if (this.inventory.style.display !== 'block') return;
     const row = (it: ItemInstance, prefix = '') =>
-      `<div style="color:${COLOR[it.quality] ?? '#fff'}">${prefix}${this.nameOf(it.code)}${it.quantity > 1 ? ` (${it.quantity})` : ''}${it.affixesPending ? ' *' : ''}</div>`;
+      `<div style="color:${COLOR[it.quality] ?? '#fff'}">${prefix}${this.nameOf(it.code)}${it.quantity > 1 ? ` (${it.quantity})` : ''}</div>`;
     this.inventory.innerHTML =
       `<h2>Inventory</h2>` +
       Object.entries(equipment).map(([slot, it]) => row(it, `[${slot}] `)).join('') +

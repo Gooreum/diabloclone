@@ -445,7 +445,7 @@ describe.skipIf(!hasGameData)('원작 skills.txt 수치', () => {
       game.dropItem(hp, 30, 20);
       game.enqueue({ type: 'useSkill', skill: S('Telekinesis').id, hand: 'right', x: 30, y: 20, targetItem: hp.id });
       run(game, 30);
-      expect(game.inventory.some((i) => i.id === hp.id)).toBe(true);
+      expect(game.store.find(hp.id)?.where.kind).toBe('belt');
     });
 
     it('Blaze: 움직이면 발밑에 불이 남는다', () => {

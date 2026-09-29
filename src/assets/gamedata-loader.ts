@@ -5,7 +5,7 @@ import type { AssetLoader } from './loader';
 import type { GameData } from '../engine/game';
 
 export const EXCEL_TABLES = ['weapons', 'armor', 'misc', 'ItemTypes', 'TreasureClassEx', 'ItemRatio', 'MonStats', 'MonStats2', 'MonLvl', 'HitClass', 'Missiles', 'charstats', 'experience', 'Levels', 'skills', 'skilldesc', 'DifficultyLevels',
-  'MagicPrefix', 'MagicSuffix', 'RarePrefix', 'RareSuffix', 'UniqueItems', 'SetItems', 'Sets', 'QualityItems', 'LowQualityItems', 'Properties', 'ItemStatCost', 'Gems'];
+  'MagicPrefix', 'MagicSuffix', 'RarePrefix', 'RareSuffix', 'UniqueItems', 'SetItems', 'Sets', 'QualityItems', 'LowQualityItems', 'Properties', 'ItemStatCost', 'Gems', 'Inventory', 'Belts'];
 
 export async function loadGameData(assets: AssetLoader): Promise<{ data: GameData; tables: GameTables }> {
   await assets.preload([...EXCEL_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\global\\AnimData.d2']);

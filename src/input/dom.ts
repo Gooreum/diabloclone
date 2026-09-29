@@ -10,7 +10,10 @@ export interface SkillButtons { left: number; right: number }
 
 export class InputController {
   run = false;
-  private mouse: { x: number; y: number } | null = null;
+  /** 캔버스 좌표 마우스 위치 */
+  mouse: { x: number; y: number } | null = null;
+  /** UI(인벤토리 패널·커서 아이템)가 먼저 클릭을 처리하면 true (월드 명령을 보내지 않음) */
+  intercept: ((x: number, y: number, button: number, shift: boolean) => boolean) | null = null;
   private holding = false;
   private holdCommand: 'move' | 'skill' | null = null;
   private lastRepeat = 0;
@@ -65,6 +68,7 @@ export class InputController {
     if (e.button !== 0 && e.button !== 2) return;
     const p = this.local(e);
     this.mouse = p;
+    if (this.intercept?.(p.x, p.y, e.button, e.shiftKey)) return;
     const cmd = this.commandAt(p, e.button === 2, e.shiftKey);
     if (!cmd) return;
     this.send(cmd);

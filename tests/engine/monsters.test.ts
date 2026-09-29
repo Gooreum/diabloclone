@@ -137,7 +137,7 @@ describe.skipIf(!hasGameData)('원작 데이터 기반 몬스터·드롭', () =>
     expect(game.snapshot().items.length).toBe(dropped);
   });
 
-  it('pickup 명령: 걸어가서 골드는 골드로, 아이템은 인벤토리로', () => {
+  it('pickup 명령: 걸어가서 골드는 골드로, 물약은 벨트로', () => {
     const { game } = newGame();
     const gld = data.treasure.createItem(data.items.base('gld')!, 1, new Rng(2), QUALITY.NORMAL);
     const hp1 = data.treasure.createItem(data.items.base('hp1')!, 1, new Rng(2), QUALITY.NORMAL);
@@ -149,7 +149,9 @@ describe.skipIf(!hasGameData)('원작 데이터 기반 몬스터·드롭', () =>
     for (let i = 0; i < 100; i++) game.tick();
     const s = game.snapshot();
     expect(s.player.gold).toBe(gld.quantity);
-    expect(s.inventory.map((i) => i.code)).toEqual(['hp1']);
+    // 출처: The Arreat Summit — Belt: 주운 물약은 벨트에 빈 칸이 있으면 벨트로
+    expect(game.store.belt[0]?.code).toBe('hp1');
+    expect(s.inventory.length).toBe(0);
     expect(s.items.length).toBe(0);
   });
 });

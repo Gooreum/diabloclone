@@ -19,8 +19,9 @@ export function mapLeftClick(p: PointerInput): Command | null {
   return { type: 'move', x: p.worldX, y: p.worldY, run: p.run };
 }
 
-/** 우클릭 = 오른쪽 스킬을 커서 위치(몬스터·시체 위면 그 대상)에 */
+/** 우클릭 = 오른쪽 스킬을 커서 위치(몬스터·시체 위면 그 대상, 바닥 아이템 위면 아이템 — Telekinesis)에 */
 export function mapRightClick(p: PointerInput & { rightSkill: number }): Command {
-  const target = p.hover && p.hover.kind !== 'item' ? p.hover.id : undefined;
-  return { type: 'useSkill', skill: p.rightSkill, hand: 'right', x: p.worldX, y: p.worldY, ...(target !== undefined ? { targetId: target } : {}) };
+  const base = { type: 'useSkill' as const, skill: p.rightSkill, hand: 'right' as const, x: p.worldX, y: p.worldY };
+  if (p.hover?.kind === 'item') return { ...base, targetItem: p.hover.id };
+  return p.hover ? { ...base, targetId: p.hover.id } : base;
 }

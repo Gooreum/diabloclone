@@ -66,3 +66,39 @@ test('캐릭터 패널(C): 스탯 포인트로 힘 +1', async ({ page }) => {
   await page.click('#stat-str');
   await expect.poll(() => page.evaluate(() => window.__game!.game.character!.str)).toBe(str0 + 1);
 });
+
+test('소서리스 Fire Bolt 미사일과 네크로맨서 스켈레톤이 원작 그래픽으로 보인다', async ({ page }) => {
+  await newHero(page, uniqueName('Sor'), 'sorceress');
+  await walkToBloodMoor(page);
+  await page.evaluate(() => {
+    const g = window.__game!.game;
+    for (const m of g.monsters) m.nextThink = 1e9;
+    const ch = g.character!;
+    ch.skills[36] = 1; // Fire Bolt
+    ch.rightSkill = 36;
+    const p = g.snapshot().player;
+    g.enqueue({ type: 'useSkill', skill: 36, hand: 'right', x: p.x + 10, y: p.y });
+  });
+  await expect.poll(() => page.evaluate(() => window.__game!.game.snapshot().missiles.some((m) => m.name === 'firebolt'))).toBe(true);
+  await page.screenshot({ path: 'test-results/sorceress-firebolt.png' });
+  await page.evaluate(() => window.__game!.save!());
+  await page.waitForFunction(() => window.__menuReady === true);
+
+  await newHero(page, uniqueName('Nec'), 'necromancer');
+  await walkToBloodMoor(page);
+  const petType = await page.evaluate(() => {
+    const g = window.__game!.game;
+    for (const m of g.monsters) m.nextThink = 1e9;
+    const ch = g.character!;
+    ch.skills[70] = 1; // Raise Skeleton
+    const p = g.snapshot().player;
+    const c = g.spawnMonster('zombie1', p.x + 2.5, p.y);
+    c.mode = 'DD';
+    g.enqueue({ type: 'useSkill', skill: 70, hand: 'right', x: c.x, y: c.y, targetId: c.id });
+    return c.id;
+  });
+  void petType;
+  await expect.poll(() => page.evaluate(() => window.__game!.game.pets.map((p) => p.type.id).join(','))).toBe('necroskeleton');
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'test-results/necro-skeleton.png' });
+});

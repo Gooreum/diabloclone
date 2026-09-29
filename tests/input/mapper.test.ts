@@ -24,9 +24,10 @@ describe('우클릭·Shift 좌클릭 → 스킬', () => {
     expect(mapRightClick({ worldX: 3, worldY: 4, shift: false, hover: { kind: 'monster', id: 9 }, run: false, rightSkill: 126 })).toEqual({ type: 'useSkill', skill: 126, hand: 'right', x: 3, y: 4, targetId: 9 });
     expect(mapRightClick({ worldX: 3, worldY: 4, shift: false, hover: null, run: false, rightSkill: 130 })).toEqual({ type: 'useSkill', skill: 130, hand: 'right', x: 3, y: 4 });
   });
-  it('우클릭: 시체 위면 시체 대상 (Find Potion), 아이템 위는 대상 아님', () => {
+  it('우클릭: 시체 위면 시체 대상 (Find Potion), 아이템 위면 아이템 (Telekinesis)', () => {
     expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'corpse', id: 5 }, run: false, rightSkill: 131 })).toMatchObject({ targetId: 5 });
-    expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'item', id: 5 }, run: false, rightSkill: 131 })).not.toHaveProperty('targetId');
+    expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'item', id: 5 }, run: false, rightSkill: 43 })).toMatchObject({ targetItem: 5 });
+    expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'item', id: 5 }, run: false, rightSkill: 43 })).not.toHaveProperty('targetId');
   });
   it('Shift + 바닥 좌클릭: 왼쪽 스킬이 Attack 이 아니면 그 지점에 사용', () => {
     expect(mapLeftClick({ worldX: 1, worldY: 2, shift: true, hover: null, run: false, leftSkill: 132 })).toEqual({ type: 'useSkill', skill: 132, hand: 'left', x: 1, y: 2 });

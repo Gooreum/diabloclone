@@ -69,6 +69,8 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (ctx, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y);
+        // 소환수(ally)는 공격 대상이 아니다
+        if (m.ally) return;
         if (m.mode !== 'DT' && m.mode !== 'DD') picks.push({ kind: 'monster', id: m.id, x: p.x - 20, y: p.y - 70, w: 40, h: 75 });
         // 시체: Find Potion / Find Item 대상 (발밑 낮은 상자)
         else if (m.mode === 'DD') picks.push({ kind: 'corpse', id: m.id, x: p.x - 24, y: p.y - 20, w: 48, h: 26 });

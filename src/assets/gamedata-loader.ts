@@ -6,7 +6,7 @@ import type { GameData } from '../engine/game';
 
 export const EXCEL_TABLES = ['weapons', 'armor', 'misc', 'ItemTypes', 'TreasureClassEx', 'ItemRatio', 'MonStats', 'MonStats2', 'MonLvl', 'HitClass', 'Missiles', 'charstats', 'experience', 'Levels', 'skills', 'skilldesc', 'DifficultyLevels',
   'MagicPrefix', 'MagicSuffix', 'RarePrefix', 'RareSuffix', 'UniqueItems', 'SetItems', 'Sets', 'QualityItems', 'LowQualityItems', 'Properties', 'ItemStatCost', 'Gems', 'Inventory', 'Belts', 'npc', 'books',
-  'Objects', 'ObjGroup', 'shrines', 'AutoMap', 'LvlTypes', 'states',
+  'Objects', 'ObjGroup', 'shrines', 'AutoMap', 'LvlTypes', 'states', 'Overlay',
   'MonSeq', 'MonUMod', 'SuperUniques', 'MonPreset', 'MonPlace', 'UniquePrefix', 'UniqueSuffix', 'UniqueAppellation',
   'Hireling', 'HireDesc', 'gamble'];
 

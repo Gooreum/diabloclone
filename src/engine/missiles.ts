@@ -33,6 +33,14 @@ export interface MissileDef {
   /** 미사일 레벨 구간별 원소 증가 (MinELev1~5, MaxELev1~5), 지속 증가 (ELevLen1~3) */
   eMinLev: number[]; eMaxLev: number[]; eLevLen: number[];
   explosionMissile: string; subMissile1: string; hitSubMissile1: string;
+  /** 미사일 자체 원소 피해 시너지 % (EDmgSymPerCalc — Immolation Arrow 불길, Meteor 불 …) */
+  eDmgSymPerCalc: CalcNode | null;
+  /** 서버 적중 공식 (SHitCalc1 — Immolation Arrow 불길 지속 등) */
+  sHitCalc: CalcNode | null;
+  /** 원소 마스터리 적용 (ApplyMastery) */
+  applyMastery: boolean;
+  /** 맞으면 Chilling Armor 가 되쏜다 (ReturnFire) */
+  returnFire: boolean;
   /** 기존 몬스터 미사일 코드 호환 (= vel, srcDamage) */
   srcDamagePct: number;
 }
@@ -61,6 +69,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       eType: r.EType ?? '', eMin: n(r.EMin), eMax: n(r.Emax), eLen: n(r.ELen),
       eMinLev: [1, 2, 3, 4, 5].map((i) => n(r[`MinELev${i}`])), eMaxLev: [1, 2, 3, 4, 5].map((i) => n(r[`MaxELev${i}`])), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])),
       explosionMissile: r.ExplosionMissile ?? '', subMissile1: r.SubMissile1 ?? '', hitSubMissile1: r.HitSubMissile1 ?? '',
+      eDmgSymPerCalc: parseCalc(r.EDmgSymPerCalc), sHitCalc: parseCalc(r.SHitCalc1), applyMastery: n(r.ApplyMastery) === 1, returnFire: n(r.ReturnFire) === 1,
       srcDamagePct: src < 0 ? 0 : src,
     });
   }

@@ -27,8 +27,13 @@ export interface CharacterSave {
   waypoints: number[];
   /** 용병 (없으면 null). 예전 저장은 필드 없음 → null */
   merc: MercSave | null;
-  /** 끝낸 퀘스트 상태 (Game.quests). 예전 저장은 [] */
+  /** 예전(Phase 10 Step 1) 퀘스트 이름 목록. 새 저장은 questFlags 를 쓰고 이것은 [] */
   quests: string[];
+  /**
+   * 퀘스트 기록 워드 (원작 D2QuestRecord: 퀘스트마다 16비트, 48 워드 — 원작 .d2s "Woo!" 블록의 난이도별 퀘스트 데이터).
+   * 예전 저장은 필드 없음 → undefined (게임이 quests 이름 목록에서 옮긴다)
+   */
+  questFlags?: number[];
   savedAt: number;
 }
 
@@ -44,6 +49,7 @@ export interface SaveItems {
   waypoints?: number[];
   merc?: MercSave | null;
   quests?: string[];
+  questFlags?: number[];
 }
 
 export function makeSave(name: string, character: Character, gold: number, items: SaveItems, now = Date.now()): CharacterSave {
@@ -61,6 +67,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     waypoints: [...new Set([0, ...(items.waypoints ?? [])])].sort((a, b) => a - b),
     merc: items.merc ? { ...items.merc } : null,
     quests: [...(items.quests ?? [])],
+    ...(items.questFlags ? { questFlags: items.questFlags.map((w) => (Number(w) & 0xffff) >>> 0) } : {}),
     savedAt: now,
   };
 }
@@ -118,6 +125,9 @@ export function parseSave(text: string): CharacterSave {
     ? { name: m.name, seed: m.seed as number, hirelingId: m.hirelingId as number, level: m.level as number, experience: m.experience, dead: !!m.dead }
     : null;
   s.quests = Array.isArray(s.quests) ? s.quests.filter((q): q is string => typeof q === 'string') : [];
+  // 퀘스트 기록: 숫자 워드 배열만 (모양이 맞지 않으면 버린다 → 예전 저장처럼 quests 이름으로)
+  if (Array.isArray(s.questFlags) && s.questFlags.every((w) => Number.isInteger(w) && w >= 0 && w <= 0xffff)) s.questFlags = [...s.questFlags];
+  else delete s.questFlags;
   return s as CharacterSave;
 }
 

@@ -13,6 +13,7 @@ import { QUALITY, type ItemInstance, type Quality } from '../../src/engine/treas
 import { Rng } from '../../src/engine/rng';
 import { gambleCost, transactionCost } from '../../src/engine/price';
 import type { MonsterUnit } from '../../src/engine/ai';
+import { QFLAG, QUEST } from '../../src/engine/quests/record';
 
 const d = hasGameData ? describe : describe.skip;
 
@@ -351,7 +352,7 @@ d('치료 (Akara)·감정 (Cain)', () => {
     expect(a.identified && b.identified).toBe(true);
     expect(g.gold).toBe(500);
     // 퀘스트 보상 전 규칙: 개당 100
-    g.quests.delete('cain');
+    g.questRecord.clear(QUEST.CAIN, QFLAG.REWARDGRANTED);
     const c2 = newItem('cap', QUALITY.MAGIC);
     c2.identified = false;
     g.store.inv.autoAdd(c2);

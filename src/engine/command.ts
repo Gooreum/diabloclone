@@ -1,4 +1,5 @@
 // 입력은 오직 명령(Command) 객체로 엔진에 전달된다 (DOM 이벤트 → input/mapper.ts → Command).
+import type { NpcOption } from './npc';
 
 export type ItemLocation =
   | { kind: 'inventory'; x: number; y: number }
@@ -28,8 +29,10 @@ export type Command =
   | { type: 'setSkill'; hand: 'left' | 'right'; skill: number }
   /** 자기 시체 줍기 (걸어가서 장비를 되찾음) */
   | { type: 'takeCorpse' }
-  /** NPC 메뉴 고르기 (talk/trade/tradeRepair/gamble/hire/resurrect/identify/cancel) */
-  | { type: 'npcMenu'; option: 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' }
+  /** NPC 메뉴 고르기 (talk/trade/tradeRepair/gamble/hire/resurrect/identify/imbue/goEast/cancel, 퀘스트 항목 quest:<퀘스트>:<문자열 번호>) */
+  | { type: 'npcMenu'; option: NpcOption }
+  /** Charsi 담금질: 커서(또는 인벤토리) 아이템을 레어로 (A1Q3 보상) */
+  | { type: 'imbue'; itemId: number }
   /** 상점·도박 아이템 사기 (multi = Shift+우클릭 멀티바이, toInventory = 우클릭: 벨트 대신 인벤토리) */
   | { type: 'buy'; itemId: number; multi?: boolean; toInventory?: boolean }
   /** 아이템 팔기 (인벤토리·벨트·커서) */

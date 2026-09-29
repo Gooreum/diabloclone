@@ -277,13 +277,20 @@ describe.skipIf(!hasGameData)('챔피언·유니크·슈퍼유니크 (원작 데
       const game = newGame(77, 120);
       const a = game.spawnMonster('andariel', 40.5, 40.5);
       expect(game.monsterTc(a)).toBe('Andarielq');
-      const drops = kill(game, a).filter((e) => e.type === 'itemDropped');
+      const evs = kill(game, a);
+      const drops = evs.filter((e) => e.type === 'itemDropped' && e.source !== 'quest');
       expect(drops.length).toBeGreaterThan(0);
       for (const d of drops) expect(d.tc).toBe('Andarielq');
-      expect(game.questsDone.has(6)).toBe(true);
+      // 출처: ACT1Q6_Callback08_MonsterKilled — 퀘스트 보석: 깨진 보석 2 + 보석 1
+      const gems = evs.filter((e) => e.type === 'itemDropped' && e.source === 'quest').map((e) => String(e.code));
+      expect(gems.length).toBe(3);
+      expect(gems.filter((c) => /^(gc[vrbygw]|skc)$/.test(c)).length).toBe(2);
+      expect(gems.filter((c) => /^(gs[vrbygw]|sku)$/.test(c)).length).toBe(1);
+      // 출처: ACT1Q6_Callback08_MonsterKilled — 죽인 플레이어에게 PRIMARYGOALDONE + REWARDPENDING (TCQuestCP 1 = REWARDPENDING)
+      expect(game.questRecord.get(6, 1)).toBe(true);
       const b = game.spawnMonster('andariel', 60.5, 60.5);
       expect(game.monsterTc(b)).toBe('Andariel');
-      const d2 = kill(game, b).filter((e) => e.type === 'itemDropped');
+      const d2 = kill(game, b).filter((e) => e.type === 'itemDropped' && e.source !== 'quest');
       expect(d2.length).toBeGreaterThan(0);
       for (const d of d2) expect(d.tc).toBe('Andariel');
     });

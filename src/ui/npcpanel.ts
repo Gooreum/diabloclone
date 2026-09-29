@@ -6,7 +6,7 @@
 //   'resurrect' 문구 (string.tbl 에 없어 영어 "Resurrect"), 대사 스크롤 대신 고정 상자 (Phase 11 에서 원작 글꼴)
 import type { InteractionSnapshot } from '../engine/game';
 import type { HireCandidate, NpcOption } from '../engine/npc';
-import { NPC_MENU_STRING } from '../engine/npc';
+import { npcMenuKey } from '../engine/npc';
 
 type Str = (k: string) => string;
 
@@ -34,7 +34,7 @@ export class NpcMenu {
   private box = { x: 0, y: 0, w: 0, h: 0 };
 
   label(str: Str, o: NpcOption): string {
-    const k = NPC_MENU_STRING[o];
+    const k = npcMenuKey(o);
     return (k ? str(k) : 'Resurrect').toUpperCase();
   }
 

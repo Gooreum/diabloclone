@@ -34,7 +34,8 @@ import { AutomapRenderer, type AutomapMode } from './render/automap';
 import { WaypointPanel } from './ui/waypanel';
 import { drawMonsterBar, MonsterNamer } from './ui/monbar';
 import { StorePanel } from './ui/storepanel';
-import { HirePanel, NpcMenu, pickGossip, TalkBox } from './ui/npcpanel';
+import { HirePanel, NpcMenu, pickGossip, stripSpeed, TalkBox } from './ui/npcpanel';
+import { QuestPanel } from './ui/questpanel';
 import { MercBar } from './ui/mercbar';
 
 const WIDTH = 800, HEIGHT = 600;
@@ -53,6 +54,8 @@ declare global {
         waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number; hoverMonster: () => { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null; camera: () => Camera;
         /** e2e: NPC 메뉴·상점·고용 목록·대사·용병 막대 */
         store: StorePanel; npcMenu: NpcMenu; hire: HirePanel; talk: TalkBox; mercBar: MercBar; inventory: InventoryPanel;
+        /** e2e: 퀘스트 로그 패널 (Q) */
+        quest: QuestPanel;
       };
     };
     __menuReady?: boolean;
@@ -140,7 +143,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const game = new Game({
     map: townMap, levels: world.levels.map((l) => l.def), player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
-    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints, merc: save?.merc ?? null, quests: save?.quests,
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints, merc: save?.merc ?? null, quests: save?.quests, ...(save?.questFlags ? { questFlags: save.questFlags } : {}),
   });
   // 웨이포인트 패널·자동 지도·신전 메시지
   const wpPanel = new WaypointPanel(assets, pal);
@@ -168,6 +171,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const talkBox = new TalkBox();
   const hirePanel = new HirePanel();
   const mercBar = new MercBar(assets, pal);
+  // 퀘스트 로그 (원작 questbackground.dc6 · a1q1~6.dc6 아이콘)
+  const questPanel = new QuestPanel(assets, pal);
   const str = (k: string) => tables.string(k);
   const npcName = (typeId: string) => tables.string(data.monsters.types.get(typeId)?.nameStr ?? typeId);
   let lastInter: ReturnType<Game['snapshot']>['interaction'] = null;
@@ -184,8 +189,25 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
   let identifyWith: number | null = null;
   input.intercept = (x, y, button, shift) => {
+    // 퀘스트 로그 패널 (원작: 열린 동안 아이콘 클릭 = 고르기, 닫기 단추)
+    const qp = questPanel.click(x, y);
+    if (qp === 'close') {
+      questPanel.open = false;
+      return true;
+    }
+    if (qp === 'panel') return true;
     // NPC 대화: 메뉴 → 고용 목록 → 상점 (원작: 대화 중 바깥 클릭 = 닫고 이동)
     const inter = game.snapshot().interaction;
+    if (inter?.mode === 'imbue') {
+      // Charsi 담금질: 인벤토리 아이템을 누르면 그 아이템을 맡긴다 (근사: 원작은 커서로 들어 Charsi 창에 놓는다)
+      const it = invPanel.itemAt(game.store, x, y) ?? (game.store.cursor && !invPanel.hit(x, y) ? game.store.cursor : null);
+      if (it && button === 0) {
+        game.enqueue({ type: 'imbue', itemId: it.id });
+        return true;
+      }
+      if (!invPanel.hit(x, y)) game.enqueue({ type: 'closeNpc' });
+      return true;
+    }
     if (inter?.mode === 'menu') {
       const o = npcMenu.click(x, y);
       if (o && o !== 'panel') game.enqueue({ type: 'npcMenu', option: o });
@@ -319,6 +341,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         wpPanel.open = false;
         return;
       }
+      if (e.key === 'Escape' && questPanel.open) {
+        questPanel.open = false;
+        return;
+      }
+      // 원작 단축키: Q 퀘스트 로그
+      if (e.key === 'q' || e.key === 'Q') {
+        questPanel.toggle(game.snapshot().quests);
+        return;
+      }
       if (e.key === 'Escape' && game.snapshot().interaction) {
         game.enqueue({ type: 'closeNpc' });
         return;
@@ -341,7 +372,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     async function saveAndExit(): Promise<void> {
       const st = game.store;
       await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment,
-        stashGold: game.stashGold, waypoints: game.waypoints.list(), merc: game.mercSave(), quests: [...game.quests], corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
+        stashGold: game.stashGold, waypoints: game.waypoints.list(), merc: game.mercSave(), questFlags: game.questRecord.toJSON(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
       }));
       running = false;
       input.dispose();
@@ -357,7 +388,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         game, ready: true, input, save: saveAndExit,
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
-          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel,
+          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel,
         },
       };
     }
@@ -385,6 +416,23 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             } else if (ev.type === 'npcClosed') {
               storePanel.hide();
               talkBox.hide();
+            } else if (ev.type === 'questSpeech') {
+              // 퀘스트 대사 (원작 스크롤 두루마리 — 근사: 대사 상자)
+              talkBox.show(npcName(String(ev.typeId)), stripSpeed(str(String(ev.key))), performance.now());
+            } else if (ev.type === 'questScroll') {
+              talkBox.show('', stripSpeed(str(String(ev.key))), performance.now());
+            } else if (ev.type === 'questMessage') {
+              // 출처: string.tbl qstsa1q14 "Monsters remaining: " + 수, qstsa1q140 "One monster left."
+              message = { text: ev.key === 'qstsa1q14' ? `${str('qstsa1q14')}${Number(ev.count)}` : str(String(ev.key)), until: performance.now() + 3000 };
+            } else if (ev.type === 'questCompleted') {
+              // 근사(원작 미확인): 원작은 완료 소리와 퀘스트 단추 깜빡임 — 여기서는 화면 메시지
+              message = { text: `${str(`qstsa1q${Number(ev.quest)}`)} — ${str('qstsComplete')}`, until: performance.now() + 4000 };
+            } else if (ev.type === 'imbueOpened') {
+              invPanel.open = true;
+              talkBox.hide();
+            } else if (ev.type === 'actChange') {
+              // TODO(Act 2 범위 밖): 클래식 Act 2 (Lut Gholein) 가 없다
+              message = { text: 'Lut Gholein (Act II) - not available', until: performance.now() + 4000 };
             }
           }
         }
@@ -469,6 +517,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 웨이포인트에서 멀어지면 패널을 닫는다 (원작 SUNIT_ResetInteractInfo)
       if (wpPanel.open && !game.waypointOpen) wpPanel.open = false;
       wpPanel.draw(ctx);
+      questPanel.draw(ctx, s.quests, str, now);
       if (message && now < message.until) {
         ctx.font = '16px serif';
         ctx.textAlign = 'center';

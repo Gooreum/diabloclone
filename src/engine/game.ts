@@ -42,6 +42,9 @@ import { mercExpGain, mercLevelFor, mercStats, resurrectCost, type HirelingDb, t
 import { NPC_DEFS, NpcServices, type HireCandidate, type NpcOption, type TradeHost } from './npc';
 import type { StoreItem } from './shop';
 import type { GambleTable } from './shop';
+import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from './quests/act1';
+import { QFLAG, QUEST, QuestRecord } from './quests/record';
+import { LEVEL } from './drlg/types';
 
 /**
  * 원작 플레이어 애니메이션 모드 토큰: NU 대기, WL 걷기, RN 달리기, TN/TW 마을, A1/A2 공격, SC 시전, TH 던지기,
@@ -117,8 +120,10 @@ export interface GameInit {
   waypoints?: number[];
   /** 저장된 용병 */
   merc?: MercSave | null;
-  /** 끝낸 퀘스트 상태 (NPC 기능 조건: 'a1q2' Blood Raven 보상, 'cain' Cain 구출 — Phase 10 Step 2 퀘스트가 채운다) */
+  /** 예전 저장의 퀘스트 이름 ('a1q2' Blood Raven 보상, 'cain' Cain 구출) — questFlags 가 없을 때만 쓴다 */
   quests?: string[];
+  /** 퀘스트 기록 워드 (원작 D2QuestRecord, 퀘스트마다 16비트) */
+  questFlags?: number[];
 }
 
 /** 레벨 출구: 플레이어가 영역(서브타일)에 들어가면 다른 레벨의 지정 위치로 이동 */
@@ -189,14 +194,16 @@ export interface MonsterSnapshot {
   uniqueTrans?: number;
   /** 시퀀스(SQ) 모드면 지금 그릴 모드·프레임 */
   anim?: { mode: string; frame: number };
-  /** 마을 NPC·장식 (공격 불가), 말을 걸 수 있음, 플레이어의 용병 */
-  npc?: boolean; interact?: boolean; merc?: boolean;
+  /** 마을 NPC·장식 (공격 불가), 말을 걸 수 있음, 플레이어의 용병, 퀘스트 이야기가 있음 (원작 QUESTS_ActiveCycler 느낌표) */
+  npc?: boolean; interact?: boolean; merc?: boolean; quest?: boolean;
 }
 /** NPC 와 대화 중 (메뉴·상점·도박·고용 목록) */
 export interface InteractionSnapshot {
   npcId: number; typeId: string;
-  mode: 'menu' | 'trade' | 'gamble' | 'hire';
+  mode: 'menu' | 'trade' | 'gamble' | 'hire' | 'imbue';
   options: NpcOption[];
+  /** 메뉴의 퀘스트 항목 (option 'quest:<퀘스트>:<문자열 번호>' → 퀘스트 번호) */
+  topics: { option: NpcOption; quest: number; key: string }[];
   /** 상점·도박 목록 (mode trade/gamble) */
   store: readonly StoreItem[];
   /** 이 NPC 가 수리함 (Charsi) */
@@ -228,6 +235,8 @@ export interface WorldSnapshot {
   inventory: ItemInstance[];
   interaction: InteractionSnapshot | null;
   merc: MercSnapshot | null;
+  /** 퀘스트 로그 (Act 1 여섯 개, 원작 퀘스트 패널 순서) */
+  quests: QuestLogEntry[];
 }
 
 type PlayerAction =
@@ -375,9 +384,13 @@ export class Game {
   /** NPC 유닛 굴림 (배치·AI). 근사(원작 미확인): 원작은 유닛마다 게임 시드에서 굴린 시드 — 게임 굴림 순서를 바꾸지 않게 따로 둔다 */
   private readonly npcRng: Rng;
   /** 대화 중인 NPC (원작 SUNIT_SetInteractInfo / MONSTERAI 상호작용 목록) */
-  private talk: { levelId: string; npcId: number; mode: InteractionSnapshot['mode'] } | null = null;
-  /** 끝낸 퀘스트 상태 ('a1q2' Blood Raven 보상 → Kashya 고용, 'cain' Cain 구출 → 마을에 Cain·무료 감정, 'q<번호>' npc.txt questflag) */
-  readonly quests: Set<string>;
+  private talk: { levelId: string; npcId: number; mode: InteractionSnapshot['mode']; speeches: QuestSpeech[] } | null = null;
+  /** 플레이어 퀘스트 기록 (원작 pPlayerData->pQuestData[난이도], 저장된다) */
+  readonly questRecord: QuestRecord;
+  /** 게임 전역 퀘스트 기록 (원작 pQuestControl->pQuestFlags, 게임마다 새로) */
+  readonly questGlobal = new QuestRecord();
+  /** Act 1 퀘스트 상태 기계 */
+  readonly quests: Act1Quests;
   /** 용병 기록 (죽어도 남는다 — 부활 대상). unitId = 살아 있는 유닛 */
   merc: (MercSave & { unitId: number | null }) | null = null;
   private mercInfo: MercStats | null = null;
@@ -429,12 +442,20 @@ export class Game {
     }
     this.npc = new NpcServices((init.seed ^ 0x4e5043) >>> 0);
     this.npcRng = new Rng((init.seed ^ 0x6e7063) >>> 0 || 1);
-    this.quests = new Set(init.quests ?? []);
+    // 출처: QUESTRECORD_CopyBufferToRecord(bResetStates) — 게임에 들어올 때
+    this.questRecord = QuestRecord.load(init.questFlags, true);
+    // 예전 저장(Phase 10 Step 1: 퀘스트 이름 목록) 호환. 근사: 'cain' = A1Q4 보상 받음으로 본다
+    if (!init.questFlags) for (const f of init.quests ?? []) this.legacyQuest(f);
+    // 원작 퀘스트 전역 시드 (QUESTS_QuestInit: SEED_InitLowSeed(ITEMS_RollRandomNumber(pGameSeed))). 근사: 게임 시드에서 고정 변환
+    this.questRng = new Rng((init.seed ^ 0x51e57) >>> 0 || 1);
+    this.quests = new Act1Quests(this.questHost());
     // 저장된 용병: 게임을 시작하면 플레이어 곁에 (죽은 용병은 기록만 — 부활 대상). 출처: D2GAME_MERCS_Create_6FCC8630
     if (init.merc) {
       this.merc = { ...init.merc, unitId: null };
       if (!init.merc.dead) this.spawnMerc(p.x + 1, p.y + 1);
     }
+    // 출처: QUESTS_SequenceCycler — 플레이어가 게임에 들어옴
+    this.quests.startGame();
   }
 
   get frame(): number {
@@ -479,6 +500,7 @@ export class Game {
     this.closeTalk();
     // 마을에 플레이어가 없으면 상인 재고를 비운다 (출처: SUNITPROXY_UpdateVendorInventory)
     if (this.level.def.inTown && !next.def.inTown) this.npc.leaveTown();
+    const oldNo = this.level.def.levelNo ?? 0;
     this.level = next;
     const p = this.player;
     p.x = x;
@@ -498,6 +520,8 @@ export class Game {
     }
     this.populate(next);
     this.events.push({ type: 'levelChanged', level: id });
+    // 출처: QUESTS_ChangeLevel
+    if (oldNo !== (next.def.levelNo ?? 0)) this.quests.changeLevel(oldNo, next.def.levelNo ?? 0);
   }
 
   /**
@@ -576,7 +600,7 @@ export class Game {
     // 출처: SUNIT_SpawnPresetUnitsInRoom (프리셋 오브젝트 → 프리셋 몬스터) 뒤 D2GAME_PopulateRoom (무리·보스)
     this.createLevelObjects(level);
     for (const p of level.def.presetMonsters ?? []) this.spawnPreset(p);
-    if (level.def.inTown && this.quests.has('cain')) this.spawnCain();
+    if (level.def.inTown && this.quests.cainInTown()) this.spawnCain();
     const leaders: number[] = [];
     level.def.spawns?.forEach((sp, i) => {
       if (sp.boss) {
@@ -656,6 +680,8 @@ export class Game {
     this.updatePets();
     this.updateMissiles();
     this.regen();
+    // 출처: QUESTS_QuestUpdater (퀘스트 타이머)
+    this.quests.update();
     this.tickCount++;
     return this.events;
   }
@@ -678,7 +704,7 @@ export class Game {
         return {
           id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
           hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
-          ...(m.npc ? { npc: true, interact: m.npc.interact } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
+          ...(m.npc ? { npc: true, interact: m.npc.interact, ...(m.npc.interact && this.quests.npcHasQuest(m.type.id) ? { quest: true } : {}) } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
           flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
           ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
         };
@@ -692,6 +718,7 @@ export class Game {
       inventory: [...this.inventory],
       interaction: this.interactionSnapshot(),
       merc: this.mercSnapshot(),
+      quests: this.quests.log(),
     };
   }
 
@@ -923,8 +950,8 @@ export class Game {
 
   /** 이번 게임에 이미 나온 슈퍼유니크 (원작 pGame->nBossFlagList) */
   private readonly bossFlags = new Set<number>();
-  /** 완료한 퀘스트 (TCQuestId — 퀘스트 드롭 한 번). 근사: Phase 10 퀘스트 기록 전까지 게임 안에서만 */
-  readonly questsDone = new Set<number>();
+  /** 퀘스트 전역 시드 (원작 QUESTS_GetGlobalSeed) */
+  private readonly questRng: Rng;
 
   /**
    * 슈퍼유니크. 출처: D2GAME_SpawnSuperUnique_6FC6F690 — AutoPos 면 방 안 무작위 지점, 한 게임에 한 번 (Stacks 0),
@@ -1209,6 +1236,10 @@ export class Game {
       }
       case 'closeNpc': {
         this.closeTalk();
+        return;
+      }
+      case 'imbue': {
+        this.imbue(cmd.itemId);
         return;
       }
       case 'waypoint': {
@@ -1538,6 +1569,8 @@ export class Game {
     this.ground.splice(this.ground.indexOf(g), 1);
     this.statsDirty = true;
     this.events.push({ type: 'itemPickup', itemId: g.item.id, code: g.item.code });
+    // 출처: QUESTS_ItemPickedUp (퀘스트 아이템의 연결 목록)
+    this.quests.itemPickedUp(g.item.code);
   }
 
   // ---------------------------------------------------------------- 아이템 사용
@@ -2810,6 +2843,7 @@ export class Game {
     if (!m.noXp && source !== 'other') this.mercGainExp(m, attackerId);
     this.onMonsterDeathMods(m);
     const data = this.data;
+    // 드롭 TC 는 퀘스트 콜백보다 먼저 정한다 (첫 처치 = 퀘스트 드롭)
     const tc = m.noTc ? '' : this.monsterTc(m, source);
     if (data && tc) {
       for (const item of data.treasure.drop(tc, m.stats.level, m.rng, this.derived()?.stat('item_magicbonus') ?? 0)) {
@@ -2817,12 +2851,20 @@ export class Game {
         this.events.push({ type: 'itemDropped', itemId: item.id, code: item.code, quality: item.quality, tc });
       }
     }
-    if (m.type.tcQuestId && m.type.treasure[3] && tc === m.type.treasure[3]) this.questsDone.add(m.type.tcQuestId);
+    // 출처: QUESTS_ParseKill — 몬스터의 퀘스트 연결 (플레이어·소환수·용병이 죽였으면 pPlayer)
+    if (!m.pet && !m.npc) {
+      const levelNo = this.levels.get(m.levelKey ?? '')?.def.levelNo ?? this.level.def.levelNo ?? 0;
+      const su = m.superUnique !== undefined ? this.data?.uniques?.superUnique(m.superUnique)?.key : undefined;
+      // 근사(원작 미확인): "같은 방이나 이웃 방" 대신 같은 레벨의 40 서브타일 안
+      const near = this.level.monsters.includes(m) && Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40;
+      this.quests.monsterKilled({ levelNo, typeId: m.type.id, ...(su ? { superUnique: su } : {}), x: m.x, y: m.y, byPlayer: source !== 'other', playerNear: near });
+    }
   }
 
   /**
    * 몬스터 드롭 TC. 출처: MonsterMode.cpp sub_6FC631B0 — 슈퍼유니크 = SuperUniques TC, 챔피언 = TreasureClass2, 유니크 = TreasureClass3,
-   * 그 밖 = TreasureClass1; TCQuestId 가 있고 플레이어가 그 퀘스트를 끝내지 않았으면 TreasureClass4 (Andariel → Andarielq).
+   * 그 밖 = TreasureClass1; TCQuestId 가 있고 죽인 플레이어의 퀘스트 기록에서 COMPLETEDBEFORE·REWARDPENDING·TCQuestCP 비트가 모두 꺼져 있으면
+   * TreasureClass4 (Andariel → Andarielq).
    * TC 레벨 업그레이드는 몬스터 레벨 (챔피언 +2, 유니크 +3) 로 TreasureDb.resolve 가 처리
    */
   monsterTc(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player'): string {
@@ -2831,7 +2873,8 @@ export class Game {
     if (m.superUnique !== undefined) tc = this.data?.uniques?.superUnique(m.superUnique)?.tc || t.treasure[2] || '';
     else if (m.flags & MONFLAG.CHAMPION) tc = t.treasure[1] ?? '';
     else if (m.flags & MONFLAG.UNIQUE) tc = t.treasure[2] ?? '';
-    if (t.tcQuestId && t.treasure[3] && source !== 'other' && !this.questsDone.has(t.tcQuestId)) tc = t.treasure[3];
+    const r = this.questRecord;
+    if (t.tcQuestId && t.treasure[3] && source !== 'other' && !r.get(t.tcQuestId, QFLAG.COMPLETEDBEFORE) && !r.get(t.tcQuestId, QFLAG.REWARDPENDING) && !r.get(t.tcQuestId, t.tcQuestCP)) tc = t.treasure[3];
     return tc;
   }
 
@@ -4145,11 +4188,30 @@ export class Game {
     this.level = prev;
   }
 
-  /** 퀘스트 상태 기록 (Phase 10 Step 2 퀘스트가 부른다). 'cain' 이면 마을에 Cain 을 세운다 */
+  /** 예전 퀘스트 이름 → 기록 비트. 'a1q2' = A1Q2 보상 받음, 'cain' = A1Q4 보상 받음 */
+  private legacyQuest(flag: string): void {
+    if (flag === 'a1q2') this.questRecord.set(QUEST.BLOODRAVEN, QFLAG.REWARDGRANTED);
+    else if (flag === 'cain') this.questRecord.set(QUEST.CAIN, QFLAG.REWARDGRANTED);
+  }
+
+  /** 디버그·테스트: 예전 퀘스트 이름으로 보상 받음 표시 ('cain' 이면 마을에 Cain 을 세운다) */
   setQuest(flag: string): void {
-    this.quests.add(flag);
+    this.legacyQuest(flag);
+    if (flag === 'cain') this.quests.forceCainInTown();
     const town = this.levels.get(this.townKey() ?? '');
     if (flag === 'cain' && town?.populated) this.spawnCain();
+  }
+
+  /**
+   * NPC 기능의 퀘스트 조건. 숫자 = npc.txt questflag (출처: ITEMS_CalculateTransactionCost — REWARDGRANTED 또는 REWARDPENDING),
+   * 'a1q2' = Kashya 고용 (출처: SUnitNpc.cpp — A1Q2 REWARDGRANTED), 'cain' = 무료 감정 (D2GAME_NPC_IdentifyAllItems — A1Q4 GRANTED 또는 PENDING)
+   */
+  questDone(f: number | string): boolean {
+    const r = this.questRecord;
+    if (typeof f === 'number') return r.get(f, QFLAG.REWARDGRANTED) || r.get(f, QFLAG.REWARDPENDING);
+    if (f === 'a1q2') return r.get(QUEST.BLOODRAVEN, QFLAG.REWARDGRANTED);
+    if (f === 'cain') return r.get(QUEST.CAIN, QFLAG.REWARDGRANTED) || r.get(QUEST.CAIN, QFLAG.REWARDPENDING);
+    return false;
   }
 
   /** 지금 레벨의 NPC (읽기 전용) */
@@ -4163,16 +4225,46 @@ export class Game {
     return t && t.levelId === this.level.def.id ? this.level.npcs.find((n) => n.id === t.npcId) : undefined;
   }
 
-  /** NPC 메뉴 (원작 메뉴 + 용병이 죽었으면 Kashya 에게 부활) */
+  /**
+   * NPC 메뉴 (원작 메뉴 + 용병이 죽었으면 Kashya 에게 부활) + 퀘스트 항목(talk 바로 뒤) + Charsi imbue (A1Q3 REWARDPENDING) + Warriv go east (A1Q6 REWARDGRANTED).
+   * 근사(원작 미확인): 퀘스트 항목·imbue·go east 의 메뉴 위치 (원작 D2Client 메뉴 조립)
+   */
   npcOptions(n: MonsterUnit): NpcOption[] {
     const def = NPC_DEFS[n.type.id];
     if (!def) return ['talk', 'cancel'];
     const out: NpcOption[] = [];
+    const t = this.talk;
+    const topics = t && t.npcId === n.id ? this.topicsOf(t.speeches) : [];
     for (const o of def.menu) {
+      if (o === 'cancel') {
+        if (n.type.id === 'charsi' && this.quests.canImbue()) out.push('imbue');
+        if (n.type.id === 'warriv1' && this.quests.canGoEast()) out.push('goEast');
+      }
       out.push(o);
+      if (o === 'talk') for (const tp of topics) out.push(tp.option);
       if (o === 'hire' && this.merc?.dead) out.push('resurrect');
     }
     return out;
+  }
+
+  /** 퀘스트 대사 → 메뉴 항목 (퀘스트마다 하나) */
+  private topicsOf(sp: readonly QuestSpeech[]): { option: NpcOption; quest: number; key: string }[] {
+    const out: { option: NpcOption; quest: number; key: string }[] = [];
+    for (const x of sp) if (!out.some((o) => o.quest === x.quest)) out.push({ option: `quest:${x.quest}:${x.index}`, quest: x.quest, key: x.key });
+    return out;
+  }
+
+  /** 퀘스트 대사 재생: 클라이언트가 두루마리를 띄우고 문자열 번호를 돌려보낸다 (QUESTS_NPCMessage → ScrollMessage) → 목록 다시 (QUESTS_NPCActivateSpeeches) */
+  private playSpeech(n: MonsterUnit, sp: QuestSpeech): void {
+    this.events.push({ type: 'questSpeech', npcId: n.id, typeId: n.type.id, quest: sp.quest, index: sp.index, key: sp.key });
+    this.quests.scrollMessage(n.type.id, sp.index);
+    const t = this.talk;
+    if (t && t.npcId === n.id) {
+      // 다시 만든 목록: 방금 재생한 대사는 메뉴 항목으로 남긴다 (원작 nMenu 0 → 2 로 다시 보냄 — 근사)
+      const next = this.quests.npcActivate(n.type.id);
+      if (!next.some((x) => x.quest === sp.quest)) next.push({ ...sp, menu: 2 });
+      t.speeches = next.map((x) => (x.index === sp.index ? { ...x, menu: 2 as const } : x));
+    }
   }
 
   /** 상점 기능이 쓰는 게임 접근 */
@@ -4200,7 +4292,7 @@ export class Game {
         return g.character?.level ?? 1;
       },
       difficulty: g.difficulty,
-      questDone: (f) => g.quests.has(typeof f === 'number' ? `q${f}` : f),
+      questDone: (f) => g.questDone(f),
       emit: (ev) => g.events.push(ev),
       itemsChanged: () => {
         g.statsDirty = true;
@@ -4235,9 +4327,13 @@ export class Game {
     n.path = [];
     if (n.mode !== 'NU') this.setMonMode(n, 'NU');
     n.dir = dir64(this.player.x - n.x, this.player.y - n.y);
-    this.talk = { levelId: this.level.def.id, npcId: n.id, mode: 'menu' };
+    // 출처: QUESTS_NPCActivate — 퀘스트마다 대사 목록 (nMenu 0 은 말을 걸자마자 재생)
+    const speeches = this.quests.npcActivate(n.type.id);
+    this.talk = { levelId: this.level.def.id, npcId: n.id, mode: 'menu', speeches };
     if (NPC_DEFS[n.type.id]?.heal) this.healAtNpc();
     this.events.push({ type: 'npcInteract', npcId: n.id, typeId: n.type.id });
+    const auto = speeches.find((x) => x.menu === 0);
+    if (auto) this.playSpeech(n, auto);
   }
 
   /** 대화 끝 (원작 D2GAME_NPC_ResetInteract) — 도박 목록은 버린다 (SUNITPROXY_FreeNpcGamble) */
@@ -4249,6 +4345,8 @@ export class Game {
     this.talk = null;
     this.npc.gamble = null;
     this.events.push({ type: 'npcClosed', npcId: t.npcId });
+    // 출처: QUESTS_NPCDeactivate
+    if (n) this.quests.npcDeactivate(n.type.id);
   }
 
   private npcMenu(option: NpcOption): void {
@@ -4256,7 +4354,23 @@ export class Game {
     if (!t || !n || !this.npcOptions(n).includes(option)) return;
     const h = this.tradeHost();
     const id = n.type.id;
+    if (option.startsWith('quest:')) {
+      const [, qn, idx] = option.split(':').map(Number);
+      const sp = t.speeches.find((x) => x.quest === qn && x.index === idx) ?? t.speeches.find((x) => x.quest === qn);
+      if (sp) this.playSpeech(n, sp);
+      return;
+    }
     switch (option) {
+      case 'imbue':
+        // 출처: NPC_HandleDialogMessage (CHARSI) — 담금질 창: 아이템을 커서로 들어 Charsi 에게
+        t.mode = 'imbue';
+        this.events.push({ type: 'imbueOpened', npcId: n.id });
+        return;
+      case 'goEast':
+        // 출처: NPC_HandleDialogMessage (WARRIV1) — A1Q6 REWARDGRANTED 면 D2GAME_PlayerChangeAct(LEVEL_LUTGHOLEIN)
+        // TODO(Act 2 범위 밖): 클래식 Act 2 (Lut Gholein) 는 만들지 않았다 — 이벤트만 보낸다
+        this.events.push({ type: 'actChange', to: 'lutgholein', available: false });
+        return;
       case 'talk': {
         const intro = !this.npc.introSeen.has(id);
         this.npc.introSeen.add(id);
@@ -4284,7 +4398,7 @@ export class Game {
         return;
       case 'identify':
         // 출처: D2GAME_NPC_IdentifyAllItems — A1Q4(Cain) 보상을 받았으면(받을 차례면) 무료
-        this.npc.identifyAll(h, this.quests.has('cain'));
+        this.npc.identifyAll(h, this.questDone('cain'));
         return;
       case 'cancel':
         this.closeTalk();
@@ -4305,7 +4419,7 @@ export class Game {
     const id = n.type.id;
     const store = t.mode === 'gamble' ? (this.npc.gamble ?? []) : t.mode === 'trade' ? (this.npc.stores.get(id) ?? []) : [];
     return {
-      npcId: n.id, typeId: id, mode: t.mode, options: this.npcOptions(n), store, repair: !!NPC_DEFS[id]?.repair,
+      npcId: n.id, typeId: id, mode: t.mode, options: this.npcOptions(n), topics: this.topicsOf(t.speeches), store, repair: !!NPC_DEFS[id]?.repair,
       hire: t.mode === 'hire' && this.data ? this.npc.candidates(h, id) : [],
     };
   }
@@ -4367,6 +4481,182 @@ export class Game {
     // 대화 상대와 멀어지면 닫는다 (원작 SUNIT_ResetInteractInfo)
     const n = this.talking();
     if (this.talk && (!n || Math.hypot(n.x - p.x, n.y - p.y) > 8)) this.closeTalk();
+  }
+
+  // ---------------------------------------------------------------- 퀘스트
+
+  /** 퀘스트 상태 기계가 게임에 요청하는 것 (QuestHost) */
+  private questHost(): QuestHost {
+    const g = this;
+    const findCode = (code: string): ItemInstance | undefined => {
+      // 출처: ITEMS_FindQuestItem — 플레이어 인벤토리 목록 (인벤토리·창고·커서)
+      const st = g.store;
+      if (st.cursor?.code === code) return st.cursor;
+      return [...st.inv.items, ...st.stash.items].map((p) => p.item).find((it) => it.code === code);
+    };
+    return {
+      get record() {
+        return g.questRecord;
+      },
+      get global() {
+        return g.questGlobal;
+      },
+      get seed() {
+        return g.questRng;
+      },
+      playerLevel: () => g.character?.level ?? 1,
+      levelNo: () => g.level.def.levelNo ?? 0,
+      hasItem: (code) => !!findCode(code),
+      deleteItem: (code) => {
+        const it = findCode(code);
+        if (!it) return false;
+        g.store.consume(it.id);
+        g.statsDirty = true;
+        g.events.push({ type: 'questItemRemoved', code });
+        return true;
+      },
+      giveItem: (code, ilvl, quality) => g.giveQuestItem(code, ilvl, quality),
+      dropAt: (code, x, y, quality) => g.dropQuestCode(code, x, y, quality),
+      dropChestTc: (o, quality) => {
+        const lv = [...g.levels.values()].find((l) => l.objects.includes(o));
+        const prev = g.level;
+        if (lv) g.level = lv;
+        g.dropChest(o, quality);
+        g.level = prev;
+      },
+      addSkillPoints: (n) => {
+        // 출처: STATLIST_AddUnitStat(pPlayer, STAT_SKILLPTS, 1, 0)
+        if (g.character) g.character.skillPoints += n;
+      },
+      assignMercenary: (npc) => {
+        const n = [...g.levels.values()].flatMap((l) => l.npcs).find((x) => x.type.id === npc);
+        const r = g.npc.assignFree(g.tradeHost(), npc, !!g.mercUnit());
+        if (r) g.hireMerc(r.entry.name, r.entry.seed, r.init.id, r.init.level, r.init.experience, n?.x ?? g.player.x, n?.y ?? g.player.y);
+      },
+      aliveMonsters: (levelNo) => {
+        const lv = [...g.levels.values()].find((l) => l.def.levelNo === levelNo);
+        return lv ? lv.monsters.filter((m) => m.mode !== 'DT' && m.mode !== 'DD' && !m.pet).length : 0;
+      },
+      setObjectMode: (o, mode, endAnim) => {
+        const lv = [...g.levels.values()].find((l) => l.objects.includes(o));
+        setObjectMode(o, mode, (lv ?? g.level).def.map, g.tickCount);
+        if (endAnim) g.scheduleEndAnim(o);
+      },
+      spawnCainTristram: (x, y) => {
+        const lv = [...g.levels.values()].find((l) => l.def.levelNo === LEVEL.TRISTRAM);
+        if (!lv) return false;
+        const prev = g.level;
+        g.level = lv;
+        const c = g.spawnNpc('cain1', x, y);
+        g.level = prev;
+        return !!c;
+      },
+      moveCainToTown: () => {
+        for (const l of g.levels.values()) {
+          const i = l.npcs.findIndex((n) => n.type.id === 'cain1');
+          if (i >= 0) {
+            if (g.talk?.npcId === (l.npcs[i] as MonsterUnit).id) g.talk = null;
+            l.npcs.splice(i, 1);
+          }
+        }
+        const town = g.levels.get(g.townKey() ?? '');
+        if (town?.populated) g.spawnCain();
+        g.events.push({ type: 'cainToTown' });
+      },
+      openPortal: (levelNo, x, y, toLevelNo) => g.openQuestPortal(levelNo, x, y, toLevelNo),
+      townPortalAtPlayer: () => {
+        // 출처: ACT1Q6_UnitIterate_CreatePortalToTown — 플레이어 자리에 마을 포털 (오브젝트 59, 주인 없음)
+        g.createPortalPair(g.player.x, g.player.y, false);
+      },
+      emit: (ev) => g.events.push(ev),
+    };
+  }
+
+  /**
+   * 퀘스트 보상 아이템. 출처: QUESTS_CreateItem — 아이템 레벨 = nLevel (0 이면 플레이어 레벨), 최대 내구, 인벤토리 → 자리가 없으면 발밑, 감정됨
+   */
+  private giveQuestItem(code: string, ilvl: number, quality: number): boolean {
+    const data = this.data, b = data?.items.base(code);
+    if (!data || !b) return false;
+    const lvl = ilvl || Math.max(this.character?.level ?? 1, 1);
+    const it = data.treasure.createItem(b, lvl, this.rng, quality as ItemInstance['quality'], quality > QUALITY.NORMAL);
+    if (it.maxDurability > 0) it.durability = it.maxDurability;
+    it.identified = true;
+    if (!this.store.inv.autoAdd(it)) this.dropItem(it, this.player.x, this.player.y);
+    this.statsDirty = true;
+    this.events.push({ type: 'questItemGiven', code, itemId: it.id, quality: it.quality });
+    return true;
+  }
+
+  /** 오브젝트·몬스터 자리에 아이템 (D2GAME_DropItemAtUnit: 아이템 레벨 = 레벨 몬스터 레벨, 골드 수량은 그 레벨로) */
+  private dropQuestCode(code: string, x: number, y: number, quality: number = QUALITY.NORMAL): boolean {
+    const data = this.data, b = data?.items.base(code);
+    if (!data || !b) return false;
+    const lvl = data.objects?.levels.get(this.level.def.levelNo ?? 0)?.monLvl || this.character?.level || 1;
+    const it = data.treasure.createItem(b, lvl, this.rng, quality as ItemInstance['quality'], quality > QUALITY.NORMAL);
+    it.quantity = Math.max(1, it.quantity);
+    this.dropItem(it, x, y);
+    this.events.push({ type: 'itemDropped', itemId: it.id, code: it.code, quality: it.quality, source: 'quest' });
+    return true;
+  }
+
+  /**
+   * 붉은 영구 포털 한 쌍 (오브젝트 60 PermanentTownPortal). 출처: D2GAME_CreatePortalObject(…, OBJECT_PERMANENT_TOWN_PORTAL, bPerm=1) —
+   *   반대쪽은 도착 레벨의 포털 자리 (levels.txt Position → 타일 정보 11). 근사(원작 미확인): 도착 레벨에 포털 자리가 없으면 레벨 한가운데 근처
+   */
+  private openQuestPortal(levelNo: number, x: number, y: number, toLevelNo: number): boolean {
+    const from = [...this.levels.values()].find((l) => l.def.levelNo === levelNo);
+    const to = [...this.levels.values()].find((l) => l.def.levelNo === toLevelNo);
+    if (!from || !to) return false;
+    if (from.objects.some((o) => o.portal?.toLevel === to.def.id && o.type.id === OBJ.PERMANENT_TOWN_PORTAL)) return true;
+    const a = this.freeSpot(from.def.map, x, y, 1, 12);
+    if (!a) return false;
+    const field = this.createObject(from, { classId: OBJ.PERMANENT_TOWN_PORTAL, x: a.x, y: a.y, mode: OBJMODE.OPERATING, preOperateLock: true });
+    if (!field) return false;
+    field.endAnimAt = this.tickCount + animFrames(field.type, OBJMODE.OPERATING) + 1;
+    this.populate(to);
+    const spot = to.def.portalSpot ?? nearestWalkable(to.def.map, { x: to.def.map.width / 2, y: to.def.map.height / 2 }, 40) ?? { x: to.def.map.width / 2, y: to.def.map.height / 2 };
+    const b = this.freeSpot(to.def.map, spot.x, spot.y, 1, 20) ?? { x: Math.floor(spot.x), y: Math.floor(spot.y) };
+    const link = this.createObject(to, { classId: OBJ.PERMANENT_TOWN_PORTAL, x: b.x, y: b.y, mode: OBJMODE.OPENED, preOperateLock: true });
+    if (!link) return false;
+    field.portal = { toLevel: to.def.id, linkId: link.id, linkLevel: to.def.id, owner: false };
+    link.portal = { toLevel: from.def.id, linkId: field.id, linkLevel: from.def.id, owner: false };
+    this.events.push({ type: 'portalOpened', fieldLevel: from.def.id, fieldId: field.id, townId: link.id, to: to.def.id, quest: true });
+    return true;
+  }
+
+  /**
+   * Charsi 담금질 (A1Q3 보상). 출처: SUnitNpc.cpp NPC_HandleDialogMessage (CHARSI) —
+   *   A1Q3 REWARDPENDING 이어야 함, ITEMS_IsImbueable, 같은 기본 아이템을 레어로 (아이템 레벨 = 플레이어 레벨, 5 초과면 +4),
+   *   D2GAME_NPC_RepairItem (내구 최대), 인벤토리 (자리가 없으면 발밑), ACT1Q3_SetRewardGranted
+   */
+  imbue(itemId: number): boolean {
+    const t = this.talk, n = this.talking(), data = this.data, c = this.character;
+    if (!t || !n || n.type.id !== 'charsi' || !data || !c) return false;
+    if (!this.quests.canImbue()) {
+      this.events.push({ type: 'imbueFailed', reason: 'quest' });
+      return false;
+    }
+    const found = this.store.find(itemId);
+    if (!found || !(found.where.kind === 'cursor' || found.where.kind === 'inventory')) return false;
+    const it = found.item, b = data.items.base(it.code);
+    if (!b || !imbueable(data.items, it)) {
+      this.events.push({ type: 'imbueFailed', reason: 'item', itemId });
+      return false;
+    }
+    this.store.consume(it.id);
+    let ilvl = Math.max(c.level, 1);
+    if (ilvl > 5) ilvl += 4;
+    const out = data.treasure.createItem(b, ilvl, this.rng, QUALITY.RARE, true);
+    if (out.maxDurability > 0) out.durability = out.maxDurability;
+    // 근사(원작 미확인): 원작 sub_6FC4BBB0 (감정 여부) — 담금질한 아이템은 감정된 채로 준다
+    out.identified = true;
+    if (!this.store.inv.autoAdd(out)) this.dropItem(out, this.player.x, this.player.y);
+    this.statsDirty = true;
+    this.quests.imbueDone();
+    t.mode = 'menu';
+    this.events.push({ type: 'imbued', itemId: out.id, code: out.code, quality: out.quality, ilvl });
+    return true;
   }
 
   // ---------------------------------------------------------------- 용병
@@ -4990,6 +5280,13 @@ export class Game {
     initObject(o, s, { db, levelNo: level.def.levelNo ?? 0, inTown: level.def.inTown, control: this.objControl });
     updateObjectCollision(o, level.def.map);
     level.objects.push(o);
+    // 퀘스트 오브젝트 InitFn (4 TowerTome, 6 CairnStone, 7 CainGibbet, 9 InifussTree, 13 InvisibleObject, 15 MalusStand, 47 CountessChest)
+    if ([4, 6, 7, 9, 13, 15, 47].includes(t.initFn)) {
+      const prev = this.level;
+      this.level = level;
+      this.quests.initObject(o);
+      this.level = prev;
+    }
     return o;
   }
 
@@ -5053,6 +5350,8 @@ export class Game {
   operateObject(o: ObjectUnit): void {
     if (this.isDead) return;
     const fn = o.type.operateFn;
+    // 퀘스트 오브젝트 (6 TowerTome, 9 Monolith, 10 CainGibbet, 12 InifussTree, 21 Malus, 33 WirtsBody)
+    if (this.quests.operate(o)) return;
     switch (fn) {
       case 1: return this.opCasket(o);
       case 2: return this.opShrine(o);
@@ -5730,6 +6029,20 @@ function firstSegments(path: Pt[], steps: number): Pt[] {
     pdy = dy;
   }
   return path;
+}
+
+/**
+ * 담금질할 수 있는 아이템. 출처: D2Common Items.cpp ITEMS_IsImbueable — 골드 아님, bitfield1 & 1, (클래식) 던지는 무기 아님,
+ *   퀘스트 아이템 아님 (Wirt 의 다리 'leg' 는 가능), 소켓 없음.
+ * 근사(원작 미확인): D2MOO 디컴파일의 품질 조건(4~9)은 원작 동작(흰 아이템만 담금질)과 반대로 보여 — 하급·보통·상급(1~3)만 허용
+ */
+export function imbueable(items: ItemDb, it: ItemInstance): boolean {
+  const b = items.base(it.code);
+  if (!b || b.code === 'gld' || !(b.bitfield1 & 1)) return false;
+  if ([...items.typeChain(b.type)].some((t) => items.types.get(t)?.throwable)) return false;
+  if (b.quest && b.code !== 'leg') return false;
+  if (it.sockets > 0 || it.socketed.length) return false;
+  return it.quality <= QUALITY.SUPERIOR;
 }
 
 export { aiDistance };

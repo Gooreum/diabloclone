@@ -18,13 +18,13 @@ test('수직 슬라이스: 생성 → 캠프 → Blood Moor → 처치 → 줍�
     () => {
       const g = window.__game!.game;
       const s = g.snapshot();
-      if (s.player.life < s.player.maxLife * 0.4) g.character!.life = g.character!.maxLife; // 테스트 진행용 회복
+      g.character!.life = g.character!.maxLife; // 테스트 진행용 회복 (챔피언·유니크 무리에 죽지 않게)
       const alive = s.monsters.filter((m) => m.mode !== 'DT' && m.mode !== 'DD');
       alive.sort((a, b) => Math.hypot(a.x - s.player.x, a.y - s.player.y) - Math.hypot(b.x - s.player.x, b.y - s.player.y));
       const t = alive[0];
       if (t && s.player.mode !== 'A1') {
-        if (Math.hypot(t.x - s.player.x, t.y - s.player.y) > 12) {
-          // 원작 DRLG 지형(나무·강)이 있으므로 대상 옆의 걷기 가능한 칸으로 순간이동
+        if (Math.hypot(t.x - s.player.x, t.y - s.player.y) > 3) {
+          // 원작 DRLG 지형(나무·강)에 막혀 다가가지 못할 수 있으므로 대상 옆의 걷기 가능한 칸으로 순간이동
           const m = g.map;
           let p = { x: t.x, y: t.y };
           for (let r = 2; r <= 5 && p.x === t.x; r++) for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]] as const) if (m.walkable(Math.floor(t.x + dx), Math.floor(t.y + dy))) { p = { x: t.x + dx, y: t.y + dy }; break; }

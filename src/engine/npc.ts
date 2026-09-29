@@ -15,7 +15,9 @@ import { gambleCost, isBroken, isRepairable, needsRepair, transactionCost, type 
 import { buildHireList, hirelingInit, type HirelingInit, type MercEntry } from './hireling';
 
 /** NPC 메뉴 항목 */
-export type NpcOption = 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel';
+export type NpcOption = 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' | 'imbue' | 'goEast' | QuestTopic;
+/** 메뉴의 퀘스트 항목: quest:<퀘스트 번호>:<원작 문자열 번호> (원작 QUESTS_InitScrollTextChain nMenu 2 대사) */
+export type QuestTopic = `quest:${number}:${number}`;
 
 export interface NpcDef {
   /** 원작 메뉴 (위에서 아래) */
@@ -48,12 +50,24 @@ export const NPC_DEFS: Record<string, NpcDef> = {
   warriv1: { menu: ['talk', 'cancel'], act: 0, gossip: 'Warriv' },
   cain5: { menu: ['talk', 'identify', 'cancel'], act: 0, identify: true, gossip: 'Cain' },
   navi: { menu: ['talk', 'cancel'], act: 0, gossip: 'Navi' },
+  // 트리스트럼 감옥에서 구한 Cain (MONSTER_CAIN1): 말만 건다
+  cain1: { menu: ['talk', 'cancel'], act: 0, gossip: 'Cain' },
 };
 
-/** 메뉴 문자열 키 (string.tbl). 부활은 원작 표에 없음 → '' (UI 가 근사 문구) */
-export const NPC_MENU_STRING: Record<NpcOption, string> = {
+/**
+ * 메뉴 문자열 키 (string.tbl). 부활은 원작 표에 없음 → '' (UI 가 근사 문구).
+ * imbue = Upgrade "imbue" (Charsi), goEast = WarrivMenu1b "go east", 퀘스트 항목은 퀘스트 이름 qstsa1q<번호>
+ */
+export const NPC_MENU_STRING: Record<Exclude<NpcOption, QuestTopic>, string> = {
   talk: 'TalkMenu', trade: 'NPCMenuTrade', tradeRepair: 'NPCMenuTradeRepair', gamble: 'gamble', hire: 'NPCMenuHire', resurrect: '', identify: 'NPCIdentify1', cancel: 'lowercasecancel',
+  imbue: 'Upgrade', goEast: 'WarrivMenu1b',
 };
+
+/** 메뉴 항목의 string.tbl 키 */
+export function npcMenuKey(o: NpcOption): string {
+  if (o.startsWith('quest:')) return `qstsa1q${o.split(':')[1]}`;
+  return NPC_MENU_STRING[o as Exclude<NpcOption, QuestTopic>] ?? '';
+}
 
 /** 보통 난이도 상점 아이템 레벨 상한 (액트별). 출처: FillStoreInventory / sub_6FCC7FA0 npcLevels */
 export const NPC_LEVEL_CAP = [12, 20, 28, 36, 45];
@@ -438,6 +452,23 @@ export class NpcServices {
       h.emit({ type: 'hireFailed', reason: 'gold', cost: init.gold });
       return null;
     }
+    entry.hired = true;
+    if (!list.some((e) => e.available && !e.hired)) this.hireLists.delete(npc);
+    return { entry, init };
+  }
+
+  /**
+   * A1Q2 보상: 목록의 첫 번째 고용 가능 용병을 공짜로. 출처: D2GAME_NPC_AssignMercenary_6FCCB520 —
+   *   클래식은 이미 용병이 있으면 주지 않는다 (sub_6FC7E8B0(…, 7, 0)), 목록이 다 고용되면 새 목록 (FirstFn)
+   */
+  assignFree(h: TradeHost, npc: string, hasMerc: boolean): { entry: MercEntry; init: HirelingInit } | null {
+    const db = h.data.hirelings;
+    if (hasMerc || !db) return null;
+    const list = this.hireList(h, npc);
+    const entry = list.find((e) => !e.hired && e.available);
+    if (!entry) return null;
+    const init = hirelingInit(db, entry.seed, h.playerLevel, NPC_DEFS[npc]?.act ?? 0, h.difficulty);
+    if (!init) return null;
     entry.hired = true;
     if (!list.some((e) => e.available && !e.hired)) this.hireLists.delete(npc);
     return { entry, init };

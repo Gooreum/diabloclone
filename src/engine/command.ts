@@ -28,4 +28,16 @@ export type Command =
   | { type: 'setSkill'; hand: 'left' | 'right'; skill: number }
   /** 자기 시체 줍기 (걸어가서 장비를 되찾음) */
   | { type: 'takeCorpse' }
+  /** NPC 메뉴 고르기 (talk/trade/tradeRepair/gamble/hire/resurrect/identify/cancel) */
+  | { type: 'npcMenu'; option: 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' }
+  /** 상점·도박 아이템 사기 (multi = Shift+우클릭 멀티바이, toInventory = 우클릭: 벨트 대신 인벤토리) */
+  | { type: 'buy'; itemId: number; multi?: boolean; toInventory?: boolean }
+  /** 아이템 팔기 (인벤토리·벨트·커서) */
+  | { type: 'sell'; itemId: number }
+  /** 수리 (itemId 없으면 모두 수리) */
+  | { type: 'repair'; itemId?: number }
+  /** 고용 목록에서 용병 고르기 (목록 칸 번호) */
+  | { type: 'hire'; index: number }
+  /** NPC 대화·상점 닫기 */
+  | { type: 'closeNpc' }
   | { type: 'saveAndExit' };

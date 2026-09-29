@@ -33,6 +33,9 @@ import { waypointLevels } from './engine/waypoints';
 import { AutomapRenderer, type AutomapMode } from './render/automap';
 import { WaypointPanel } from './ui/waypanel';
 import { drawMonsterBar, MonsterNamer } from './ui/monbar';
+import { StorePanel } from './ui/storepanel';
+import { HirePanel, NpcMenu, pickGossip, TalkBox } from './ui/npcpanel';
+import { MercBar } from './ui/mercbar';
 
 const WIDTH = 800, HEIGHT = 600;
 const PALETTE = 'data\\global\\palette\\ACT1\\pal.dat';
@@ -46,7 +49,11 @@ declare global {
     __game?: {
       game: Game; ready: boolean; input?: InputController; save?: () => Promise<void>;
       /** e2e: 웨이포인트 패널·자동 지도 상태 */
-      ui?: { waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number; hoverMonster: () => { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null; camera: () => Camera };
+      ui?: {
+        waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number; hoverMonster: () => { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null; camera: () => Camera;
+        /** e2e: NPC 메뉴·상점·고용 목록·대사·용병 막대 */
+        store: StorePanel; npcMenu: NpcMenu; hire: HirePanel; talk: TalkBox; mercBar: MercBar; inventory: InventoryPanel;
+      };
     };
     __menuReady?: boolean;
   }
@@ -133,7 +140,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const game = new Game({
     map: townMap, levels: world.levels.map((l) => l.def), player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
-    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints,
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypoints, merc: save?.merc ?? null, quests: save?.quests,
   });
   // 웨이포인트 패널·자동 지도·신전 메시지
   const wpPanel = new WaypointPanel(assets, pal);
@@ -155,13 +162,70 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
   const icons = new ItemIcons(assets, pal, data.items);
   const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText);
+  // NPC: 메뉴·대사·상점(원작 buysell.dc6)·고용 목록, 왼쪽 위 용병 초상 (원작 rogueicon.dc6)
+  const storePanel = new StorePanel(assets, pal, icons);
+  const npcMenu = new NpcMenu();
+  const talkBox = new TalkBox();
+  const hirePanel = new HirePanel();
+  const mercBar = new MercBar(assets, pal);
+  const str = (k: string) => tables.string(k);
+  const npcName = (typeId: string) => tables.string(data.monsters.types.get(typeId)?.nameStr ?? typeId);
+  let lastInter: ReturnType<Game['snapshot']>['interaction'] = null;
+  invPanel.priceLine = (it) => {
+    const inter = lastInter;
+    if (inter?.mode !== 'trade') return null;
+    if (storePanel.mode === 'repair') return inter.repair ? { text: `${str('Repair')}${game.priceOf(it, 'repair')}`, color: '#ffffff' } : null;
+    return { text: `${str('Sell')}${game.priceOf(it, 'sell')}`, color: '#ffffff' };
+  };
 
   const cam: Camera = { x: world.start.x, y: world.start.y, width: WIDTH, height: HEIGHT };
   const ch = game.character!;
   const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
   let identifyWith: number | null = null;
-  input.intercept = (x, y, button) => {
+  input.intercept = (x, y, button, shift) => {
+    // NPC 대화: 메뉴 → 고용 목록 → 상점 (원작: 대화 중 바깥 클릭 = 닫고 이동)
+    const inter = game.snapshot().interaction;
+    if (inter?.mode === 'menu') {
+      const o = npcMenu.click(x, y);
+      if (o && o !== 'panel') game.enqueue({ type: 'npcMenu', option: o });
+      if (o) return true;
+    }
+    if (inter?.mode === 'hire') {
+      const r = hirePanel.click(x, y);
+      if (typeof r === 'number') game.enqueue({ type: 'hire', index: r });
+      if (r !== null) return true;
+      game.enqueue({ type: 'closeNpc' });
+      return true;
+    }
+    if (inter && (inter.mode === 'trade' || inter.mode === 'gamble')) {
+      const cur = game.store.cursor;
+      const c = storePanel.click(x, y, !!cur);
+      if (c) {
+        if (c.kind === 'buy' && (storePanel.mode === 'buy' || button === 2)) {
+          // 원작: 왼쪽 = 사기(자동 벨트 물약은 벨트), 오른쪽 = 인벤토리로, Shift+오른쪽 = 멀티바이 (벨트·책 채우기)
+          game.enqueue({ type: 'buy', itemId: c.itemId, ...(button === 2 ? (shift ? { multi: true } : { toInventory: true }) : {}) });
+        } else if (c.kind === 'tab') storePanel.page = c.page;
+        else if (c.kind === 'mode') storePanel.mode = c.mode;
+        else if (c.kind === 'repairAll') game.enqueue({ type: 'repair' });
+        else if (c.kind === 'drop' && cur) game.enqueue({ type: 'sell', itemId: cur.id });
+        return true;
+      }
+      // 판매·수리 모드: 인벤토리 아이템 클릭
+      const it = invPanel.itemAt(game.store, x, y);
+      if (it && !cur && storePanel.mode === 'sell' && button === 0) {
+        game.enqueue({ type: 'sell', itemId: it.id });
+        return true;
+      }
+      if (it && !cur && storePanel.mode === 'repair' && button === 0) {
+        game.enqueue({ type: 'repair', itemId: it.id });
+        return true;
+      }
+      if (!invPanel.hit(x, y)) {
+        game.enqueue({ type: 'closeNpc' });
+        return true;
+      }
+    }
     // 웨이포인트 패널 (원작: 열린 동안 줄 클릭 = 이동, 패널 밖 클릭 = 닫고 이동)
     const wp = wpPanel.click(x, y);
     if (wp === 'close') {
@@ -255,6 +319,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         wpPanel.open = false;
         return;
       }
+      if (e.key === 'Escape' && game.snapshot().interaction) {
+        game.enqueue({ type: 'closeNpc' });
+        return;
+      }
       if (e.key === 'Escape') {
         if (game.isDead) {
           const p = nearestWalkable(townMap, world.start, 10) ?? world.start;
@@ -273,7 +341,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     async function saveAndExit(): Promise<void> {
       const st = game.store;
       await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment,
-        stashGold: game.stashGold, waypoints: game.waypoints.list(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
+        stashGold: game.stashGold, waypoints: game.waypoints.list(), merc: game.mercSave(), quests: [...game.quests], corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
       }));
       running = false;
       input.dispose();
@@ -284,7 +352,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       resolve();
     }
     window.addEventListener('keydown', onKey);
-    if (import.meta.env.DEV) window.__game = { game, ready: true, input, save: saveAndExit, ui: { waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam } };
+    if (import.meta.env.DEV) {
+      window.__game = {
+        game, ready: true, input, save: saveAndExit,
+        ui: {
+          waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
+          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel,
+        },
+      };
+    }
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
@@ -301,6 +377,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             else if (ev.type === 'levelChanged') wpPanel.open = false;
             else if (ev.type === 'shrine') message = { text: tables.string(String(ev.message)), until: performance.now() + 4000 };
             else if (ev.type === 'locked') message = { text: 'Locked', until: performance.now() + 1500 };
+            else if (ev.type === 'npcTalk') {
+              talkBox.show(npcName(String(ev.typeId)), pickGossip(str, String(ev.gossip), cls, !!ev.intro, Number(ev.pick)), performance.now());
+            } else if (ev.type === 'storeOpened') {
+              invPanel.open = true;
+              talkBox.hide();
+            } else if (ev.type === 'npcClosed') {
+              storePanel.hide();
+              talkBox.hide();
+            }
           }
         }
         acc -= step;
@@ -344,14 +429,35 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       hoverMonster = null;
       if (input.mouse) {
         const mx = input.mouse.x, my = input.mouse.y;
-        const pick = [...input.pickBoxes].reverse().find((b) => b.kind === 'monster' && mx >= b.x && my >= b.y && mx < b.x + b.w && my < b.y + b.h);
+        const pick = [...input.pickBoxes].reverse().find((b) => (b.kind === 'monster' || b.kind === 'npc') && mx >= b.x && my >= b.y && mx < b.x + b.w && my < b.y + b.h);
         const hm = pick ? s.monsters.find((x) => x.id === pick.id && x.mode !== 'DT' && x.mode !== 'DD') : undefined;
-        if (hm) {
+        if (hm?.npc) {
+          // 원작: NPC 위에 마우스를 올리면 이름만 (생명 막대 없음)
+          ctx.save();
+          ctx.font = '15px serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          const nm = npcName(hm.typeId), tw = ctx.measureText(nm).width + 24;
+          ctx.fillRect(WIDTH / 2 - tw / 2, 8, tw, 22);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(nm, WIDTH / 2, 23);
+          ctx.restore();
+        } else if (hm) {
           const label = namer.label(hm);
           hoverMonster = { id: hm.id, name: label.name, box: drawMonsterBar(ctx, hm, label) };
         }
       }
       const reqCtx = { level: ch.level, str: game.effStat('str'), dex: game.effStat('dex'), cls: ch.cls };
+      // NPC 대화 상태 → 패널
+      const inter = s.interaction;
+      lastInter = inter;
+      if (inter && (inter.mode === 'trade' || inter.mode === 'gamble')) storePanel.show(inter.store, inter.mode === 'gamble', inter.repair);
+      else storePanel.hide();
+      storePanel.draw(ctx, s.player.gold, str, input.mouse, (it) => itemText.lines(it, reqCtx), (it) => game.priceOf(it, 'buy'));
+      if (inter?.mode === 'menu') npcMenu.draw(ctx, inter, npcName(inter.typeId), str, input.mouse);
+      if (inter?.mode === 'hire') hirePanel.draw(ctx, inter.hire, s.player.gold, str, input.mouse);
+      talkBox.draw(ctx, now);
+      mercBar.draw(ctx, s.merc, s.merc ? str(s.merc.name) : '');
       invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx);
       invPanel.drawCursor(ctx, game.store, input.mouse);
       // 감정 커서 (근사: 원작 커서 그림 대신 글자)

@@ -5,7 +5,8 @@ import type { Command } from '../engine/command';
 
 /** body = 플레이어 자신의 시체 */
 /** object = 상자·문·신전·웨이포인트·포털 등 */
-export type Hover = { kind: 'monster' | 'item' | 'corpse' | 'body' | 'object'; id: number } | null;
+/** npc = 말을 걸 수 있는 마을 NPC */
+export type Hover = { kind: 'monster' | 'item' | 'corpse' | 'body' | 'object' | 'npc'; id: number } | null;
 
 export interface PointerInput {
   worldX: number; worldY: number; shift: boolean; hover: Hover; run: boolean;
@@ -20,6 +21,8 @@ export function mapLeftClick(p: PointerInput): Command | null {
   if (p.hover?.kind === 'body') return { type: 'takeCorpse' };
   // 원작: 오브젝트를 클릭하면 걸어가서 조작 (상자 열기, 문 여닫기, 신전·우물·웨이포인트·포털)
   if (p.hover?.kind === 'object') return { type: 'interact', unitId: p.hover.id };
+  // 원작: NPC 를 클릭하면 걸어가서 말을 건다 (메뉴)
+  if (p.hover?.kind === 'npc') return { type: 'interact', unitId: p.hover.id };
   // Shift + 바닥: 왼쪽 스킬을 그 지점에 (Attack 이면 아무 일 없음)
   if (p.shift) return p.leftSkill ? { type: 'useSkill', skill: p.leftSkill, hand: 'left', x: p.worldX, y: p.worldY } : null;
   return { type: 'move', x: p.worldX, y: p.worldY, run: p.run };

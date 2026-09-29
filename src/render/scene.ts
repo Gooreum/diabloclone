@@ -108,6 +108,11 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (ctx, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y);
+        // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
+        if (m.npc) {
+          if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
+          return;
+        }
         // 소환수(ally)는 공격 대상이 아니다
         if (m.ally) return;
         if (m.mode !== 'DT' && m.mode !== 'DD') picks.push({ kind: 'monster', id: m.id, x: p.x - 20, y: p.y - 70, w: 40, h: 75 });

@@ -120,6 +120,9 @@ export class InventoryPanel {
     return null;
   }
 
+  /** 툴팁 아래에 붙일 줄 (상점: 팔 값·수리비) */
+  priceLine: ((it: ItemInstance) => TextLine | null) | null = null;
+
   draw(ctx: CanvasRenderingContext2D, store: ItemStore, gold: number, goldMax: number, mouse: { x: number; y: number } | null, reqCtx: { level: number; str: number; dex: number; cls: string }): void {
     if (!this.open) return;
     const L = this.layout, g = L.grid;
@@ -155,7 +158,10 @@ export class InventoryPanel {
     // 툴팁
     if (mouse && !store.cursor) {
       const it = this.itemAt(store, mouse.x, mouse.y);
-      if (it) drawTooltip(ctx, this.text.lines(it, reqCtx), mouse.x, mouse.y);
+      if (it) {
+        const extra = this.priceLine?.(it);
+        drawTooltip(ctx, extra ? [...this.text.lines(it, reqCtx), extra] : this.text.lines(it, reqCtx), mouse.x, mouse.y);
+      }
     }
   }
 

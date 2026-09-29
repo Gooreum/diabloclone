@@ -69,6 +69,8 @@ export interface ItemBase {
   /** 상인별 판매 수량 (weapons/armor/misc.txt <상인>Min/Max/MagicMin/MagicMax/MagicLvl), 상시 판매 (PermStoreItem) */
   vendors: Record<string, VendorStock>;
   permStore: boolean;
+  /** 한 번에 여러 개 사기 (misc.txt multibuy — Shift+우클릭) · 사면 벨트에 자동으로 (misc.txt autobelt) */
+  multibuy: boolean; autoBelt: boolean;
   /** bitfield1 & 1 이면 상점에서 매직으로도 판매 (출처: D2MOO ITEMS_CheckBitField1Flag1) */
   bitfield1: number;
   /** 악몽/지옥 상점 업그레이드 코드 (NightmareUpgrade / HellUpgrade, 'xxx' = 없음) */
@@ -150,7 +152,7 @@ export class ItemDb {
           wclass: r.wclass ?? '', twoHandedWclass: r['2handedwclass'] ?? '', hitClass: r['hit class'] ?? '',
           stackable: n(r.stackable) === 1, minStack: n(r.minstack), maxStack: n(r.maxstack), spawnStack: n(r.spawnstack),
           quest: n(r.quest) > 0, unique: n(r.unique) === 1,
-          vendors: vendorStock(r), permStore: n(r.PermStoreItem) === 1, bitfield1: n(r.bitfield1),
+          vendors: vendorStock(r), permStore: n(r.PermStoreItem) === 1, multibuy: n(r.multibuy) === 1, autoBelt: n(r.autobelt) === 1, bitfield1: n(r.bitfield1),
           nightmareUpgrade: r.NightmareUpgrade ?? 'xxx', hellUpgrade: r.HellUpgrade ?? 'xxx', gambleCost: n(r['gamble cost']),
         });
       }

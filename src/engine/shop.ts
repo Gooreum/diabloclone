@@ -23,9 +23,17 @@ const NORMAL_ILVL_CAP = [12, 20, 28, 36, 45];
 /** 상점 한 페이지 격자에 첫 빈자리로 배치. 근사(원작 미확인): D2GAME_PlaceItem 의 탐색 순서는 위→아래, 왼→오른쪽으로 가정 */
 class StoreGrid {
   private readonly used = new Map<number, boolean[]>();
-  place(page: number, w: number, h: number): { x: number; y: number } | null {
+  private cells(page: number): boolean[] {
     let cells = this.used.get(page);
     if (!cells) this.used.set(page, (cells = new Array<boolean>(STORE_GRID_W * STORE_GRID_H).fill(false)));
+    return cells;
+  }
+  mark(page: number, x: number, y: number, w: number, h: number): void {
+    const cells = this.cells(page);
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) if (x + dx < STORE_GRID_W && y + dy < STORE_GRID_H) cells[(y + dy) * STORE_GRID_W + x + dx] = true;
+  }
+  place(page: number, w: number, h: number): { x: number; y: number } | null {
+    const cells = this.cells(page);
     for (let y = 0; y + h <= STORE_GRID_H; y++) {
       for (let x = 0; x + w <= STORE_GRID_W; x++) {
         let free = true;
@@ -39,6 +47,25 @@ class StoreGrid {
   }
 }
 
+/**
+ * 이미 있는 상점 목록에 아이템 하나를 첫 빈자리로 넣는다 (팔린 아이템 되사기 — 원작 D2GAME_STORES_SellItem 의 D2GAME_PlaceItem).
+ * 무기 페이지(1)가 차면 페이지 2. 자리가 없으면 null
+ */
+export function placeInStore(list: StoreItem[], item: ItemInstance, page: number): StoreItem | null {
+  const grid = new StoreGrid();
+  for (const s of list) grid.mark(s.page, s.x, s.y, s.item.invW, s.item.invH);
+  let pos = grid.place(page, item.invW, item.invH);
+  let final = page;
+  if (!pos && page === 1) {
+    final = 2;
+    pos = grid.place(2, item.invW, item.invH);
+  }
+  if (!pos) return null;
+  const s = { item, page: final, x: pos.x, y: pos.y };
+  list.push(s);
+  return s;
+}
+
 /** 출처: ITEMS_GetStorePage — 첫 번째 타입의 itemtypes StorePage (없으면 0xFF = 팔지 않음) */
 export function storePage(items: ItemDb, base: ItemBase): number {
   const code = items.types.get(base.type)?.storePage ?? '';
@@ -46,7 +73,7 @@ export function storePage(items: ItemDb, base: ItemBase): number {
 }
 
 /** 출처: D2GAME_NPC_RepairItem — 투척 스택은 최대 수량, 내구도는 최대 */
-function repairFull(items: ItemDb, it: ItemInstance, base: ItemBase): void {
+export function repairFull(items: ItemDb, it: ItemInstance, base: ItemBase): void {
   const type = items.types.get(base.type);
   if (type?.throwable && base.stackable) it.quantity = base.maxStack;
   if (it.maxDurability > 0) it.durability = it.maxDurability;
@@ -181,10 +208,6 @@ export function parseGamble(items: ItemDb, rows: TxtRow[]): GambleTable {
 export function fillGamble(ctx: StoreCtx, table: GambleTable, difficultyRow: TxtRow | undefined, playerLevel: number): StoreItem[] {
   const placed: StoreItem[] = [];
   const grid = new StoreGrid();
-  const uniq = Number(difficultyRow?.GambleUnique ?? 0) || 0;
-  const set = Number(difficultyRow?.GambleSet ?? 0) || 0;
-  const rare = Number(difficultyRow?.GambleRare ?? 0) || 0;
-  const hq = uniq + set + rare;
   let counter = 0;
   do {
     let ilvl = playerLevel + (Number(ctx.rng.next() & 0xffffffffn) % 10) - 5;
@@ -194,20 +217,35 @@ export function fillGamble(ctx: StoreCtx, table: GambleTable, difficultyRow: Txt
     if (!base) return placed;
     if (base.version >= 100) continue;
     if (counter < 2) code = counter ? 'amu' : 'rin';
-    let quality: Quality = QUALITY.MAGIC;
-    if (hq > 0) {
-      const q = Number(ctx.rng.next() & 0xffffffffn) % 100000;
-      if (q < hq) quality = q >= uniq ? (q >= uniq + set ? QUALITY.RARE : QUALITY.SET) : QUALITY.UNIQUE;
-    }
     counter++;
-    const b = ctx.items.base(code)!;
-    const it = ctx.treasure.createItem(b, ilvl, ctx.rng, quality, true);
-    repairFull(ctx.items, it, b);
-    it.identified = false;
+    const it = rollGambleItem(ctx, code, ilvl, difficultyRow);
+    if (!it) return placed;
     // 도박 인벤토리는 페이지 0 하나
     const pos = grid.place(0, it.invW, it.invH);
     if (!pos) return placed;
     placed.push({ item: it, page: 0, x: pos.x, y: pos.y });
   } while (counter < 14);
   return placed;
+}
+
+/**
+ * 도박 아이템 하나: 품질 굴림(rand%100000 < GambleUnique → 유니크, < +GambleSet → 세트, < +GambleRare → 레어, 그 외 매직) → 생성 → 수리 → 미감정.
+ * 출처: D2GAME_STORES_FillGamble_6FCCA9F0 (한 칸 분량)
+ */
+export function rollGambleItem(ctx: StoreCtx, code: string, ilvl: number, difficultyRow: TxtRow | undefined): ItemInstance | null {
+  const b = ctx.items.base(code);
+  if (!b) return null;
+  const uniq = Number(difficultyRow?.GambleUnique ?? 0) || 0;
+  const set = Number(difficultyRow?.GambleSet ?? 0) || 0;
+  const rare = Number(difficultyRow?.GambleRare ?? 0) || 0;
+  const hq = uniq + set + rare;
+  let quality: Quality = QUALITY.MAGIC;
+  if (hq > 0) {
+    const q = Number(ctx.rng.next() & 0xffffffffn) % 100000;
+    if (q < hq) quality = q >= uniq ? (q >= uniq + set ? QUALITY.RARE : QUALITY.SET) : QUALITY.UNIQUE;
+  }
+  const it = ctx.treasure.createItem(b, ilvl, ctx.rng, quality, true);
+  repairFull(ctx.items, it, b);
+  it.identified = false;
+  return it;
 }

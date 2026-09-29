@@ -11,7 +11,7 @@ import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type TreasureDb } from './treasure';
 import type { MonsterDb, MonsterStats, MonsterType, MonSeqFrame } from './monster';
 import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } from './monster';
-import { aiName, escape, hasAi, idle, MONMODE_INDEX, think, walkToTarget, type AiWorld, type MonCast, type MonMode, type MonsterUnit, type PetInfo, type SkillTarget } from './ai';
+import { aiName, escape, hasAi, idle, MONMODE_INDEX, think, thinkNpc, walkToTarget, type AiWorld, type MonCast, type MonMode, type MonsterUnit, type NpcPathNode, type PetInfo, type SkillTarget } from './ai';
 import { applyUModInit, MONFLAG, rollMinionCount, UMOD, xferMods, type UniqueDb, type UModContext } from './uniques';
 import { addExperience, spendStat, type Character, type ClassName, type ClassStats, type ExpTable } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
@@ -38,6 +38,10 @@ import {
 } from './objects';
 import { WaypointFlags } from './waypoints';
 import { AutomapReveal } from './automap';
+import { mercExpGain, mercLevelFor, mercStats, resurrectCost, type HirelingDb, type MercSave, type MercStats } from './hireling';
+import { NPC_DEFS, NpcServices, type HireCandidate, type NpcOption, type TradeHost } from './npc';
+import type { StoreItem } from './shop';
+import type { GambleTable } from './shop';
 
 /**
  * 원작 플레이어 애니메이션 모드 토큰: NU 대기, WL 걷기, RN 달리기, TN/TW 마을, A1/A2 공격, SC 시전, TH 던지기,
@@ -76,6 +80,10 @@ export interface GameData {
   objects?: ObjectDb;
   /** MonUMod.txt / SuperUniques.txt / MonPreset.txt / 유니크 이름 표 */
   uniques?: UniqueDb;
+  /** hireling.txt / hiredesc.txt (용병) */
+  hirelings?: HirelingDb;
+  /** gamble.txt 선택표 (도박) */
+  gamble?: GambleTable;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -107,6 +115,10 @@ export interface GameInit {
   levels?: LevelDef[];
   /** 활성 웨이포인트 번호 (levels.txt Waypoint). 0(마을)은 항상 활성 */
   waypoints?: number[];
+  /** 저장된 용병 */
+  merc?: MercSave | null;
+  /** 끝낸 퀘스트 상태 (NPC 기능 조건: 'a1q2' Blood Raven 보상, 'cain' Cain 구출 — Phase 10 Step 2 퀘스트가 채운다) */
+  quests?: string[];
 }
 
 /** 레벨 출구: 플레이어가 영역(서브타일)에 들어가면 다른 레벨의 지정 위치로 이동 */
@@ -140,14 +152,16 @@ export interface LevelDef {
   monsterPool?: string[];
   /** 마을 포털이 열리는 자리 (원작 타일 정보 11 — DUNGEON_FindActSpawnLocationEx(…, 11, …)) */
   portalSpot?: { x: number; y: number };
-  /** DS1 프리셋 몬스터 (MonPreset 번호, 서브타일, DS1 경로) */
-  presetMonsters?: { id: number; x: number; y: number; path?: Pt[] }[];
+  /** DS1 프리셋 몬스터 (MonPreset 번호, 서브타일, DS1 경로 — 점마다 원작 경로 동작) · code = 하드코딩 프리셋 (Flavie 'navi') */
+  presetMonsters?: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string }[];
   /** 레벨 몬스터 정보: levels.txt 풀·고른 목록·보스 후보·MonLvlEx·막·WarpDist */
   monsterInfo?: { pool: string[]; region: string[]; umon: string[]; monLvlEx: number; act: number; warpDist: number; warpPoints: Pt[] };
 }
 
 interface LevelState {
   def: LevelDef; monsters: MonsterUnit[]; ground: GroundItem[]; missiles: Missile[]; populated: boolean;
+  /** 마을 NPC·장식 유닛 (공격 대상이 아니다) */
+  npcs: MonsterUnit[];
   objects: ObjectUnit[]; region: ObjectRegion | null; automap: AutomapReveal;
   /** 몬스터 종류별 레이어 외형 세트 (원작 D2MonRegDataStrc nComponentVariants) */
   variants: Map<string, Record<string, number>[]>;
@@ -175,7 +189,23 @@ export interface MonsterSnapshot {
   uniqueTrans?: number;
   /** 시퀀스(SQ) 모드면 지금 그릴 모드·프레임 */
   anim?: { mode: string; frame: number };
+  /** 마을 NPC·장식 (공격 불가), 말을 걸 수 있음, 플레이어의 용병 */
+  npc?: boolean; interact?: boolean; merc?: boolean;
 }
+/** NPC 와 대화 중 (메뉴·상점·도박·고용 목록) */
+export interface InteractionSnapshot {
+  npcId: number; typeId: string;
+  mode: 'menu' | 'trade' | 'gamble' | 'hire';
+  options: NpcOption[];
+  /** 상점·도박 목록 (mode trade/gamble) */
+  store: readonly StoreItem[];
+  /** 이 NPC 가 수리함 (Charsi) */
+  repair: boolean;
+  /** 고용 후보 (mode hire) */
+  hire: readonly HireCandidate[];
+}
+/** 용병 (왼쪽 위 생명 막대) */
+export interface MercSnapshot { id: number | null; name: string; level: number; hp: number; maxHp: number; dead: boolean; experience: number; nextExp: number }
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number }
 /** 플레이어 시체 (죽을 때 장착 아이템이 남는다) */
@@ -196,13 +226,16 @@ export interface WorldSnapshot {
   missiles: MissileSnapshot[];
   objects: ObjectSnapshot[];
   inventory: ItemInstance[];
+  interaction: InteractionSnapshot | null;
+  merc: MercSnapshot | null;
 }
 
 type PlayerAction =
   | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean }
   | { kind: 'pickup'; itemId: number }
   | { kind: 'corpse' }
-  | { kind: 'object'; id: number };
+  | { kind: 'object'; id: number }
+  | { kind: 'npc'; id: number };
 
 /** 진행 중인 스킬 사용 (애니메이션 + 판정 시점) */
 interface Cast {
@@ -337,12 +370,23 @@ export class Game {
   townPortal: { fieldLevel: string; fieldId: number; townLevel: string; townId: number } | null = null;
   /** 웨이포인트 목록 패널을 연 웨이포인트 (원작 SUNIT_SetInteractInfo) */
   waypointOpen: { levelId: string; objectId: number } | null = null;
+  /** 마을 NPC 기능 (상인 재고·도박·고용 목록, NPC 시드) */
+  readonly npc: NpcServices;
+  /** NPC 유닛 굴림 (배치·AI). 근사(원작 미확인): 원작은 유닛마다 게임 시드에서 굴린 시드 — 게임 굴림 순서를 바꾸지 않게 따로 둔다 */
+  private readonly npcRng: Rng;
+  /** 대화 중인 NPC (원작 SUNIT_SetInteractInfo / MONSTERAI 상호작용 목록) */
+  private talk: { levelId: string; npcId: number; mode: InteractionSnapshot['mode'] } | null = null;
+  /** 끝낸 퀘스트 상태 ('a1q2' Blood Raven 보상 → Kashya 고용, 'cain' Cain 구출 → 마을에 Cain·무료 감정, 'q<번호>' npc.txt questflag) */
+  readonly quests: Set<string>;
+  /** 용병 기록 (죽어도 남는다 — 부활 대상). unitId = 살아 있는 유닛 */
+  merc: (MercSave & { unitId: number | null }) | null = null;
+  private mercInfo: MercStats | null = null;
 
   constructor(init: GameInit) {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
     for (const d of defs) {
       this.levels.set(d.id, {
-        def: d, monsters: [], ground: [], missiles: [], populated: false, objects: [], region: null, variants: new Map(),
+        def: d, monsters: [], ground: [], missiles: [], populated: false, npcs: [], objects: [], region: null, variants: new Map(),
         automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
       });
     }
@@ -382,6 +426,14 @@ export class Game {
     // 근사(원작 세부 미확인): 저장된 시체는 시작 위치 바로 옆에 놓는다
     if (init.corpse && Object.keys(init.corpse).length) {
       this.corpse = { levelId: this.level.def.id, x: p.x + 1, y: p.y + 1, dir: 0, items: { ...init.corpse }, exp: 0 };
+    }
+    this.npc = new NpcServices((init.seed ^ 0x4e5043) >>> 0);
+    this.npcRng = new Rng((init.seed ^ 0x6e7063) >>> 0 || 1);
+    this.quests = new Set(init.quests ?? []);
+    // 저장된 용병: 게임을 시작하면 플레이어 곁에 (죽은 용병은 기록만 — 부활 대상). 출처: D2GAME_MERCS_Create_6FCC8630
+    if (init.merc) {
+      this.merc = { ...init.merc, unitId: null };
+      if (!init.merc.dead) this.spawnMerc(p.x + 1, p.y + 1);
     }
   }
 
@@ -424,6 +476,9 @@ export class Game {
     const next = this.levels.get(id);
     if (!next) throw new Error(`unknown level ${id}`);
     this.exitHold = false;
+    this.closeTalk();
+    // 마을에 플레이어가 없으면 상인 재고를 비운다 (출처: SUNITPROXY_UpdateVendorInventory)
+    if (this.level.def.inTown && !next.def.inTown) this.npc.leaveTown();
     this.level = next;
     const p = this.player;
     p.x = x;
@@ -521,6 +576,7 @@ export class Game {
     // 출처: SUNIT_SpawnPresetUnitsInRoom (프리셋 오브젝트 → 프리셋 몬스터) 뒤 D2GAME_PopulateRoom (무리·보스)
     this.createLevelObjects(level);
     for (const p of level.def.presetMonsters ?? []) this.spawnPreset(p);
+    if (level.def.inTown && this.quests.has('cain')) this.spawnCain();
     const leaders: number[] = [];
     level.def.spawns?.forEach((sp, i) => {
       if (sp.boss) {
@@ -596,6 +652,7 @@ export class Game {
     this.touchWaypoint();
     this.level.automap.revealAround(this.player.x, this.player.y);
     this.updateMonsters();
+    this.updateNpcs();
     this.updatePets();
     this.updateMissiles();
     this.regen();
@@ -615,12 +672,13 @@ export class Game {
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
         states: p.states.names(), leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
-      monsters: [...this.monsters, ...this.pets].map((m) => {
+      monsters: [...this.monsters, ...this.pets, ...this.level.npcs].map((m) => {
         const anim = this.monsterSeqAnim(m);
         const ut = this.uniqueTrans(m);
         return {
           id: m.id, typeId: m.type.id, code: m.type.code, x: m.x, y: m.y, mode: m.mode, dir: m.dir, modeTick: this.tickCount - m.modeStart,
           hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
+          ...(m.npc ? { npc: true, interact: m.npc.interact } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
           flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
           ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
         };
@@ -632,6 +690,8 @@ export class Game {
         selectable: !!o.type.selectable[o.mode], subClass: o.type.subClass, ...(o.portal ? { portalTo: o.portal.toLevel } : {}),
       })),
       inventory: [...this.inventory],
+      interaction: this.interactionSnapshot(),
+      merc: this.mercSnapshot(),
     };
   }
 
@@ -918,9 +978,15 @@ export class Game {
    * DS1 프리셋 몬스터. 출처: D2GAME_SpawnPresetMonster_6FC66560 — 슈퍼유니크, monstats 몬스터 (파티 포함), monplace:
    * 2 유니크 무리(umon, 챔피언 없음), 3 챔피언(umon + 1~3 챔피언), 5 Blood Raven, 17 Fallen, 18 Fallen Shaman (D2Common_11063 레벨 계열 + 레벨 보정)
    */
-  private spawnPreset(p: { id: number; x: number; y: number; path?: Pt[] }): void {
+  private spawnPreset(p: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string }): void {
     const data = this.data, info = this.level.def.monsterInfo;
     if (!data?.uniques) return;
+    const npcPath = (): NpcPathNode[] => (p.path ?? []).map((q) => ({ x: q.x + 0.5, y: q.y + 0.5, action: q.action ?? 1 }));
+    // 하드코딩 프리셋 (Blood Moor Flavie 'navi' — DRLGPRESET_SpawnHardcodedPresetUnits)
+    if (p.code) {
+      this.spawnNpc(p.code, p.x, p.y, npcPath());
+      return;
+    }
     const k = data.uniques.preset(info?.act ?? 1, p.id);
     if (k.kind === 'super') {
       this.spawnSuperUnique(k.idx, p.x, p.y, p.path);
@@ -929,7 +995,9 @@ export class Game {
     const spawnAt = (id: string, withParty = true): MonsterUnit | null => {
       if (!data.monsters.types.has(id)) return null;
       const t = data.monsters.get(id);
-      // 근사(원작 미확인): 중립 장식 몬스터(소 — Align 2, killable 0)·NPC·동물(critter)은 배치하지 않는다 (NPC 는 Phase 10)
+      // 마을 프리셋(NPC·Rogue 경비·닭·소)과 말을 걸 수 있는 NPC 는 NPC 유닛으로 (공격 불가)
+      if (this.level.def.inTown || (t.npc && t.interact)) return this.spawnNpc(id, p.x, p.y, npcPath());
+      // 근사(원작 미확인): 마을 밖 중립 장식 몬스터(Align 2, killable 0)·동물(critter)은 배치하지 않는다
       if (t.critter || t.npc || (t.inTown && !t.killable)) return null;
       const spot = this.map.walkable(p.x, p.y) ? { x: p.x + 0.5, y: p.y + 0.5 } : this.spawnSpot(p.x, p.y, 4, t);
       if (!spot) return null;
@@ -1020,6 +1088,7 @@ export class Game {
       case 'move': {
         if (this.isBusy()) return;
         p.action = null;
+        this.closeTalk();
         const warp = this.warpClickTarget(cmd.x, cmd.y);
         this.pathPlayerTo(warp ? warp.x : cmd.x, warp ? warp.y : cmd.y, cmd.run);
         return;
@@ -1027,6 +1096,7 @@ export class Game {
       case 'attack': {
         const m = this.monsters.find((x) => x.id === cmd.targetId && x.mode !== 'DT' && x.mode !== 'DD');
         if (!m) return;
+        this.closeTalk();
         // 원작: 몬스터 왼쪽 클릭 = 왼쪽 스킬 (기본 Attack). 누르고 있는 동안 반복
         p.action = { kind: 'skill', skillId: c?.leftSkill ?? SKILL_ATTACK, targetId: m.id, x: m.x, y: m.y, standStill: cmd.standStill, repeat: true };
         return;
@@ -1097,10 +1167,48 @@ export class Game {
         return;
       }
       case 'interact': {
+        if (this.isBusy()) return;
+        const n = this.level.npcs.find((x) => x.id === cmd.unitId && x.npc?.interact);
+        if (n) {
+          this.closeTalk();
+          p.action = { kind: 'npc', id: n.id };
+          p.repathAt = 0;
+          return;
+        }
         const o = this.level.objects.find((x) => x.id === cmd.unitId);
-        if (!o || this.isBusy()) return;
+        if (!o) return;
         p.action = { kind: 'object', id: o.id };
         p.repathAt = 0;
+        return;
+      }
+      case 'npcMenu': {
+        this.npcMenu(cmd.option);
+        return;
+      }
+      case 'buy': {
+        const t = this.talking();
+        if (t && (this.talk?.mode === 'trade' || this.talk?.mode === 'gamble')) this.npc.buy(this.tradeHost(), t.type.id, cmd.itemId, { multi: cmd.multi, toInventory: cmd.toInventory });
+        return;
+      }
+      case 'sell': {
+        const t = this.talking();
+        if (t && this.talk?.mode === 'trade') this.npc.sell(this.tradeHost(), t.type.id, cmd.itemId);
+        return;
+      }
+      case 'repair': {
+        const t = this.talking();
+        if (t && this.talk?.mode === 'trade') this.npc.repair(this.tradeHost(), t.type.id, cmd.itemId);
+        return;
+      }
+      case 'hire': {
+        const t = this.talking();
+        if (!t || this.talk?.mode !== 'hire') return;
+        const r = this.npc.hire(this.tradeHost(), t.type.id, cmd.index);
+        if (r) this.hireMerc(r.entry.name, r.entry.seed, r.init.id, r.init.level, r.init.experience, t.x, t.y);
+        return;
+      }
+      case 'closeNpc': {
+        this.closeTalk();
         return;
       }
       case 'waypoint': {
@@ -1297,6 +1405,8 @@ export class Game {
       }
     } else if (act?.kind === 'object') {
       this.driveObjectAction(act.id);
+    } else if (act?.kind === 'npc') {
+      this.driveNpcAction(act.id);
     } else if (act?.kind === 'pickup') {
       const g = this.ground.find((x) => x.item.id === act.itemId);
       if (!g) {
@@ -1364,6 +1474,10 @@ export class Game {
     if (self !== p && p.mode !== 'DT' && p.mode !== 'DD' && Math.hypot(p.x - x, p.y - y) < r + PLAYER_SIZE / 2 - 0.25) return true;
     for (const m of this.monsters) {
       if (m === self || m.mode === 'DT' || m.mode === 'DD') continue;
+      if (Math.hypot(m.x - x, m.y - y) < r + m.type.sizeX / 2 - 0.25) return true;
+    }
+    for (const m of this.level.npcs) {
+      if (m === self) continue;
       if (Math.hypot(m.x - x, m.y - y) < r + m.type.sizeX / 2 - 0.25) return true;
     }
     // 소환수끼리·플레이어와는 겹쳐 지나갈 수 있게 (근사: 원작은 소환수도 충돌하지만 따라다니다 끼이지 않게)
@@ -2627,7 +2741,7 @@ export class Game {
    * 출처: SUNITDMG_CalculateTotalDamage / SUNITDMG_ExecuteEvents (기절 최대 250, 냉기 = coldeffect 감속, 빙결은 coldeffect < 0 인 몬스터만,
    *       독 = 매 프레임 hpregen 감소, 같은 독은 더 센 쪽으로 갱신)
    */
-  private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player'): void {
+  private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number): void {
     if (m.pet) {
       this.damagePet(m, raw);
       return;
@@ -2661,7 +2775,7 @@ export class Game {
       if (!cur || -(cur.stats.hpregen ?? 0) <= d.pois) m.states.set('poison', this.tickCount + d.poisLen, { hpregen: -d.pois });
     }
     if (m.hp <= 0) {
-      this.killMonster(m, source);
+      this.killMonster(m, source, attackerId);
       return;
     }
     const stunned = m.states.has('stunned') || m.states.has('freeze');
@@ -2677,7 +2791,7 @@ export class Game {
     };
   }
 
-  private killMonster(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player'): void {
+  private killMonster(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number): void {
     m.hp = 0;
     m.path = [];
     m.states.clear();
@@ -2693,6 +2807,7 @@ export class Game {
       const bonus = this.playerStat('item_addexperience');
       this.gainExperience(Math.trunc((adjustedExperience(m.stats.exp, c.level, m.stats.level) * (100 + bonus)) / 100));
     }
+    if (!m.noXp && source !== 'other') this.mercGainExp(m, attackerId);
     this.onMonsterDeathMods(m);
     const data = this.data;
     const tc = m.noTc ? '' : this.monsterTc(m, source);
@@ -3866,6 +3981,12 @@ export class Game {
       pet.path = [];
       this.startMonsterMode(pet, 'DT');
       this.events.push({ type: 'petDied', petId: pet.id });
+      // 용병: 기록은 남고 Kashya 에게서 부활 (출처: D2GAME_NPC_ResurrectMerc — 죽은 용병 sub_6FC7E8B0(…, 7, 1))
+      if (pet.pet?.hireling && this.merc?.unitId === pet.id) {
+        this.merc.dead = true;
+        this.merc.unitId = null;
+        this.events.push({ type: 'mercDied' });
+      }
     }
   }
 
@@ -3895,7 +4016,8 @@ export class Game {
       if (pet.mode === 'A1' || pet.mode === 'A2' || pet.mode === 'GH') {
         if (!pet.hitDone && this.tickCount - pet.modeStart >= pet.hitTick) {
           pet.hitDone = true;
-          this.petAttack(pet);
+          if (info.hireling) this.mercShoot(pet);
+          else this.petAttack(pet);
         }
         if (this.tickCount < pet.modeEnd) continue;
         pet.mode = 'NU';
@@ -3910,6 +4032,10 @@ export class Game {
         pet.modeStart = this.tickCount;
       }
       if (this.tickCount < pet.nextThink) continue;
+      if (info.hireling) {
+        this.thinkMerc(pet);
+        continue;
+      }
       pet.nextThink = this.tickCount + Math.max(3, Math.trunc(pet.type.aiDelay / 3));
       const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
       if (toOwner > 25) {
@@ -3976,6 +4102,545 @@ export class Game {
     this.damageMonster(t, d, 'pet');
     // Clay Golem: 맞은 적 감속 (item_slow). 근사(원작 미확인): 지속 50 프레임
     if (info.slowPct > 0 && t.mode !== 'DT') t.states.set('slowed', this.tickCount + 50, { velocitypercent: -info.slowPct });
+  }
+
+  // ---------------------------------------------------------------- 마을 NPC
+
+  /**
+   * 마을 NPC·장식 유닛 배치 (공격 불가). interact NPC 는 Npc AI, 나머지(Rogue 경비·닭·소)는 제자리.
+   * 출처: D2GAME_SpawnPresetMonster (DS1 프리셋 → monstats), AITHINK_Fn032_Npc 첫 판단 (원위치 기록 후 20 프레임 대기),
+   *       MONSTERAI_AllocMonsterInteract (monstats interact)
+   * 근사(원작 미확인): NPC 레이어 외형은 monstats2 첫 변형
+   */
+  spawnNpc(typeId: string, x: number, y: number, path: NpcPathNode[] = []): MonsterUnit | null {
+    const data = this.data;
+    if (!data?.monsters.types.has(typeId)) return null;
+    const type = data.monsters.get(typeId);
+    const spot = this.map.walkable(Math.floor(x), Math.floor(y)) ? { x: Math.floor(x), y: Math.floor(y) } : nearestWalkable(this.map, { x, y }, 6);
+    if (!spot) return null;
+    const rng = new Rng(this.npcRng.roll() || 1);
+    const stats = rollMonsterStats(data.monsters, type, rng);
+    const m = this.newMonsterUnit(this.nextUnitId++, type, stats, rng, spot.x + 0.5, spot.y + 0.5);
+    m.components = Object.fromEntries(Object.keys(type.layers).map((k) => [k, 0]));
+    m.levelKey = this.level.def.id;
+    m.nextThink = this.tickCount + 20;
+    m.noXp = true;
+    m.noTc = true;
+    m.npc = { home: { x: m.x, y: m.y }, interact: type.interact && type.npc, talking: false, greet: 0, path };
+    this.level.npcs.push(m);
+    return m;
+  }
+
+  /**
+   * Cain 구출 뒤 마을의 Cain (MONSTER_CAIN5).
+   * 근사(원작 미확인): 원작은 A1Q4 퀘스트 코드가 정한 자리(마을 포털로 들어옴) — 여기서는 마을 포털 자리 옆
+   */
+  private spawnCain(): void {
+    const town = this.levels.get(this.townKey() ?? '');
+    if (!town || town.npcs.some((n) => n.type.id === 'cain5')) return;
+    const prev = this.level;
+    this.level = town;
+    const at = town.def.portalSpot ?? { x: town.def.map.width / 2, y: town.def.map.height / 2 };
+    this.spawnNpc('cain5', at.x + 4, at.y + 4);
+    this.level = prev;
+  }
+
+  /** 퀘스트 상태 기록 (Phase 10 Step 2 퀘스트가 부른다). 'cain' 이면 마을에 Cain 을 세운다 */
+  setQuest(flag: string): void {
+    this.quests.add(flag);
+    const town = this.levels.get(this.townKey() ?? '');
+    if (flag === 'cain' && town?.populated) this.spawnCain();
+  }
+
+  /** 지금 레벨의 NPC (읽기 전용) */
+  get npcs(): readonly MonsterUnit[] {
+    return this.level.npcs;
+  }
+
+  /** 대화 중인 NPC */
+  private talking(): MonsterUnit | undefined {
+    const t = this.talk;
+    return t && t.levelId === this.level.def.id ? this.level.npcs.find((n) => n.id === t.npcId) : undefined;
+  }
+
+  /** NPC 메뉴 (원작 메뉴 + 용병이 죽었으면 Kashya 에게 부활) */
+  npcOptions(n: MonsterUnit): NpcOption[] {
+    const def = NPC_DEFS[n.type.id];
+    if (!def) return ['talk', 'cancel'];
+    const out: NpcOption[] = [];
+    for (const o of def.menu) {
+      out.push(o);
+      if (o === 'hire' && this.merc?.dead) out.push('resurrect');
+    }
+    return out;
+  }
+
+  /** 상점 기능이 쓰는 게임 접근 */
+  private tradeHost(): TradeHost {
+    // getter/setter 로 게임 값을 그대로 노출 (골드 변경이 곧바로 게임에 반영)
+    const g = this;
+    return {
+      get data() {
+        return g.data as GameData;
+      },
+      store: g.store,
+      get gold() {
+        return g.gold;
+      },
+      set gold(v: number) {
+        g.gold = v;
+      },
+      get stashGold() {
+        return g.stashGold;
+      },
+      set stashGold(v: number) {
+        g.stashGold = v;
+      },
+      get playerLevel() {
+        return g.character?.level ?? 1;
+      },
+      difficulty: g.difficulty,
+      questDone: (f) => g.quests.has(typeof f === 'number' ? `q${f}` : f),
+      emit: (ev) => g.events.push(ev),
+      itemsChanged: () => {
+        g.statsDirty = true;
+      },
+    };
+  }
+
+  /** NPC 까지 걸어가서 말 걸기. 근사(원작 미확인): 대화 거리 = 유닛 가장자리 사이 2 서브타일 이내 */
+  private driveNpcAction(id: number): void {
+    const p = this.player;
+    const n = this.level.npcs.find((x) => x.id === id);
+    if (!n?.npc?.interact) {
+      p.action = null;
+      return;
+    }
+    if (Math.hypot(n.x - p.x, n.y - p.y) - (n.type.sizeX + PLAYER_SIZE) / 2 <= 2) {
+      p.path = [];
+      p.action = null;
+      this.startTalk(n);
+      return;
+    }
+    if (this.tickCount < p.repathAt && p.path.length) return;
+    p.repathAt = this.tickCount + 10;
+    if (!this.pathPlayerTo(n.x, n.y, p.running)) p.action = null;
+  }
+
+  /** 대화 시작: NPC 멈춤·플레이어 바라봄, Akara 치료 (출처: D2GAME_NPC_Heal_6FCCB220) */
+  private startTalk(n: MonsterUnit): void {
+    const s = n.npc as NonNullable<MonsterUnit['npc']>;
+    this.closeTalk();
+    s.talking = true;
+    n.path = [];
+    if (n.mode !== 'NU') this.setMonMode(n, 'NU');
+    n.dir = dir64(this.player.x - n.x, this.player.y - n.y);
+    this.talk = { levelId: this.level.def.id, npcId: n.id, mode: 'menu' };
+    if (NPC_DEFS[n.type.id]?.heal) this.healAtNpc();
+    this.events.push({ type: 'npcInteract', npcId: n.id, typeId: n.type.id });
+  }
+
+  /** 대화 끝 (원작 D2GAME_NPC_ResetInteract) — 도박 목록은 버린다 (SUNITPROXY_FreeNpcGamble) */
+  closeTalk(): void {
+    const t = this.talk;
+    if (!t) return;
+    const n = this.levels.get(t.levelId)?.npcs.find((x) => x.id === t.npcId);
+    if (n?.npc) n.npc.talking = false;
+    this.talk = null;
+    this.npc.gamble = null;
+    this.events.push({ type: 'npcClosed', npcId: t.npcId });
+  }
+
+  private npcMenu(option: NpcOption): void {
+    const t = this.talk, n = this.talking();
+    if (!t || !n || !this.npcOptions(n).includes(option)) return;
+    const h = this.tradeHost();
+    const id = n.type.id;
+    switch (option) {
+      case 'talk': {
+        const intro = !this.npc.introSeen.has(id);
+        this.npc.introSeen.add(id);
+        this.events.push({ type: 'npcTalk', npcId: n.id, typeId: id, intro, gossip: NPC_DEFS[id]?.gossip ?? '', pick: this.npcRng.roll() });
+        return;
+      }
+      case 'trade':
+      case 'tradeRepair':
+        this.npc.storeOf(h, id);
+        t.mode = 'trade';
+        this.events.push({ type: 'storeOpened', npcId: n.id, typeId: id });
+        return;
+      case 'gamble':
+        this.npc.openGamble(h);
+        t.mode = 'gamble';
+        this.events.push({ type: 'storeOpened', npcId: n.id, typeId: id, gamble: true });
+        return;
+      case 'hire':
+        this.npc.hireList(h, id);
+        t.mode = 'hire';
+        this.events.push({ type: 'hireOpened', npcId: n.id });
+        return;
+      case 'resurrect':
+        this.resurrectMerc();
+        return;
+      case 'identify':
+        // 출처: D2GAME_NPC_IdentifyAllItems — A1Q4(Cain) 보상을 받았으면(받을 차례면) 무료
+        this.npc.identifyAll(h, this.quests.has('cain'));
+        return;
+      case 'cancel':
+        this.closeTalk();
+        return;
+    }
+  }
+
+  /** 가격 (UI 툴팁): 상점 아이템은 buy, 플레이어 아이템은 sell / repair */
+  priceOf(item: ItemInstance, kind: 'buy' | 'sell' | 'repair'): number {
+    const n = this.talking();
+    return n && this.data ? this.npc.priceOf(this.tradeHost(), n.type.id, item, kind) : 0;
+  }
+
+  private interactionSnapshot(): InteractionSnapshot | null {
+    const t = this.talk, n = this.talking();
+    if (!t || !n) return null;
+    const h = this.tradeHost();
+    const id = n.type.id;
+    const store = t.mode === 'gamble' ? (this.npc.gamble ?? []) : t.mode === 'trade' ? (this.npc.stores.get(id) ?? []) : [];
+    return {
+      npcId: n.id, typeId: id, mode: t.mode, options: this.npcOptions(n), store, repair: !!NPC_DEFS[id]?.repair,
+      hire: t.mode === 'hire' && this.data ? this.npc.candidates(h, id) : [],
+    };
+  }
+
+  /**
+   * 치료. 출처: D2GAME_NPC_HealPlayer_6FCCB080 — 생명·마나 최대, 독·빙결·치료 가능 상태(states.txt curable) 해제, 소환수·용병도 (SUNITNPC_PetIterate_Heal)
+   */
+  private healAtNpc(): void {
+    const c = this.character;
+    const curable = ['poison', 'freeze', 'amplifydamage', 'weaken', 'dimvision', 'taunt', 'ironmaiden', 'terror', 'attract', 'lifetap', 'confuse', 'decrepify', 'lowerresist', 'defense_curse', 'blood_mana'];
+    let healed = false;
+    if (c) {
+      if (c.life < this.maxLife() || c.mana < this.maxMana()) healed = true;
+      c.life = this.maxLife();
+      c.mana = this.maxMana();
+    }
+    for (const st of curable) {
+      if (this.player.states.has(st)) {
+        this.player.states.remove(st);
+        healed = true;
+      }
+    }
+    for (const pet of this.pets) {
+      if (pet.mode === 'DT' || pet.mode === 'DD') continue;
+      if (pet.hp < pet.stats.maxHp) healed = true;
+      pet.hp = pet.stats.maxHp;
+      for (const st of curable) pet.states.remove(st);
+    }
+    this.events.push({ type: 'healed', sound: healed });
+  }
+
+  /** NPC AI (Npc / Navi / Idle). 대화 중이면 멈춰서 플레이어를 본다 */
+  private updateNpcs(): void {
+    const npcs = this.level.npcs;
+    if (!npcs.length) return;
+    const w = this.aiWorld();
+    const p = this.player;
+    // 출처: sub_6FCE5EE0 — PLAYER_IsBusy (상점·대화 중인 플레이어에게는 다가가지 않는다)
+    const busy = this.talk !== null;
+    for (const m of npcs) {
+      const s = m.npc as NonNullable<MonsterUnit['npc']>;
+      if (m.mode === 'WL' || m.mode === 'RN') {
+        if (m.path.length && !s.talking) {
+          this.advance(m, ((m.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS), (d) => (m.dir = d), m.type.sizeX);
+          continue;
+        }
+        m.path = [];
+        this.setMonMode(m, 'NU');
+      } else if (m.mode !== 'NU') {
+        // 스킬 모드 (Charsi 망치질 S1 …) 가 끝날 때까지 판단하지 않는다
+        if (this.tickCount < m.modeEnd && !s.talking) continue;
+        this.setMonMode(m, 'NU');
+      }
+      if (this.tickCount < m.nextThink && !(s.talking && m.mode !== 'NU')) continue;
+      w.frame = this.tickCount;
+      w.target = { x: p.x, y: p.y, size: PLAYER_SIZE, dead: this.isDead, inTown: false };
+      thinkNpc(w, m, s, busy);
+    }
+    // 대화 상대와 멀어지면 닫는다 (원작 SUNIT_ResetInteractInfo)
+    const n = this.talking();
+    if (this.talk && (!n || Math.hypot(n.x - p.x, n.y - p.y) > 8)) this.closeTalk();
+  }
+
+  // ---------------------------------------------------------------- 용병
+
+  /** 살아 있는 용병 유닛 */
+  mercUnit(): MonsterUnit | undefined {
+    const id = this.merc?.unitId;
+    return id === null || id === undefined ? undefined : this.pets.find((x) => x.id === id);
+  }
+
+  /** 저장용 용병 기록 */
+  mercSave(): MercSave | null {
+    const m = this.merc;
+    return m ? { name: m.name, seed: m.seed, hirelingId: m.hirelingId, level: m.level, experience: m.experience, dead: m.dead } : null;
+  }
+
+  private mercSnapshot(): MercSnapshot | null {
+    const m = this.merc;
+    if (!m) return null;
+    const u = this.mercUnit();
+    return { id: m.unitId, name: m.name, level: m.level, hp: u ? u.hp : 0, maxHp: u ? u.stats.maxHp : (this.mercInfo?.maxHp ?? 0), dead: m.dead, experience: m.experience, nextExp: this.mercInfo?.nextExp ?? 0 };
+  }
+
+  /**
+   * 고용 (NPC 곁에 새 용병, 있던 용병은 사라진다). 출처: sub_6FCC7FA0 → sub_6FC68D70 (NPC 곁), sub_6FC61270 (예전 용병 제거·기록·스탯)
+   */
+  hireMerc(name: string, seed: number, hirelingId: number, level: number, experience: number, x: number, y: number): MonsterUnit | null {
+    const old = this.mercUnit();
+    if (old) this.pets.splice(this.pets.indexOf(old), 1);
+    this.merc = { name, seed, hirelingId, level, experience, dead: false, unitId: null };
+    const u = this.spawnMerc(x, y);
+    if (u) this.events.push({ type: 'mercHired', name, level, unitId: u.id });
+    return u;
+  }
+
+  /**
+   * 용병 유닛 만들기 (레벨 스탯 = MONSTERAI_UpdateMercStatsAndSkills).
+   * 출처: sub_6FC61270 — UNITFLAG_NOXP|NOTC|ISMERC, 레이어 외형 0 (HD TR RH LH SH), 펫 종류 hireable
+   */
+  private spawnMerc(x: number, y: number): MonsterUnit | null {
+    const rec = this.merc, data = this.data, db = data?.hirelings;
+    if (!rec || !data || !db) return null;
+    const st = mercStats(db, rec.hirelingId, rec.level, (sk) => data.skills?.byNameOf(sk)?.reqLevel ?? 0);
+    const type = st ? data.monsters.list.find((t) => t.hcIdx === st.row.cls) : undefined;
+    if (!st || !type) return null;
+    const spot = nearestWalkable(this.map, { x, y }, 6);
+    if (!spot) return null;
+    const stats: MonsterStats = {
+      level: st.level, maxHp: st.maxHp, defense: st.defense, exp: 0,
+      a1: { min: st.minDamage, max: st.maxDamage, toHit: st.toHit }, a2: { min: st.minDamage, max: st.maxDamage, toHit: st.toHit },
+      s1: { min: st.minDamage, max: st.maxDamage, toHit: st.toHit }, elem: [],
+    };
+    const id = this.nextUnitId++;
+    const u: MonsterUnit = {
+      ...this.newMonsterUnit(id, type, stats, new Rng((rec.seed ^ id) >>> 0 || 1), spot.x + 0.5, spot.y + 0.5),
+      corpseUsed: true, noXp: true, noTc: true,
+      pet: { skillId: -1, petType: 'hireable', expires: Infinity, missileLvl: 1, damagePct: 0, normalDamage: 0, slowPct: 0, hireling: true },
+    };
+    u.resist = { dm: 0, ma: 0, fi: st.resist, li: st.resist, co: st.resist, po: st.resist };
+    u.components = Object.fromEntries(Object.keys(type.layers).map((k) => [k, 0]));
+    u.leaderId = this.player.id;
+    this.mercInfo = st;
+    rec.unitId = id;
+    rec.dead = false;
+    this.pets.push(u);
+    return u;
+  }
+
+  /**
+   * 부활 (Kashya). 출처: D2GAME_NPC_ResurrectMerc_6FCC9350 — 죽은 용병이 있어야 하고, 비용 = MONSTERS_GetHirelingResurrectionCost,
+   *   골드 → 창고 순 지불, 생명 최대로 플레이어 곁에
+   */
+  resurrectMerc(): boolean {
+    const rec = this.merc;
+    if (!rec?.dead) return false;
+    const cost = resurrectCost(rec.level);
+    const h = this.tradeHost();
+    if (cost > h.gold + h.stashGold) {
+      this.events.push({ type: 'resurrectFailed', reason: 'gold', cost });
+      return false;
+    }
+    if (cost > this.gold) {
+      this.stashGold -= cost - this.gold;
+      this.gold = 0;
+    } else this.gold -= cost;
+    const u = this.spawnMerc(this.player.x + 1, this.player.y + 1);
+    this.events.push({ type: 'mercResurrected', cost });
+    return !!u;
+  }
+
+  /**
+   * 용병 AI (Rogue Scout). 출처: AITHINK_Fn061_Hireable —
+   *   주인과 거리 > 100 이면 곁으로 순간 이동, > 최대(24) 면 달려서 따라감, > 최소(16) 이고 주인이 걷거나 뛰면 따라감,
+   *   서 있으면: 마을 밖이고 25 안에 보이는 적이 있으면 공격 판단(sub_6FCE4610), 주인과 붙어 있으면 비켜서고, 5% 로 주인 곁으로, 아니면 5 프레임 대기.
+   *   거리 단계는 dwAiParam[0] 이 17~19 면 (param, 2·param)
+   * 근사(원작 미확인): D2GAME_PETAI_PetMove 의 주인 발자취(20 칸 기록)·앞쪽 8 서브타일 지점 대신 주인 위치로 이동
+   */
+  private thinkMerc(pet: MonsterUnit): void {
+    const p = this.player;
+    const param = pet.ai[0];
+    let minD = 16, maxD = 24;
+    if (param > 16 && param < 20) {
+      maxD = 2 * param;
+      minD = param;
+    }
+    const dist = aiDistance(pet.x, pet.y, p.x, p.y);
+    pet.nextThink = this.tickCount + 5;
+    if (dist > 100) {
+      this.warpPet(pet);
+      return;
+    }
+    if (dist > maxD) {
+      this.petMoveTo(pet, p.x, p.y, true);
+      return;
+    }
+    if (dist > minD && (p.mode === 'WL' || p.mode === 'RN')) {
+      this.petMoveTo(pet, p.x, p.y, p.mode === 'RN');
+      return;
+    }
+    if (pet.mode !== 'NU') return;
+    if (!this.inTown) {
+      const t = this.mercTarget(pet);
+      if (t && aiDistance(pet.x, pet.y, t.x, t.y) < 25) {
+        this.mercAttack(pet, t);
+        return;
+      }
+    }
+    if (dist <= 1) {
+      this.petMoveTo(pet, p.x + (pet.rng.pick(9) - 4), p.y + (pet.rng.pick(9) - 4), false);
+      return;
+    }
+    if (pet.rng.pick(100) < 5) this.petMoveTo(pet, p.x + (pet.rng.pick(5) - 2), p.y + (pet.rng.pick(5) - 2), false);
+  }
+
+  /** 출처: sub_6FCF2CC0 — 미사일 벽에 가리지 않은 가장 가까운 적 */
+  private mercTarget(pet: MonsterUnit): MonsterUnit | undefined {
+    let best: MonsterUnit | undefined, bd = Infinity;
+    for (const m of this.monsters) {
+      if (m.mode === 'DT' || m.mode === 'DD' || m.pet) continue;
+      const d = aiDistance(pet.x, pet.y, m.x, m.y);
+      if (d < bd && this.lineOfSight(pet.x, pet.y, m.x, m.y)) {
+        bd = d;
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 공격 판단. 출처: sub_6FCE4610 — 확률 = min(dwAiParam[0] + 40 + 2·레벨, 95) 로 스킬, 실패하면 dwAiParam[0] += 10 후 10 프레임 대기.
+   *   원거리(Rogue): 거리 4 이상이거나 50% 면 쏜다, 가까우면 주인 쪽으로 물러난다 (실패하면 도망, 그것도 안 되면 쏜다)
+   */
+  private mercAttack(pet: MonsterUnit, t: MonsterUnit): void {
+    const chance = Math.min(pet.ai[0] + 40 + 2 * pet.stats.level, 95);
+    const use = pet.rng.pick(100) < chance;
+    if (use) pet.ai[0] = 0;
+    else pet.ai[0] += 10;
+    const d = aiDistance(pet.x, pet.y, t.x, t.y);
+    if (d >= 4 || pet.rng.pick(100) >= 50) {
+      if (use) this.mercUseSkill(pet, t);
+      else pet.nextThink = this.tickCount + 10;
+      return;
+    }
+    const p = this.player;
+    const before = pet.path.length;
+    this.petMoveTo(pet, p.x + (pet.rng.pick(9) - 4), p.y + (pet.rng.pick(9) - 4), false);
+    if (pet.path.length || before) return;
+    const sx = Math.sign(pet.x - t.x) || 1, sy = Math.sign(pet.y - t.y) || 1;
+    this.petMoveTo(pet, pet.x + sx * 4, pet.y + sy * 4, false);
+    if (!pet.path.length) this.mercUseSkill(pet, t);
+  }
+
+  /**
+   * 스킬 고르기. 출처: sub_6FCE4830 — 누적 확률 = DefaultChance + Σ(Chance + max(레벨 − 행 레벨, 0) × ChancePerLvl / 4) (배운 스킬만),
+   *   rand(누적 + 1) ≥ DefaultChance 면 그 구간의 hireling 스킬, 아니면 monstats Skill1 (Rogue: RogueMissile, 모드 A1)
+   */
+  private mercUseSkill(pet: MonsterUnit, t: MonsterUnit): void {
+    const st = this.mercInfo;
+    if (!st) return;
+    const row = st.row;
+    const diff = Math.max(pet.stats.level - row.level, 0);
+    let total = row.defaultChance;
+    const cum: { name: string; lvl: number; upto: number }[] = [];
+    for (const s of row.skills) {
+      const learned = st.skills.find((x) => x.name === s.name);
+      if (!learned) continue;
+      total += s.chance + Math.trunc((diff * s.chancePerLvl) / 4);
+      cum.push({ name: s.name, lvl: learned.level, upto: total });
+    }
+    const roll = pet.rng.pick(total + 1);
+    let skill = { name: pet.type.skills[0]?.name || 'RogueMissile', lvl: 1 };
+    if (roll >= row.defaultChance) {
+      const hit = cum.find((c) => roll <= c.upto);
+      if (hit) skill = { name: hit.name, lvl: hit.lvl };
+    }
+    (pet.pet as PetInfo).mercSkill = skill;
+    pet.targetId = t.id;
+    // 출처: hireling.txt Mode = 4 (A1), monstats Sk1mode A1
+    this.startMonsterMode(pet, 'A1');
+    pet.dir = dir64(t.x - pet.x, t.y - pet.y);
+  }
+
+  /**
+   * 용병 공격 판정 (A1 판정 프레임): 스킬 미사일 발사 또는 Inner Sight.
+   * 출처: skills.txt RogueMissile(srvmissilea rogue1)·Fire Arrow(firearrow, SrcDam 128, EMin~EMax)·Cold Arrow(coldarrow, HitShift 7, ELen)·
+   *       Inner Sight(aurastat armorclass −edmn, auralencalc, aurarangecalc — auratargetstate innersight),
+   *       missiles.txt rogue1 (SrcDamage 128) — 물리 = 용병 피해(hireling Dmg) × SrcDam / 128, 명중 = 용병 AR × (100 + ToHit + LevToHit·(lvl−1)) / 100
+   */
+  private mercShoot(pet: MonsterUnit): void {
+    const data = this.data, info = pet.pet as PetInfo;
+    const t = pet.targetId !== undefined ? this.monsters.find((m) => m.id === pet.targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
+    const sk = info.mercSkill ?? { name: 'RogueMissile', lvl: 1 };
+    const s = data?.skills?.byNameOf(sk.name);
+    const calc = data?.skillCalc;
+    if (!data || !s || !calc || !t) return;
+    const lvl = sk.lvl;
+    const own: SkillOwner = { baseLevel: (id) => (id === s.id ? lvl : 0), skillLevel: (id) => (id === s.id ? lvl : 0), unitLevel: pet.stats.level };
+    if (s.auraTargetState) {
+      const radius = Math.max(1, calc.eval(s, s.auraRangeCalc, lvl, own));
+      const len = Math.max(1, calc.eval(s, s.auraLenCalc, lvl, own));
+      const stats: Record<string, number> = {};
+      for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, own);
+      for (const m of this.monstersNear(pet.x, pet.y, radius)) m.states.set(s.auraTargetState, this.tickCount + len, stats);
+      this.events.push({ type: 'mercSkill', skill: s.name });
+      return;
+    }
+    const mname = s.srvMissile || s.srvMissileA;
+    const def = data.missiles.get(mname);
+    if (!def) return;
+    const srcDam = s.srcDam || def.srcDamage || 128;
+    const a = pet.stats.a1;
+    const roll = () => {
+      const d = emptyDamage();
+      d.hitClass = def.hitClass || 10;
+      d.phys = Math.trunc((rollDamage({ min: a.min, max: a.max }, pet.rng) * 256 * srcDam) / 128);
+      if (s.eType) {
+        const min = calc.minElem256(s, lvl, own, false), max = calc.maxElem256(s, lvl, own, false);
+        addElemental(d, s.eType, min + pet.rng.pick(Math.max(0, max - min)), calc.elemLength(s, lvl, own));
+      }
+      return d;
+    };
+    const th = s.toHit + s.levToHit * (lvl - 1);
+    const ar = a.toHit + Math.trunc((a.toHit * th) / 100);
+    const sp = missileStep(def.vel), dd = Math.hypot(t.x - pet.x, t.y - pet.y) || 1;
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: pet.x, y: pet.y, dx: ((t.x - pet.x) / dd) * sp, dy: ((t.y - pet.y) / dd) * sp, left: def.range, age: 0,
+      owner: 'player', ownerId: pet.id, ownerLevel: pet.stats.level, hitClass: def.hitClass || 10, ar, roll, hit: new Set(), lvl, skill: s,
+    });
+    this.events.push({ type: 'mercShot', skill: s.name, missile: def.name });
+  }
+
+  /**
+   * 용병 경험치. 출처: SUNITDMG_ComputeExperienceGain(용병 레벨 기준, 상한 (Exp(L+1) − Exp(L)) >> 6), 용병이 죽인 게 아니면 × 86/256,
+   *   SUNITDMG_AddExperienceForHireling — 용병 레벨 ≥ 플레이어 레벨이면 없음, 레벨업 시 MONSTERAI_UpdateMercStatsAndSkills
+   */
+  private mercGainExp(m: MonsterUnit, attackerId?: number): void {
+    const rec = this.merc, u = this.mercUnit(), st = this.mercInfo, c = this.character, db = this.data?.hirelings;
+    if (!rec || !u || !st || !c || !db || rec.level >= c.level) return;
+    const gain = mercExpGain(adjustedExperience(m.stats.exp, rec.level, m.stats.level), rec.level, st.row, attackerId === u.id);
+    if (gain <= 0) return;
+    rec.experience += gain;
+    const lvl = mercLevelFor(rec.experience, rec.level, st.row);
+    this.events.push({ type: 'mercExperience', amount: gain });
+    if (lvl <= rec.level) return;
+    rec.level = lvl;
+    const next = mercStats(db, rec.hirelingId, lvl, (sk) => this.data?.skills?.byNameOf(sk)?.reqLevel ?? 0);
+    if (!next) return;
+    this.mercInfo = next;
+    u.stats = { ...u.stats, level: lvl, maxHp: next.maxHp, defense: next.defense,
+      a1: { min: next.minDamage, max: next.maxDamage, toHit: next.toHit }, a2: { min: next.minDamage, max: next.maxDamage, toHit: next.toHit },
+      s1: { min: next.minDamage, max: next.maxDamage, toHit: next.toHit } };
+    u.hp = next.maxHp;
+    u.resist = { dm: 0, ma: 0, fi: next.resist, li: next.resist, co: next.resist, po: next.resist };
+    this.events.push({ type: 'mercLevelUp', level: lvl });
   }
 
   private playerDie(): void {
@@ -4121,7 +4786,11 @@ export class Game {
     ms.y += ms.dy;
     if (ms.trail && ms.age % ms.trail.every === 0) this.spawnCloud(ms.trail.def, ms.x, ms.y, ms.trail.roll, ms);
     if (ms.groundTrail) this.spawnGroundFire(ms.groundTrail.def, ms.x, ms.y, ms.groundTrail.roll, ms);
-    const blocked = !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
+    // 용병 화살은 몬스터 미사일처럼 미사일 벽(0x04)·문에만 막힌다 (대상 고르기 sub_6FCF2CC0 의 시야 판정과 같은 기준)
+    const mercMissile = this.merc?.unitId !== null && ms.ownerId === this.merc?.unitId;
+    const blocked = mercMissile
+      ? (this.map.mask(Math.floor(ms.x), Math.floor(ms.y)) & (0x04 | 0x0800 | 0x0020)) !== 0
+      : !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
     if (blocked || ms.left <= 0) {
       this.missileEnd(ms, undefined);
       return true;
@@ -4190,7 +4859,7 @@ export class Game {
   private missileHit(ms: Missile, m: MonsterUnit, checkToHit: boolean): void {
     const c = this.character;
     if (!c || !ms.roll) return;
-    if (checkToHit && ms.ar !== undefined && !rollPercent(hitChance(ms.ar, this.monsterDefense(m, true), c.level, m.stats.level), this.rng)) {
+    if (checkToHit && ms.ar !== undefined && !rollPercent(hitChance(ms.ar, this.monsterDefense(m, true), ms.ownerId === this.player.id ? c.level : ms.ownerLevel, m.stats.level), this.rng)) {
       this.events.push({ type: 'miss', targetId: m.id });
       return;
     }
@@ -4201,7 +4870,8 @@ export class Game {
       if (m.type.undead) d.mag += Math.trunc((base * (ms.def.dmgParams[0] ?? 0)) / 100);
       if (m.type.demon) d.mag += Math.trunc((base * (ms.def.dmgParams[1] ?? 0)) / 100);
     }
-    this.damageMonster(m, d);
+    const byMerc = this.merc?.unitId !== null && ms.ownerId === this.merc?.unitId;
+    this.damageMonster(m, d, byMerc ? 'pet' : 'player', byMerc ? ms.ownerId : undefined);
   }
 
   /** 충돌·소멸: 폭발(Exploding Arrow, 벽에 맞은 Fire Ball), 구름(Plague Javelin) */
@@ -4952,6 +5622,10 @@ export class Game {
   }
 
   private regen(): void {
+    // 용병 생명 재생: STAT_HPREGEN = 최대 생명(<<8) / 2000 (1/256 단위, 매 프레임). 출처: MONSTERAI_UpdateMercStatsAndSkills
+    // 근사(원작 미확인): 재생 적용 주기 — 매 프레임
+    const mu = this.mercUnit();
+    if (mu && this.mercInfo && mu.hp < mu.stats.maxHp) mu.hp = Math.min(mu.stats.maxHp, mu.hp + this.mercInfo.hpRegen / 256);
     for (const m of this.monsters) {
       if (m.mode === 'DT' || m.mode === 'DD') continue;
       const poison = m.states.stat('hpregen');

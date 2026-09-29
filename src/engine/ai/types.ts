@@ -3,6 +3,7 @@ import type { MonsterStats, MonsterType, MonSeqFrame } from '../monster';
 import type { Pt } from '../geom';
 import type { Rng } from '../rng';
 import type { StateList } from '../states';
+import type { NpcState } from './npc';
 
 /** 원작 몬스터 모드 토큰 (MonMode.txt 순서: DT NU WL GH A1 A2 BL SC S1 S2 S3 S4 DD KB SQ RN) */
 export type MonMode = 'DT' | 'NU' | 'WL' | 'GH' | 'A1' | 'A2' | 'BL' | 'SC' | 'S1' | 'S2' | 'S3' | 'S4' | 'DD' | 'KB' | 'SQ' | 'RN';
@@ -111,6 +112,8 @@ export interface MonsterUnit {
   noticed?: boolean;
   /** Lightning Enchanted 마지막 발동 프레임 (원작 dwDurielFlag) */
   lastBolt?: number;
+  /** 마을 NPC·장식 유닛 (공격 불가, NPC AI) */
+  npc?: NpcState;
 }
 
 export interface PetInfo {
@@ -125,6 +128,10 @@ export interface PetInfo {
   damagePct: number;
   normalDamage: number;
   slowPct: number;
+  /** 용병 (pettype hireable) */
+  hireling?: boolean;
+  /** 용병이 이번 공격(A1)에 쓸 스킬 (hireling.txt Skill / monstats Skill1) */
+  mercSkill?: { name: string; lvl: number };
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean; id?: number }

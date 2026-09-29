@@ -5,6 +5,7 @@
 import type { Character, ClassName } from './player';
 import type { ItemInstance } from './treasure';
 import type { Placed } from './inventory';
+import type { MercSave } from './hireling';
 
 export const SAVE_VERSION = 2;
 
@@ -24,6 +25,10 @@ export interface CharacterSave {
   corpse: Record<string, ItemInstance>;
   /** 활성 웨이포인트 번호 (levels.txt Waypoint). 원작도 캐릭터마다 저장 (D2WaypointDataStrc). 예전 저장은 [0] (마을만) */
   waypoints: number[];
+  /** 용병 (없으면 null). 예전 저장은 필드 없음 → null */
+  merc: MercSave | null;
+  /** 끝낸 퀘스트 상태 (Game.quests). 예전 저장은 [] */
+  quests: string[];
   savedAt: number;
 }
 
@@ -37,6 +42,8 @@ export interface SaveItems {
   stashGold?: number;
   corpse?: Record<string, ItemInstance>;
   waypoints?: number[];
+  merc?: MercSave | null;
+  quests?: string[];
 }
 
 export function makeSave(name: string, character: Character, gold: number, items: SaveItems, now = Date.now()): CharacterSave {
@@ -52,6 +59,8 @@ export function makeSave(name: string, character: Character, gold: number, items
     stashGold: items.stashGold ?? 0,
     corpse: structuredClone(items.corpse ?? {}),
     waypoints: [...new Set([0, ...(items.waypoints ?? [])])].sort((a, b) => a - b),
+    merc: items.merc ? { ...items.merc } : null,
+    quests: [...(items.quests ?? [])],
     savedAt: now,
   };
 }
@@ -103,6 +112,12 @@ export function parseSave(text: string): CharacterSave {
   // 웨이포인트 필드가 없던 저장 호환: 마을(0)만 활성. 숫자가 아닌 값은 버린다
   s.waypoints = [...new Set([0, ...(Array.isArray(s.waypoints) ? s.waypoints.filter((n): n is number => Number.isInteger(n) && n >= 0 && n < 255) : [])])].sort((a, b) => a - b);
   for (const it of Object.values(s.corpse)) normalizeItem(it);
+  // 용병·퀘스트 필드가 없던 저장 호환. 모양이 맞지 않는 용병 기록은 버린다
+  const m = s.merc as Partial<MercSave> | null | undefined;
+  s.merc = m && typeof m.name === 'string' && Number.isInteger(m.seed) && Number.isInteger(m.hirelingId) && Number.isInteger(m.level) && typeof m.experience === 'number'
+    ? { name: m.name, seed: m.seed as number, hirelingId: m.hirelingId as number, level: m.level as number, experience: m.experience, dead: !!m.dead }
+    : null;
+  s.quests = Array.isArray(s.quests) ? s.quests.filter((q): q is string => typeof q === 'string') : [];
   return s as CharacterSave;
 }
 

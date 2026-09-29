@@ -10,6 +10,8 @@ import { parseBookCharges, parseNpcPrices } from '../engine/price';
 import { ItemGen } from '../engine/itemgen';
 import { ObjectDb } from '../engine/objects';
 import { UniqueDb } from '../engine/uniques';
+import { HirelingDb } from '../engine/hireling';
+import { parseGamble } from '../engine/shop';
 import type { GameData } from '../engine/game';
 import { GameTables, type AssetSource } from './tables';
 
@@ -38,6 +40,8 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     skills, skillCalc: new SkillCalc(skills), coldDivisor: n(normal?.MonsterColdDivisor) || 1, freezeDivisor: n(normal?.MonsterFreezeDivisor) || 1,
     difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
     objects: new ObjectDb({ objects: tables.table('Objects'), objGroup: tables.table('ObjGroup'), shrines: tables.table('shrines'), levels: tables.table('Levels') }),
+    hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc')),
+    gamble: parseGamble(items, tables.table('gamble')),
     uniques: new UniqueDb(monsters, {
       monUMod: tables.table('MonUMod'), superUniques: tables.table('SuperUniques'), monPreset: tables.table('MonPreset'), monPlace: tables.table('MonPlace'),
       prefix: tables.table('UniquePrefix'), suffix: tables.table('UniqueSuffix'), appellation: tables.table('UniqueAppellation'),

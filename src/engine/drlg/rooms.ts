@@ -19,14 +19,14 @@ export interface RoomUnit {
   type: number; id: number; x: number; y: number; code?: string;
   /** DS1 유닛 플래그 (bit 1 = 배치 안 함 — 원작 bSpawned & 1) */
   flags?: number;
-  /** DS1 유닛 경로 (서브타일, 유닛과 같은 좌표계) — 원작 pMapAI (Countess 불벽 지점) */
-  path?: { x: number; y: number }[];
+  /** DS1 유닛 경로 (서브타일, 유닛과 같은 좌표계, 점마다 원작 경로 동작) — 원작 pMapAI (Countess 불벽 지점, 마을 NPC 동작) */
+  path?: { x: number; y: number; action?: number }[];
 }
 
 /** 유닛과 경로를 함께 옮긴다 */
 export function shiftUnit<T extends RoomUnit>(u: T, dx: number, dy: number): T {
   const out = { ...u, x: u.x + dx, y: u.y + dy };
-  if (u.path) out.path = u.path.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  if (u.path) out.path = u.path.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }));
   return out;
 }
 
@@ -78,7 +78,7 @@ export function ds1Units(d: Ds1): RoomUnit[] {
     if (id < 0) continue;
     const u: RoomUnit = { type: o.type, id, x: o.x, y: o.y };
     if (o.flags) u.flags = o.flags;
-    if (o.type === 1 && o.path.length) u.path = o.path.map((p) => ({ x: p.x, y: p.y }));
+    if (o.type === 1 && o.path.length) u.path = o.path.map((p) => ({ x: p.x, y: p.y, action: p.action }));
     out.push(u);
   }
   return out;

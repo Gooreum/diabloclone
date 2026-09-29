@@ -9,6 +9,7 @@ import type { AiWorld, MonsterUnit } from './types';
 
 export type { AiTarget, AiWorld, MonCast, MonMode, MonsterUnit, PetInfo, SkillTarget } from './types';
 export { MONMODE_INDEX } from './types';
+export { thinkNpc, type NpcPathNode, type NpcState } from './npc';
 export { aiParam, circle, escape, idle, moveToTarget, recentlyHit, rollChance, rollPct, setVelocity, wait, walkCloseToUnit, walkInRadius, walkToTarget } from './tactics';
 
 const PLAYER_SIZE = 2;

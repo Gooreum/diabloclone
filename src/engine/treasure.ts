@@ -128,6 +128,11 @@ export class TreasureDb {
   }
 
   /** 불러온 아이템 id 와 겹치지 않도록 다음 id 를 올린다 */
+  /** 새 아이템 Id (상점에서 산 아이템 복제 — 원작 ITEMS_Duplicate) */
+  allocId(): number {
+    return this.nextId++;
+  }
+
   reserveIds(maxId: number): void {
     this.nextId = Math.max(this.nextId, maxId + 1);
   }

@@ -118,8 +118,11 @@ export class UnitGfx {
     return trans ? { cof, layers, trans } : { cof, layers };
   }
 
-  /** 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환 */
-  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number): { x: number; y: number; w: number; h: number } | null {
+  /**
+   * 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환.
+   * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 캔버스 brightness(1.6) 필터로 근사)
+   */
+  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
@@ -141,13 +144,14 @@ export class UnitGfx {
       }
       // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사
       const blend = layer?.transparent ? layer.drawEffect : -1;
-      if (blend >= 0) {
+      if (blend >= 0 || bright) {
         ctx.save();
-        if (blend <= 2) ctx.globalAlpha = [0.75, 0.5, 0.25][blend] as number;
-        else ctx.globalCompositeOperation = blend === 4 ? 'multiply' : 'lighter';
+        if (bright) ctx.filter = 'brightness(1.6)';
+        if (blend >= 0 && blend <= 2) ctx.globalAlpha = [0.75, 0.5, 0.25][blend] as number;
+        else if (blend >= 0) ctx.globalCompositeOperation = blend === 4 ? 'multiply' : 'lighter';
       }
       ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
-      if (blend >= 0) ctx.restore();
+      if (blend >= 0 || bright) ctx.restore();
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);
       r0 = Math.max(r0, x + dir.box.left + dir.box.width);

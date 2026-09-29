@@ -9,6 +9,8 @@
 // 근사(원작 미확인): 800 폭 배치 — 원작 클래식 파일에는 800ctrlpnl7 이 없어 640 조각(0·1·2·3·4)에 조각5(128, 오른쪽 경험치 끝)를 이어 붙이고
 //   남는 32픽셀은 조각5 가운데 테두리를 한 번 더 그려 채움. 조각5 왼쪽 빈 칸은 어둡게 채움.
 //   미니 패널 위치(패널 위 가운데), 레벨 업 버튼 위치, 경험치·스태미나 막대 색, 스킬 고르기 목록 배치(행당 10개, 버튼 위로 쌓음)
+// 벨트 펼치기(원작: 벨트를 누르거나 ~ 키 — 벨트 크기(belts.txt numboxes ÷ 4)만큼 줄이 패널 위로 펼쳐진다, 칸 번호 = 줄 × 4 + 열, 아래 줄이 0):
+//   근사(원작 미확인): 펼친 줄 간격 32, 어두운 바탕 + 금색 테두리 (원작 테두리 그림 미확인)
 import type { WorldSnapshot } from '../engine/game';
 import type { Character, ExpTable } from '../engine/player';
 import type { ItemStore } from '../engine/itemstore';
@@ -86,6 +88,8 @@ const fmt = (s: string, ...v: (string | number)[]) => {
 
 export class ControlPanel {
   miniOpen = false;
+  /** 벨트 펼침 (원작 Show Belt) */
+  beltOpen = false;
   skillMenu: 'left' | 'right' | null = null;
   private readonly art: UiArt;
   private readonly icons: ItemIcons;
@@ -150,6 +154,8 @@ export class ControlPanel {
   }
 
   click(x: number, y: number, st: HudState, button = 0): HudAction | null {
+    const br = this.beltRowsHit(x, y, st);
+    if (br) return br;
     // 스킬 고르기 목록이 열려 있으면 먼저
     if (this.skillMenu) {
       const hand = this.skillMenu;
@@ -179,6 +185,23 @@ export class ControlPanel {
     for (let i = 0; i < 4; i++) if (inRect({ x: HUD.belt.xs[i] ?? 0, y: HUD.belt.y, w: HUD.belt.w, h: HUD.belt.h }, x, y)) return { kind: 'belt', slot: i };
     void button;
     return { kind: 'panel' };
+  }
+
+  /** 펼친 벨트 줄 칸 (줄 1 부터, 화면 좌표) */
+  beltCell(slot: number): Rect {
+    const row = Math.floor(slot / 4), col = slot % 4;
+    return { x: HUD.belt.xs[col] ?? 0, y: HUD.belt.y - row * 32, w: HUD.belt.w, h: HUD.belt.h };
+  }
+
+  /** 펼친 벨트 윗줄 클릭 (패널보다 먼저) */
+  private beltRowsHit(x: number, y: number, st: HudState): HudAction | null {
+    if (!this.beltOpen) return null;
+    const cap = st.store.beltCapacity();
+    for (let i = 4; i < cap; i++) if (inRect(this.beltCell(i), x, y)) return { kind: 'belt', slot: i };
+    const top = this.beltCell(cap - 1);
+    // 펼친 틀 안의 빈 곳도 패널 (월드로 가지 않음)
+    if (cap > 4 && inRect({ x: HUD.belt.xs[0] - 3, y: top.y - 3, w: HUD.belt.xs[3] + HUD.belt.w - HUD.belt.xs[0] + 6, h: HUD.belt.y - top.y }, x, y)) return { kind: 'panel' };
+    return null;
   }
 
   /** 벨트 칸 번호 (마우스 아래) */
@@ -231,12 +254,15 @@ export class ControlPanel {
     const frac = Number.isFinite(hi) && hi > lo ? (p.experience - lo) / (hi - lo) : 1;
     ctx.fillStyle = '#c7b377';
     ctx.fillRect(HUD.exp.x, HUD.exp.y, Math.round(HUD.exp.w * Math.max(0, Math.min(1, frac))), HUD.exp.h);
-    // 스태미나 막대 (원작: 노란 막대, 줄어들면 짧아짐 — 색 근사)
-    const sfrac = ch.maxStamina ? ch.stamina / ch.maxStamina : 0;
-    ctx.fillStyle = sfrac < 0.25 ? '#a02010' : '#b08a20';
+    // 스태미나 막대 (원작: 노란 막대, 줄어들면 짧아짐 — 색 근사). 값 = 엔진 스냅숏 (아이템·버프 포함)
+    // 출처: states.txt stambarblue — 스태미나 물약(staminapot)·신전(shrine_stamina) 상태면 파란 막대
+    const sfrac = p.maxStamina ? p.stamina / p.maxStamina : 0;
+    const blue = p.states.includes('staminapot') || p.states.includes('shrine_stamina');
+    ctx.fillStyle = blue ? '#2848c8' : sfrac < 0.25 ? '#a02010' : '#b08a20';
     ctx.fillRect(HUD.stamina.x, HUD.stamina.y + 3, Math.round(HUD.stamina.w * Math.max(0, Math.min(1, sfrac))), HUD.stamina.h - 6);
     // 달리기/걷기 버튼 (프레임 0/1 걷기, 2/3 달리기)
-    a.draw(ctx, RUN, st.run ? 2 : 0, HUD.run.x, HUD.run.y);
+    // 근사(원작 미확인): 스태미나가 바닥나 걷는 동안(스냅숏 running = false)은 걷기 모양
+    a.draw(ctx, RUN, st.run && (p.running || p.stamina >= 1) ? 2 : 0, HUD.run.x, HUD.run.y);
     // 미니 패널 버튼 (0 닫힘, 2 열림)
     a.draw(ctx, MENUBTN, this.miniOpen ? 2 : 0, HUD.menuBtn.x, HUD.menuBtn.y);
     // 스킬 버튼
@@ -248,6 +274,24 @@ export class ControlPanel {
       const img = it ? this.icons.get(it) : null;
       const bx = HUD.belt.xs[i] ?? 0;
       if (img) ctx.drawImage(img as CanvasImageSource, Math.round(bx + HUD.belt.w / 2 - img.width / 2), Math.round(HUD.belt.y + HUD.belt.h / 2 - img.height / 2));
+    }
+    // 펼친 벨트 (윗줄들)
+    const cap = st.store.beltCapacity();
+    if (this.beltOpen && cap > 4) {
+      const top = this.beltCell(cap - 1);
+      const bx = (HUD.belt.xs[0] ?? 0) - 3, bw = (HUD.belt.xs[3] ?? 0) + HUD.belt.w - (HUD.belt.xs[0] ?? 0) + 6;
+      ctx.fillStyle = 'rgba(8,8,8,0.9)';
+      ctx.fillRect(bx, top.y - 3, bw, HUD.belt.y - top.y);
+      ctx.strokeStyle = '#6b5a36';
+      ctx.strokeRect(bx + 0.5, top.y - 2.5, bw - 1, HUD.belt.y - top.y - 1);
+      for (let i = 4; i < cap; i++) {
+        const r = this.beltCell(i);
+        ctx.strokeStyle = '#3a3222';
+        ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+        const it = st.store.belt[i];
+        const img = it ? this.icons.get(it) : null;
+        if (img) ctx.drawImage(img as CanvasImageSource, Math.round(r.x + r.w / 2 - img.width / 2), Math.round(r.y + r.h / 2 - img.height / 2));
+      }
     }
     // 레벨 업 버튼
     if (ch.statPoints > 0) {
@@ -285,7 +329,7 @@ export class ControlPanel {
     const near = (g: { x: number; y: number }) => (m.x - g.x - 40) ** 2 + (m.y - g.y - 40) ** 2 < 40 * 40;
     if (near(HUD.lifeGlobe)) text = fmt(st.str('panelhealth'), Math.floor(p.life), Math.floor(p.maxLife));
     else if (near(HUD.manaGlobe)) text = fmt(st.str('panelmana'), Math.floor(p.mana), Math.floor(p.maxMana));
-    else if (inRect(HUD.stamina, m.x, m.y)) text = fmt(st.str('panelstamina'), Math.floor(ch.stamina), Math.floor(ch.maxStamina));
+    else if (inRect(HUD.stamina, m.x, m.y)) text = fmt(st.str('panelstamina'), Math.floor(p.stamina), Math.floor(p.maxStamina));
     else if (inRect({ x: HUD.exp.x, y: HUD.exp.y - 3, w: HUD.exp.w, h: 9 }, m.x, m.y)) text = fmt(st.str('panelexp'), p.experience, st.exp ? st.exp.threshold(p.level) : 0);
     else if (inRect(HUD.run, m.x, m.y)) text = st.str(st.run ? 'RunOff' : 'RunOn');
     else if (this.miniOpen && inRect(HUD.mini, m.x, m.y)) {

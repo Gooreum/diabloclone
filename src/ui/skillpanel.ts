@@ -5,15 +5,17 @@
 //   아이콘 간격 가로 69 · 세로 68 (그림의 칸 간격 측정, OpenDiablo2 skilltree.go skillIconDistX/Y 와 같음)
 // 출처(문자열): string.tbl StrSklTree1~3 "Skill" "Choices" "Remaining", 탭 이름 StrSklTree4~25 (예: 바바리안 "Combat"+"Skills", "Combat"+"Masteries", "Warcries"),
 //   skilldesc str name / str long, skilldesc3 "Required Level : ", StrSkill2 "Current Skill Level: "
-// 근사(원작 미확인): 첫 아이콘 위치 (15,15), 레벨 숫자 위치(아이콘 칸 오른쪽 아래 계단), 배울 수 없는 스킬은 어둡게, 툴팁은 이름·설명·요구 레벨·현재 레벨만
-//   (원작의 레벨별 피해·마나 줄은 생략)
+// 근사(원작 미확인): 첫 아이콘 위치 (15,15), 레벨 숫자 위치(아이콘 칸 오른쪽 아래 계단), 배울 수 없는 스킬은 어둡게
+// 툴팁: 이름 → 설명 → dsc2 줄 → 요구 레벨 → 현재 레벨(또는 First Level) 줄 + 다음 레벨 줄 → dsc3(시너지) — 줄 만들기는 src/ui/skilltip.ts
 import type { Character } from '../engine/player';
+import type { TextColorName } from '../formats/pl2';
 import type { SkillDb, SkillRecord } from '../engine/skills/db';
 import { learnError } from '../engine/skills/rules';
 import { UI, type UiArt } from './art';
 import { CLOSE_BTN } from './charpanel';
 import { skillIconPath } from './hud';
 import { HotLayer, type HRect } from './hotspot';
+import type { SkillTipLines } from './skilltip';
 import { d2text, drawText } from './text';
 
 export const RIGHT_PANEL = { x: 400, y: 60, w: 320, h: 432 } as const;
@@ -40,11 +42,15 @@ export interface SkillPanelDeps {
   str: (k: string) => string;
   /** skilldesc str long (설명) */
   describe: (s: SkillRecord) => string;
+  /** 레벨별 줄 (skilldesc desc/dsc2/dsc3) */
+  tip?: (s: SkillRecord, lvl: number) => SkillTipLines;
   onClose: () => void;
 }
 
 export class SkillTree {
   page = 1;
+  /** e2e: 마지막으로 그린 툴팁 줄 */
+  lastTip: string[] = [];
   private readonly art: UiArt;
   private readonly deps: SkillPanelDeps;
   readonly layer: HotLayer;
@@ -152,11 +158,17 @@ export class SkillTree {
     const s = this.deps.str;
     const lvl = ch.skills[sk.id] ?? 0;
     const desc = this.deps.describe(sk);
-    const lines: { text: string; color: 'green' | 'white' | 'red' }[] = [{ text: sk.displayName, color: 'green' }];
+    const lines: { text: string; color: TextColorName }[] = [{ text: sk.displayName, color: 'green' }];
     // 원작 string.tbl 설명은 줄 순서가 아래→위로 저장돼 있다 (예: skillld126 "to enemies…\npowerful blow…")
     for (const l of desc.split('\n').reverse()) if (l.trim()) lines.push({ text: l, color: 'white' });
+    const tip = this.deps.tip?.(sk, lvl);
+    if (tip?.dsc2.length) lines.push(...tip.dsc2);
+    lines.push({ text: '', color: 'white' });
     lines.push({ text: `${s('skilldesc3')}${sk.reqLevel}`, color: ch.level < sk.reqLevel ? 'red' : 'white' });
-    if (lvl) lines.push({ text: `${s('StrSkill2')}${lvl}`, color: 'white' });
+    if (tip) lines.push(...tip.level);
+    else if (lvl) lines.push({ text: `${s('StrSkill2')}${lvl}`, color: 'white' });
+    if (tip?.dsc3.length) lines.push({ text: '', color: 'white' }, ...tip.dsc3);
+    this.lastTip = lines.map((l) => l.text);
     const lh = d2text.lineHeight('font16');
     const w = Math.max(...lines.map((l) => d2text.width(l.text))) + 12, h = lines.length * lh + 6;
     const x = Math.max(2, Math.min(798 - w, mouse.x - w - 10)), y = Math.max(2, Math.min(598 - h, mouse.y - h / 2));

@@ -40,6 +40,8 @@ export interface CharPanelDeps {
   str: (k: string) => string;
   spendStat: (stat: StatName) => void;
   onClose: () => void;
+  /** 스태미나 현재/최대 (엔진 스냅숏 — 아이템·버프 포함) */
+  stamina?: () => { cur: number; max: number };
 }
 
 export class CharPanel {
@@ -147,7 +149,8 @@ export class CharPanel {
       cell(String(Math.floor(cur)), 231, y, 40, 17);
       cell(String(Math.floor(max)), 271, y, 39, 17);
     };
-    pair(s('strchrstm'), ch.stamina, dv?.maxStamina ?? ch.maxStamina, 231);
+    const stm = this.deps.stamina?.();
+    pair(s('strchrstm'), stm?.cur ?? ch.stamina, stm?.max ?? dv?.maxStamina ?? ch.maxStamina, 231);
     pair(s('strchrlif'), ch.life, dv?.maxLife ?? ch.maxLife, 255);
     pair(s('strchrman'), ch.mana, dv?.maxMana ?? ch.maxMana, 293);
     // 저항

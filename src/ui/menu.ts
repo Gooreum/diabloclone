@@ -5,8 +5,12 @@
 //   *s.dc6 (빛 효과 겹침), textbox.dc6 (이름 칸 169×26), 글꼴 fontexocet10 (단추) · font30 (제목) · font16 (설명)
 // 출처(배치): OpenDiablo2 main_menu.go (로고 400,120 · 단추 x 264, y 290/330/370/500), character_select.go (칸 37+272·열, 86+95·행 · 단추 33,468 / 433,468 / 33,537 / 627,537),
 //   select_hero_class.go (모닥불 380,335 · 아마존 100,339 · 네크로맨서 300,335 · 바바리안 400,330 · 팔라딘 521,338 · 소서리스 626,352 · 이름 칸 318,493 · 제목 400,17 · 클래스 이름 400,65)
-// 근사(원작 미확인): 단추 문구·클래스 설명은 원작 D2Launch 내장 문자열(string.tbl 에 없음)을 기억에 따라 영어로, 애니메이션 속도 초당 25프레임,
-//   캐릭터 선택 칸의 캐릭터 그림(원작은 게임 속 모습) 생략, 영웅 8명 넘으면 스크롤 없이 최근 8명만, Battle.net·Other Multiplayer 는 동작 없음
+// 캐릭터 선택 칸의 영웅 그림 = 게임 속 모습 (클래스 COF + 장착 외형, 서 있기 NU, 앞을 봄 — main 이 heroFigure 로 그린다)
+// 8명 넘으면 스크롤: 오른쪽 스크롤 막대 data\global\ui\PANEL\scrollbar.dc6 (10×10: 0 위, 1 아래, 2·3 눌림, 4 손잡이, 5 바탕 — 원작 그림 확인),
+//   출처(배치): OpenDiablo2 character_select.go 스크롤 막대 (586, 87, 높이 369), 한 번에 한 줄(2명)
+// 지우기 확인: CharSelect\PopUpOkCancel.dc6 (264×176, 단추 자리 y 133~164 — 원작 그림 측정) + FrontEnd\CancelButtonBlank.dc6 (96×32)
+// 근사(원작 미확인): 단추 문구·클래스 설명·지우기 확인 문구는 원작 D2Launch 내장 문자열(string.tbl 에 없음)을 기억에 따라 영어로, 애니메이션 속도 초당 25프레임,
+//   영웅 그림 위치(칸 왼쪽 45, 아래 82), 확인 창 가운데 배치, Battle.net·Other Multiplayer 는 동작 없음
 import type { HeroSummary } from '../engine/save';
 import { validHeroName } from '../engine/save';
 import { CLASSIC_CLASSES, type ClassName } from '../engine/player';
@@ -21,6 +25,11 @@ const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;
 const FPS = 25;
 const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
+const SCROLL = `${UI}PANEL\\scrollbar.dc6`, POPUP = `${CS}PopUpOkCancel.dc6`, SMALL = `${FE}CancelButtonBlank.dc6`;
+const SB = { x: 586, y: 87, h: 369 } as const;
+const POP = { x: 268, y: 212, w: 264, h: 176 } as const;
+/** 캐릭터 선택 칸의 영웅 그림 (main: 저장된 장비로 COF 합성). 그렸으면 true */
+export type HeroFigure = (ctx: CanvasRenderingContext2D, name: string, x: number, y: number, now: number) => boolean;
 
 /** 클래스별 프런트엔드 애니메이션 (파일 접두·위치) */
 const HERO: Record<ClassName, { dir: string; pre: string; x: number; y: number; desc: string }> = {
@@ -47,6 +56,13 @@ export class Menu {
   private t0 = 0;
   private heroes: HeroSummary[] = [];
   private selectedHero = 0;
+  /** 스크롤 (줄 단위, 한 줄 = 2명) */
+  private scroll = 0;
+  private confirmDelete = false;
+  /** 영웅 그림 (없으면 클래스 서 있기 그림으로 근사) */
+  heroFigure: HeroFigure | null = null;
+  /** 맨 위에 덧그리기 (원작 커서) */
+  overlay: ((ctx: CanvasRenderingContext2D, mouse: { x: number; y: number } | null, now: number) => void) | null = null;
   private cls: ClassName | null = null;
   private hover: ClassName | null = null;
   private clsAnim: Partial<Record<ClassName, { anim: Anim; start: number }>> = {};
@@ -78,7 +94,11 @@ export class Menu {
       const r = this.stage.getBoundingClientRect();
       this.mouse = { x: e.clientX - r.left, y: e.clientY - r.top };
     });
-    void sky.preload([`${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
+    this.layer.root.addEventListener('wheel', (e) => {
+      if (this.screen !== 'select' || this.confirmDelete) return;
+      this.scrollBy(e.deltaY > 0 ? 1 : -1);
+    });
+    void sky.preload([SCROLL, POPUP, SMALL, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
     void fechar.preload([`${FE}CharacterCreate.dc6`, `${FE}fire.dc6`, `${FE}textbox.dc6`, ...CLASSIC_CLASSES.flatMap((c) => [heroFile(c, 'NU1'), heroFile(c, 'NU2'), heroFile(c, 'FW'), heroFile(c, 'NU3'), heroFile(c, 'BW')])]);
   }
 
@@ -126,14 +146,12 @@ export class Menu {
       this.btn('multi', { x: 264, y: 370, w: 272, h: 35 }, () => undefined, 'btn-multiplayer', 'Other Multiplayer');
       this.btn('exit', { x: 264, y: 500, w: 272, h: 35 }, () => undefined, 'btn-exit-d2', 'Exit Diablo II');
     } else if (screen === 'select') {
-      this.heroes.slice(0, 8).forEach((h, i) => {
-        this.btn(`hero:${h.name}`, this.heroRect(i), (e) => {
-          this.selectedHero = i;
-          if (e.detail >= 2) this.finish({ kind: 'load', name: h.name });
-        }, `hero-${h.name}`, h.name);
-      });
+      this.confirmDelete = false;
+      this.layoutHeroes();
+      this.btn('sbup', { x: SB.x, y: SB.y, w: 10, h: 10 }, () => this.scrollBy(-1), 'charsel-up', 'Up');
+      this.btn('sbdown', { x: SB.x, y: SB.y + SB.h - 10, w: 10, h: 10 }, () => this.scrollBy(1), 'charsel-down', 'Down');
       this.btn('create', { x: 33, y: 468, w: 272, h: 35 }, () => this.go('create'), 'btn-create', 'Create New Character');
-      this.btn('delete', { x: 433, y: 468, w: 272, h: 35 }, () => void this.deleteHero(), 'btn-delete', 'Delete Character');
+      this.btn('delete', { x: 433, y: 468, w: 272, h: 35 }, () => this.askDelete(), 'btn-delete', 'Delete Character');
       this.btn('selexit', { x: 33, y: 537, w: 128, h: 35 }, () => this.go('title'), 'btn-select-exit', 'Exit');
       this.btn('selok', { x: 627, y: 537, w: 128, h: 35 }, () => {
         const h = this.heroes[this.selectedHero];
@@ -163,11 +181,56 @@ export class Menu {
     for (const h of this.heroes) this.layer.remove(`hero:${h.name}`);
     this.heroes = this.listHeroes ? await this.listHeroes() : [];
     this.selectedHero = 0;
+    this.scroll = 0;
+    this.go('select');
+  }
+
+  /** 영웅 칸 단추: 보이는 8칸만 (스크롤) */
+  private layoutHeroes(): void {
+    const first = this.scroll * 2;
+    this.heroes.forEach((h, i) => {
+      const k = `hero:${h.name}`;
+      const vis = i >= first && i < first + 8;
+      const el = this.layer.button(k, this.heroRect(i - first), (e) => {
+        const idx = this.heroes.findIndex((x) => x.name === h.name);
+        this.selectedHero = idx;
+        if (e.detail >= 2) this.finish({ kind: 'load', name: h.name });
+      }, { id: `hero-${h.name}` }, h.name);
+      if (!vis) el.style.display = 'none';
+    });
+  }
+
+  private maxScroll(): number {
+    return Math.max(0, Math.ceil(this.heroes.length / 2) - 4);
+  }
+
+  scrollBy(d: number): void {
+    this.scroll = Math.max(0, Math.min(this.maxScroll(), this.scroll + d));
+    this.layoutHeroes();
+  }
+
+  /** e2e: 스크롤 줄 */
+  get scrollRow(): number {
+    return this.scroll;
+  }
+
+  /** 지우기 확인 창 (원작: 정말 지울지 묻는다) */
+  private askDelete(): void {
+    if (!this.heroes[this.selectedHero]) return;
+    this.confirmDelete = true;
+    this.btn('delyes', { x: POP.x + 10, y: POP.y + 133, w: 96, h: 32 }, () => void this.deleteHero(), 'btn-delete-yes', 'Yes');
+    this.btn('delno', { x: POP.x + 163, y: POP.y + 133, w: 96, h: 32 }, () => this.closeConfirm(), 'btn-delete-no', 'No');
+    // 확인 창이 떠 있는 동안 다른 단추는 막는다
+    this.layer.only(new Set(['delyes', 'delno']));
+  }
+
+  private closeConfirm(): void {
     this.go('select');
   }
 
   private async deleteHero(): Promise<void> {
     const h = this.heroes[this.selectedHero];
+    this.confirmDelete = false;
     if (!h) return;
     await HeroStore.remove(h.name);
     await this.openSelect();
@@ -244,16 +307,22 @@ export class Menu {
       a.drawScreen(ctx, `${CS}charselectbckg.dc6`);
       const sel = this.heroes[this.selectedHero];
       if (sel) drawText(ctx, sel.name, 400, 20, { font: 'font42', align: 'center' });
-      this.heroes.slice(0, 8).forEach((h, i) => {
-        const r = this.heroRect(i);
+      const first = this.scroll * 2;
+      this.heroes.slice(first, first + 8).forEach((h, j) => {
+        const i = first + j;
+        const r = this.heroRect(j);
         if (i === this.selectedHero) a.drawTiles(ctx, `${CS}charselectbox.dc6`, 2, r.x, r.y, 0, 2);
+        // 영웅 그림: 게임 속 모습 (없으면 근사: 클래스 프런트엔드 서 있기 그림을 줄여서)
+        if (!this.heroFigure?.(ctx, h.name, r.x + 45, r.y + 82, now)) this.frontFigure(h.cls, r.x + 45, r.y + 82, fr);
         drawText(ctx, h.name, r.x + 100, r.y + 20, { font: 'font16', color: 'gold' });
         drawText(ctx, `Level ${h.level} ${h.cls}`, r.x + 100, r.y + 40, { font: 'font16', color: 'white' });
       });
+      this.drawScrollbar(ctx);
       this.button(a, WIDE, { x: 33, y: 468, w: 272, h: 35 }, 'Create New Character');
       this.button(a, WIDE, { x: 433, y: 468, w: 272, h: 35 }, 'Delete Character');
       this.button(a, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');
       this.button(a, MED, { x: 627, y: 537, w: 128, h: 35 }, 'OK');
+      if (this.confirmDelete) this.drawConfirm(ctx);
     } else {
       const a = this.fechar;
       a.drawScreen(ctx, `${FE}CharacterCreate.dc6`);
@@ -277,6 +346,36 @@ export class Menu {
       // 단추 그림은 Sky 팔레트용 (fechar 로 그리면 색이 깨진다 — 원작 파일 확인)
       this.button(this.sky, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');
       this.button(this.sky, MED, { x: 627, y: 537, w: 128, h: 35 }, 'OK');
+    }
+    this.overlay?.(ctx, this.mouse, now);
+  }
+
+  /** 근사: 영웅 그림을 못 그릴 때 클래스 프런트엔드 서 있기 그림(NU1)을 반 크기로 */
+  private frontFigure(c: ClassName, x: number, y: number, fr: number): void {
+    const f = this.fechar.frame(heroFile(c, 'NU1'), fr % (this.fechar.frames(heroFile(c, 'NU1'))?.length ?? 1));
+    if (!f) return;
+    this.ctx.drawImage(f.img as CanvasImageSource, Math.round(x - f.w / 4), Math.round(y - f.h / 2), Math.round(f.w / 2), Math.round(f.h / 2));
+  }
+
+  private drawScrollbar(ctx: CanvasRenderingContext2D): void {
+    const a = this.sky;
+    for (let y = SB.y + 10; y < SB.y + SB.h - 10; y += 10) a.draw(ctx, SCROLL, 5, SB.x, Math.min(y, SB.y + SB.h - 20));
+    a.draw(ctx, SCROLL, 0, SB.x, SB.y);
+    a.draw(ctx, SCROLL, 1, SB.x, SB.y + SB.h - 10);
+    const max = this.maxScroll();
+    const ty = SB.y + 10 + (max ? Math.round((this.scroll / max) * (SB.h - 30)) : 0);
+    if (max) a.draw(ctx, SCROLL, 4, SB.x, ty);
+  }
+
+  private drawConfirm(ctx: CanvasRenderingContext2D): void {
+    const a = this.sky;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, 800, 600);
+    a.drawTiles(ctx, POPUP, 2, POP.x, POP.y, 0, 2);
+    drawText(ctx, 'Are you sure that you want\nto delete this character?\nTake note: this will delete all\nversions of this Character.', POP.x + POP.w / 2, POP.y + 30, { font: 'font16', align: 'center', color: 'gold' });
+    for (const [bx, label] of [[POP.x + 10, 'YES'], [POP.x + 163, 'NO']] as const) {
+      a.draw(ctx, SMALL, 0, bx, POP.y + 133);
+      drawText(ctx, label, bx + 48, POP.y + 142, { font: 'fontexocet10', align: 'center', color: 'black' });
     }
   }
 

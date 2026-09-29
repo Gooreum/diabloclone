@@ -64,7 +64,8 @@ export class AutomapRenderer {
    * 드러난 타일을 그린다. 화면 중심 = 플레이어 (전체) / 오른쪽 위 상자 중심 (미니).
    * @param levelName AutoMap.txt LevelName (예: "1 Wilderness")
    */
-  draw(ctx: CanvasRenderingContext2D, mode: AutomapMode, level: PresetLevel, levelName: string, reveal: AutomapReveal, mk: AutomapMarkers, width: number, height: number): number {
+  /** alpha = 옵션 FADE (원작 Fade Automap — 근사(원작 미확인): 투명도 0.5) */
+  draw(ctx: CanvasRenderingContext2D, mode: AutomapMode, level: PresetLevel, levelName: string, reveal: AutomapReveal, mk: AutomapMarkers, width: number, height: number, alpha = 1): number {
     if (mode === 'off') return 0;
     const scale = mode === 'mini' ? 0.5 : 1;
     const box = mode === 'mini' ? { x: width - 200, y: 8, w: 192, h: 150 } : { x: 0, y: 0, w: width, h: height };
@@ -73,6 +74,7 @@ export class AutomapRenderer {
     const pax = ((mk.player.x - mk.player.y) * 16) / 10, pay = ((mk.player.x + mk.player.y) * 8) / 10;
     const toMap = (sx: number, sy: number) => ({ x: cx + (((sx - sy) * 16) / 10 - pax) * scale, y: cy + (((sx + sy) * 8) / 10 - pay) * scale });
     ctx.save();
+    ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.rect(box.x, box.y, box.w, box.h);
     ctx.clip();

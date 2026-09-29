@@ -91,7 +91,7 @@ export class ItemIcons {
   }
 }
 
-export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'close' } | { kind: 'panel' } | null;
+export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'close' } | { kind: 'gold' } | { kind: 'panel' } | null;
 
 export class InventoryPanel {
   readonly layout: InvLayout;
@@ -116,6 +116,8 @@ export class InventoryPanel {
     const inR = (r: Rect) => x >= r.l && x < r.r && y >= r.t && y < r.b;
     if (!inR(L.panel)) return null;
     if (inR({ l: L.panel.l + CLOSE.x, t: L.panel.t + CLOSE.y, r: L.panel.l + CLOSE.x + CLOSE.w, b: L.panel.t + CLOSE.y + CLOSE.h })) return { kind: 'close' };
+    // 금화 단추 (원작: 누르면 금화 창 — 떨어뜨리기, 보관함이 열려 있으면 넣기)
+    if (inR({ l: L.panel.l + GOLD.btnX, t: L.panel.t + GOLD.btnY, r: L.panel.l + GOLD.btnX + 20, b: L.panel.t + GOLD.btnY + 18 })) return { kind: 'gold' };
     const g = L.grid;
     if (x >= g.l && y >= g.t && x < g.l + g.cols * g.box && y < g.t + g.rows * g.box) {
       return { kind: 'inventory', x: Math.floor((x - g.l) / g.box), y: Math.floor((y - g.t) / g.box) };
@@ -130,6 +132,11 @@ export class InventoryPanel {
     const x = Math.round((mx - g.l) / g.box - item.invW / 2);
     const y = Math.round((my - g.t) / g.box - item.invH / 2);
     return { x: Math.max(0, Math.min(g.cols - item.invW, x)), y: Math.max(0, Math.min(g.rows - item.invH, y)) };
+  }
+
+  /** e2e: 금화 단추 가운데 */
+  goldCenter(): { x: number; y: number } {
+    return { x: this.layout.panel.l + GOLD.btnX + 10, y: this.layout.panel.t + GOLD.btnY + 9 };
   }
 
   /** 마우스 아래 아이템 */

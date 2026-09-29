@@ -2,6 +2,7 @@
 import type { Command } from '../engine/command';
 import { fromCanvas, type Camera } from '../render/iso';
 import { mapLeftClick, mapRightClick, type Hover } from './mapper';
+import { keyBindings } from '../ui/keys';
 
 export interface PickBox { kind: 'monster' | 'item' | 'corpse' | 'body' | 'object' | 'npc'; id: number; x: number; y: number; w: number; h: number }
 
@@ -44,7 +45,8 @@ export class InputController {
     on(window, 'mousemove', (e) => (this.mouse = this.local(e)));
     on(canvas, 'contextmenu', (e) => e.preventDefault());
     on(window, 'keydown', (e) => {
-      if (this.enabled && (e.key === 'r' || e.key === 'R')) this.run = !this.run;
+      // 달리기/걷기 (단축키 설정의 Toggle Run/Walk, 기본 R)
+      if (this.enabled && keyBindings.is(e, 'run')) this.run = !this.run;
     });
   }
 

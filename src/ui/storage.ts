@@ -26,6 +26,11 @@ export const HeroStore = {
     const all = (await tx('readonly', (s) => s.getAll())) as string[];
     return all.map((t) => summarize(parseSave(t))).sort((a, b) => b.savedAt - a.savedAt);
   },
+  /** 모든 저장 (캐릭터 선택 화면 영웅 그림 — 장착 외형) */
+  async saves(): Promise<CharacterSave[]> {
+    const all = (await tx('readonly', (s) => s.getAll())) as string[];
+    return all.map((t) => parseSave(t));
+  },
   async load(name: string): Promise<CharacterSave | null> {
     const t = (await tx('readonly', (s) => s.get(name))) as string | undefined;
     return t ? parseSave(t) : null;

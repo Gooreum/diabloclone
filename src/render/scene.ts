@@ -24,6 +24,8 @@ export interface SceneDeps {
   inTown: boolean;
   /** objects.txt (오브젝트 그래픽 토큰·애니메이션·선택 상자) */
   objectDb?: ObjectDb;
+  /** 마우스를 올린 유닛 (지난 프레임 클릭 상자 기준) — 밝게 그린다 */
+  hover?: { kind: string; id: number } | null;
 }
 
 /** 오브젝트 COF 레이어는 모두 기본 외형 'lit' (출처: objects.txt HD~S8 = 레이어 사용 여부, 원작 오브젝트 DCC 이름 <토큰><레이어>LIT<모드>HTH) */
@@ -76,7 +78,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
         if (!comp) return;
         const fpd = comp.cof.framesPerDirection;
         const frame = t.cycleAnim[o.mode] ? raw % fpd : Math.min(raw, fpd - 1);
-        const box = d.units.draw(ctx, comp, 0, frame, p.x, p.y);
+        const box = d.units.draw(ctx, comp, 0, frame, p.x, p.y, !!o.selectable && d.hover?.kind === 'object' && d.hover.id === o.id);
         if (!o.selectable) return;
         // 선택 상자: objects.txt Left/Top/Width/Height (있으면), 없으면 그림 영역
         if (t.width > 0 && t.height > 0) picks.push({ kind: 'object', id: o.id, x: p.x + t.left, y: p.y + t.top, w: t.width, h: t.height });
@@ -107,7 +109,8 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       depth: m.x + m.y,
       draw: (ctx, cm) => {
         const p = toCanvas(cm, m.x, m.y);
-        if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y);
+        const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
+        if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y, lit);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
@@ -142,7 +145,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       depth: cp.x + cp.y - 0.25,
       draw: (ctx, cm) => {
         const p = toCanvas(cm, cp.x, cp.y);
-        if (cc) d.units.draw(ctx, cc, cp.dir, 0, p.x, p.y);
+        if (cc) d.units.draw(ctx, cc, cp.dir, 0, p.x, p.y, d.hover?.kind === 'body');
         picks.push({ kind: 'body', id: 0, x: p.x - 30, y: p.y - 24, w: 60, h: 30 });
       },
     });

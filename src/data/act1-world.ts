@@ -1,10 +1,10 @@
-// Act 1 오버월드 (마을 + 야외 전 지역 + 수도원 정문/바깥 회랑): 원작 DRLG 이식 결과를 엔진 레벨로 조립.
+// Act 1 월드 (마을 + 야외 전 지역 + 수도원 + 모든 던전·트리스트럼): 원작 DRLG 이식 결과를 엔진 레벨로 조립.
 // 순수 알고리즘은 src/engine/drlg/* (act1.ts), 여기서는 원작 테이블·DS1/DT1 파일 접근과 LevelDef 구성만 한다.
 import { parseDt1, type Dt1Tile } from '../formats/dt1';
 import { buildPresetLevel, type PresetLevel } from '../engine/drlg/preset';
-import { ACT1_OVERWORLD, generateAct1World, type Act1World } from '../engine/drlg/act1';
+import { ACT1_ALL, generateAct1World, type Act1World } from '../engine/drlg/act1';
 import { townStartSubtile } from '../engine/drlg/layout';
-import { LEVEL, ROOM, type DrlgData } from '../engine/drlg/types';
+import { LEVEL, PREST, ROOM, type DrlgData } from '../engine/drlg/types';
 import { levelMonsterInfo, planSpawns } from '../engine/spawn';
 import { nearestWalkable } from '../engine/path';
 import { Rng } from '../engine/rng';
@@ -24,10 +24,38 @@ export const LEVEL_KEYS: Record<number, string> = {
   [LEVEL.BURIALGROUNDS]: 'burialgrounds',
   [LEVEL.MONASTERYGATE]: 'monasterygate',
   [LEVEL.OUTERCLOISTER]: 'outercloister',
+  [LEVEL.DENOFEVIL]: 'denofevil',
+  [LEVEL.CAVELEV1]: 'cave1',
+  [LEVEL.CAVELEV2]: 'cave2',
+  [LEVEL.UNDERGROUNDPASSAGELEV1]: 'passage1',
+  [LEVEL.UNDERGROUNDPASSAGELEV2]: 'passage2',
+  [LEVEL.HOLELEV1]: 'hole1',
+  [LEVEL.HOLELEV2]: 'hole2',
+  [LEVEL.PITLEV1]: 'pit1',
+  [LEVEL.PITLEV2]: 'pit2',
+  [LEVEL.CRYPT]: 'crypt',
+  [LEVEL.MAUSOLEUM]: 'mausoleum',
+  [LEVEL.FORGOTTENTOWER]: 'tower',
+  [LEVEL.TOWERCELLARLEV1]: 'towercellar1',
+  [LEVEL.TOWERCELLARLEV2]: 'towercellar2',
+  [LEVEL.TOWERCELLARLEV3]: 'towercellar3',
+  [LEVEL.TOWERCELLARLEV4]: 'towercellar4',
+  [LEVEL.TOWERCELLARLEV5]: 'towercellar5',
+  [LEVEL.BARRACKS]: 'barracks',
+  [LEVEL.JAILLEV1]: 'jail1',
+  [LEVEL.JAILLEV2]: 'jail2',
+  [LEVEL.JAILLEV3]: 'jail3',
+  [LEVEL.INNERCLOISTER]: 'innercloister',
+  [LEVEL.CATHEDRAL]: 'cathedral',
+  [LEVEL.CATACOMBSLEV1]: 'catacombs1',
+  [LEVEL.CATACOMBSLEV2]: 'catacombs2',
+  [LEVEL.CATACOMBSLEV3]: 'catacombs3',
+  [LEVEL.CATACOMBSLEV4]: 'catacombs4',
+  [LEVEL.TRISTRAM]: 'tristram',
 };
 
 /** DRLG 에 필요한 excel 테이블 (브라우저 preload 용) */
-export const ACT1_WORLD_TABLES = ['Levels', 'LvlPrest', 'LvlSub', 'LvlTypes', 'LvlWarp', 'Objects'];
+export const ACT1_WORLD_TABLES = ['Levels', 'LvlPrest', 'LvlSub', 'LvlTypes', 'LvlWarp', 'LvlMaze', 'Objects'];
 
 // 출처: D2MOO DrlgRoomTile.cpp DRLGROOMTILE_LoadDT1FilesForRoom — 마스크와 무관하게 항상 로드하는 DT1
 const ALWAYS_DT1 = ['Act1/Outdoors/Blank.dt1', 'Act1/Barracks/InvisWal.dt1', 'Act1/Barracks/Warp.dt1'];
@@ -43,14 +71,13 @@ export function levelTypeDt1Paths(tables: GameTables, levelType: number): string
   return [...out, ...ALWAYS_DT1.map(tilePath)];
 }
 
-/** 원작 DS1 (LvlPrest/LvlSub) 목록: Act 1 오버월드 생성이 읽을 수 있는 모든 파일 */
+/** 원작 DS1 (LvlPrest/LvlSub) 목록: Act 1 월드(오버월드 + 던전) 생성이 읽을 수 있는 모든 파일 */
 function act1Ds1Paths(tables: GameTables, data: DrlgData): string[] {
   const out = new Set<string>();
   const prestDefs = new Set<number>();
-  // 출처: DrlgOutWild/DrlgOutPlace 가 쓰는 LvlPrest Def 범위 (Act 1 마을 ~ DOE 입구, 묘지, 특수 프리셋) + 오버월드 프리셋 레벨
-  for (let d = 1; d <= 52; d++) prestDefs.add(d);
-  for (const d of [108, 160, 161, 162, 163]) prestDefs.add(d);
-  for (const id of ACT1_OVERWORLD) {
+  // 출처: LevelsIds.h D2C_LvlPrestIds — Act 1 행 (Def 1 마을 ~ 300 트리스트럼): 야외 프리셋·미로 방 프리셋·던전 프리셋 레벨
+  for (let d = 1; d <= PREST.TRISTRAM; d++) prestDefs.add(d);
+  for (const id of ACT1_ALL) {
     const p = data.lvlPrestByLevel(id);
     if (p) prestDefs.add(p.def);
   }
@@ -73,9 +100,17 @@ export function act1WorldPaths(src: AssetSource, tables: GameTables): string[] {
   const data = makeDrlgData(src, tables);
   const set = new Set<string>(act1Ds1Paths(tables, data));
   const types = new Set<number>();
-  for (const id of ACT1_OVERWORLD) types.add(data.level(id).levelType);
+  for (const id of ACT1_ALL) types.add(data.level(id).levelType);
   for (const t of types) for (const p of levelTypeDt1Paths(tables, t)) if (p) set.add(p);
   return [...set];
+}
+
+/** 이동 지점 둘레 3×3 서브타일 (걷기 가능한 칸이 없으면 5×5, 7×7 로 넓힌다 — 근사(원작 미확인)) */
+function warpRect(map: LevelDef['map'], x: number, y: number): { x: number; y: number; w: number; h: number } {
+  for (let r = 1; r <= 4; r++) {
+    for (let j = y - r; j <= y + r; j++) for (let i = x - r; i <= x + r; i++) if (map.walkable(i, j)) return { x: x - r, y: y - r, w: 2 * r + 1, h: 2 * r + 1 };
+  }
+  return { x: x - 1, y: y - 1, w: 3, h: 3 };
 }
 
 export interface WorldLevel {
@@ -92,6 +127,8 @@ export interface Act1GameWorld {
   byKey: Map<string, WorldLevel>;
   /** 새 게임 시작 위치 (마을, 서브타일) */
   start: { x: number; y: number };
+  /** 트리스트럼 도착 위치 (디버그·테스트용 진입 경로; 게임 안 포털은 Phase 10) */
+  tristram: { x: number; y: number } | null;
 }
 
 /**
@@ -138,22 +175,37 @@ export function buildAct1World(src: AssetSource, tables: GameTables, gameData: G
     if (e.dy !== undefined) exit.dy = e.dy;
     from.def.exits.push(exit);
   }
-  // 근사(원작 미확인) — Step 2 전 임시 연결: 같은 던전(예: Underground Passage)으로 들어가는 입구가 두 오버월드 레벨에 있으면
-  //   던전 생성 전까지 두 입구를 서로 직접 잇는다 (Stony Field ↔ Dark Wood). 도착 = 상대 입구 + LvlWarp ExitWalk 방향
-  const entrances = [...world.levels.values()].flatMap((l) => l.entrances.map((e) => ({ level: l.id, e })));
-  for (const a of entrances)
-    for (const b of entrances) {
-      if (a.level === b.level || a.e.toLevel !== b.e.toLevel) continue;
-      const from = byId.get(a.level), to = byId.get(b.level);
-      if (!from || !to) continue;
-      const wb = data.lvlWarp.find((r) => r.id === b.e.warpId);
-      from.def.exits.push({ x: a.e.x - 1, y: a.e.y - 1, w: 3, h: 3, to: to.key, toX: b.e.x + (wb?.exitWalkX ?? 3) * 2, toY: b.e.y + (wb?.exitWalkY ?? 3) * 2 });
+  // 레벨 이동 타일 (동굴 입구·계단·탑 문) → 출구. 도착 = 상대 레벨에서 이쪽으로 오는 이동 지점 + 그 LvlWarp ExitWalkX/Y.
+  // 출처: DRLGROOMTILE_AddWarp (이동 지점 = 타일×5 + LvlWarp OffsetX/Y), DRLGWARP_GetDestinationRoom (상대 레벨에서 출발 레벨로 가는 이동 타일)
+  // 근사(원작 미확인): 원작 D2Game 은 이동 지점 유닛을 클릭해야 넘어간다. 여기서는 이동 지점 둘레 3×3 서브타일에 들어서거나
+  //   LvlWarp SelectX/Y/DX/DY 화면 상자를 클릭하면 넘어간다. 도착 위치의 ExitWalk 걷기는 순간 배치로 대신한다.
+  for (const lv of world.levels.values()) {
+    const from = byId.get(lv.id);
+    if (!from) continue;
+    for (const w of lv.layout.warps) {
+      const to = byId.get(w.toLevel), dst = world.levels.get(w.toLevel);
+      if (!to || !dst) continue;
+      const back = dst.layout.warps.find((b) => b.toLevel === lv.id);
+      if (!back) continue;
+      const rec = data.lvlWarp.find((r) => r.id === w.warpId), brec = data.lvlWarp.find((r) => r.id === back.warpId);
+      const exit: LevelExit = { ...warpRect(from.def.map, w.x, w.y), to: to.key, toX: back.x + (brec?.exitWalkX ?? 0), toY: back.y + (brec?.exitWalkY ?? 0) };
+      if (rec) exit.warp = { x: w.x, y: w.y, selectX: rec.selectX, selectY: rec.selectY, selectDX: rec.selectDX, selectDY: rec.selectDY };
+      from.def.exits.push(exit);
     }
+  }
   const town = byId.get(LEVEL.ROGUEENCAMPMENT);
   if (!town) throw new Error('Act 1 world has no Rogue Encampment');
   const townLayout = world.levels.get(LEVEL.ROGUEENCAMPMENT)!.layout;
   const s = townStartSubtile(townLayout, new Rng((seed ^ 0x1) >>> 0)) ?? { x: Math.trunc(town.preset.collision.width / 2), y: Math.trunc(town.preset.collision.height / 2) };
   // 출처: DUNGEON_FindActSpawnLocationEx → COLLISION_GetFreeCoordinates (근사: 가장 가까운 걷기 가능 서브타일)
   const p = nearestWalkable(town.preset.collision, s, 20) ?? s;
-  return { world, levels, byKey, start: { x: p.x + 0.5, y: p.y + 0.5 } };
+  // 트리스트럼 도착 위치 (levels.txt Position=1: 마을과 같은 타일 정보 규칙). 포털은 Phase 10 퀘스트 단계
+  let tristram: { x: number; y: number } | null = null;
+  const tri = byId.get(LEVEL.TRISTRAM), triLayout = world.levels.get(LEVEL.TRISTRAM)?.layout;
+  if (tri && triLayout) {
+    const t = townStartSubtile(triLayout, new Rng((seed ^ 0x26) >>> 0)) ?? { x: Math.trunc(tri.preset.collision.width / 2), y: Math.trunc(tri.preset.collision.height / 2) };
+    const q = nearestWalkable(tri.preset.collision, t, 30) ?? t;
+    tristram = { x: q.x + 0.5, y: q.y + 0.5 };
+  }
+  return { world, levels, byKey, start: { x: p.x + 0.5, y: p.y + 0.5 }, tristram };
 }

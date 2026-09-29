@@ -1,4 +1,4 @@
-// Act 1 오버월드 전체 생성: 레벨 배치 → 야외/프리셋 레벨 생성 → 레벨 가장자리 연결(출구) · 특수 위치(웨이포인트·신전·동굴 입구).
+// Act 1 월드 전체 생성: 레벨 배치 → 야외/프리셋/미로 레벨 생성 → 레벨 가장자리 연결(출구) · 특수 위치(웨이포인트·신전·동굴 입구).
 // 출처: D2MOO DrlgDrlg.cpp DRLG_AllocDrlg (Act 1) / DRLG_InitLevel (DRLGTYPE_OUTDOOR → DRLGOUTDOORS_GenerateLevel,
 //       DRLGTYPE_PRESET → DRLGPRESET_GenerateLevel)
 // 원작은 모든 레벨이 한 월드 좌표계에 있어 가장자리를 걸어서 넘어간다. 엔진은 레벨별 지도이므로 맞닿은 구간을
@@ -6,6 +6,7 @@
 import { type Act1Placement, directionFromCoords, placeAct1 } from './act1-link';
 import type { Box } from './grid';
 import { generateOutdoorLevel, generatePresetLevel, type LevelLayout, type WarpPoint } from './layout';
+import { generateMazeLevel } from './maze';
 import { DRLGTYPE, LEVEL, OBJSUBCLASS, type DrlgData } from './types';
 
 /** 이 단계에서 생성하는 Act 1 오버월드 레벨 (야외 DrlgType 3 + 이어지는 프리셋: 마을·수도원 정문·바깥 회랑) */
@@ -13,6 +14,22 @@ export const ACT1_OVERWORLD: readonly number[] = [
   LEVEL.ROGUEENCAMPMENT, LEVEL.BLOODMOOR, LEVEL.COLDPLAINS, LEVEL.STONYFIELD, LEVEL.DARKWOOD, LEVEL.BLACKMARSH,
   LEVEL.TAMOEHIGHLAND, LEVEL.BURIALGROUNDS, LEVEL.MONASTERYGATE, LEVEL.OUTERCLOISTER,
 ];
+
+/**
+ * Act 1 던전 (Step 2): 동굴·지하묘지·탑 지하·수도원 병영/감옥/안뜰/대성당/카타콤·트리스트럼.
+ * 미로(DrlgType 1) 와 프리셋(DrlgType 2) — levels.txt 순서
+ */
+export const ACT1_DUNGEONS: readonly number[] = [
+  LEVEL.DENOFEVIL, LEVEL.CAVELEV1, LEVEL.UNDERGROUNDPASSAGELEV1, LEVEL.HOLELEV1, LEVEL.PITLEV1,
+  LEVEL.CAVELEV2, LEVEL.UNDERGROUNDPASSAGELEV2, LEVEL.HOLELEV2, LEVEL.PITLEV2,
+  LEVEL.CRYPT, LEVEL.MAUSOLEUM, LEVEL.FORGOTTENTOWER,
+  LEVEL.TOWERCELLARLEV1, LEVEL.TOWERCELLARLEV2, LEVEL.TOWERCELLARLEV3, LEVEL.TOWERCELLARLEV4, LEVEL.TOWERCELLARLEV5,
+  LEVEL.BARRACKS, LEVEL.JAILLEV1, LEVEL.JAILLEV2, LEVEL.JAILLEV3, LEVEL.INNERCLOISTER, LEVEL.CATHEDRAL,
+  LEVEL.CATACOMBSLEV1, LEVEL.CATACOMBSLEV2, LEVEL.CATACOMBSLEV3, LEVEL.CATACOMBSLEV4, LEVEL.TRISTRAM,
+];
+
+/** Act 1 전체 (오버월드 + 던전) */
+export const ACT1_ALL: readonly number[] = [...ACT1_OVERWORLD, ...ACT1_DUNGEONS];
 
 /** 레벨 가장자리 출구 (from 레벨 로컬 서브타일). 도착: x = dx 가 있으면 현재 x + dx, 없으면 toX (y 도 같음) */
 export interface EdgeExit { from: number; to: number; x: number; y: number; w: number; h: number; toX: number; toY: number; dx?: number; dy?: number }
@@ -27,8 +44,10 @@ export interface Act1Level {
   box: Box;
   waypoint: SpecialPos | null;
   shrines: SpecialPos[];
-  /** 동굴·탑·지하묘지 입구 (대상 레벨은 Step 2 에서 생성) */
+  /** 동굴·탑·지하묘지 입구 (대상 레벨 id 별 첫 이동 지점) */
   entrances: WarpPoint[];
+  /** 다른 레벨과 가장자리로 맞닿은 부분 (월드 타일). 없으면 레벨 사각형 전체 — 미로 레벨 Barracks 의 연결 방 */
+  touch: { levelId: number; box: Box }[];
 }
 
 export interface Act1World {
@@ -66,7 +85,24 @@ export function edgeExits(aId: number, a: Box, bId: number, b: Box): EdgeExit[] 
   return out;
 }
 
-export function generateAct1World(data: DrlgData, seed: number, ids: readonly number[] = ACT1_OVERWORLD): Act1World {
+/**
+ * 맞닿은 부분(touch)으로 출구를 만들고 각 레벨 로컬 좌표로 옮긴다.
+ * @param aLevel,bLevel 레벨 사각형 (로컬 원점), aTouch,bTouch 실제로 맞닿은 사각형
+ */
+export function edgeExitsVia(aId: number, aLevel: Box, aTouch: Box, bId: number, bLevel: Box, bTouch: Box): EdgeExit[] {
+  const lv = new Map([[aId, { L: aLevel, T: aTouch }], [bId, { L: bLevel, T: bTouch }]]);
+  return edgeExits(aId, aTouch, bId, bTouch).map((e) => {
+    const f = lv.get(e.from)!, t = lv.get(e.to)!;
+    const out: EdgeExit = { ...e, x: e.x + (f.T.x - f.L.x) * 5, y: e.y + (f.T.y - f.L.y) * 5 };
+    if (e.dx !== undefined) out.dx = (f.L.x - t.L.x) * 5;
+    else out.toX = e.toX + (t.T.x - t.L.x) * 5;
+    if (e.dy !== undefined) out.dy = (f.L.y - t.L.y) * 5;
+    else out.toY = e.toY + (t.T.y - t.L.y) * 5;
+    return out;
+  });
+}
+
+export function generateAct1World(data: DrlgData, seed: number, ids: readonly number[] = ACT1_ALL): Act1World {
   const placement = placeAct1(data, seed);
   const levels = new Map<number, Act1Level>();
   let townFile = -1;
@@ -74,8 +110,13 @@ export function generateAct1World(data: DrlgData, seed: number, ids: readonly nu
     const placed = placement.levels.get(id);
     if (!placed) continue;
     let layout: LevelLayout;
+    let touch: { levelId: number; box: Box }[] = [];
     if (placed.drlgType === DRLGTYPE.OUTDOOR) layout = generateOutdoorLevel(data, placement, id);
-    else {
+    else if (placed.drlgType === DRLGTYPE.MAZE) {
+      const m = generateMazeLevel(data, placement, id);
+      touch = m.orthBoxes;
+      layout = m;
+    } else {
       const p = generatePresetLevel(data, placement, id);
       if (id === LEVEL.ROGUEENCAMPMENT) townFile = p.picked;
       layout = p;
@@ -91,7 +132,9 @@ export function generateAct1World(data: DrlgData, seed: number, ids: readonly nu
     // 같은 대상으로 가는 이동 타일은 첫 번째만 (원작 방마다 하나의 room tile)
     const seen = new Set<number>();
     const entrances = layout.warps.filter((w) => !seen.has(w.toLevel) && (seen.add(w.toLevel), true));
-    levels.set(id, { id, drlgType: placed.drlgType, layout, box: placed.box, waypoint, shrines, entrances });
+    // 미로 레벨의 위치·크기는 생성 결과(방 경계)로 정해진다 (DRLG_UpdateRoomExCoordinates / PlaceAct1Barracks)
+    const box = placed.drlgType === DRLGTYPE.MAZE ? layout.box : placed.box;
+    levels.set(id, { id, drlgType: placed.drlgType, layout, box, waypoint, shrines, entrances, touch });
   }
   // 가장자리 연결: vis 에 서로 있고 warp = -1 이며 사각형이 맞닿은 쌍
   const exits: EdgeExit[] = [];
@@ -103,7 +146,8 @@ export function generateAct1World(data: DrlgData, seed: number, ids: readonly nu
       if (!pa || !pb) continue;
       const linked = pa.vis.some((v, k) => v === b.id && pa.warp[k] === -1) || pb.vis.some((v, k) => v === a.id && pb.warp[k] === -1);
       if (!linked) continue;
-      exits.push(...edgeExits(a.id, a.box, b.id, b.box));
+      const ta = a.touch.find((t) => t.levelId === b.id)?.box ?? a.box, tb = b.touch.find((t) => t.levelId === a.id)?.box ?? b.box;
+      exits.push(...edgeExitsVia(a.id, a.box, ta, b.id, b.box, tb));
     }
   return { seed, placement, levels, exits, townFile };
 }

@@ -284,18 +284,21 @@ export function buildOutdoorRoom(data: DrlgData, lv: OutdoorLevel, cx: number, c
 }
 
 /**
- * 프리셋 맵의 방들 (8×8 조각). 격자는 DS1 레이어의 부분 뷰.
- * 출처: DRLGPRESET_BuildArea (bSingleRoom=0) + DRLGPRESET_InitPresetRoomData + DRLGPRESET_InitPresetRoomGrids
+ * 프리셋 맵의 방들 (8×8 조각, 또는 맵 전체 한 방). 격자는 DS1 레이어의 부분 뷰.
+ * 출처: DRLGPRESET_BuildArea (bSingleRoom=0: 8×8 조각, 1: 맵 좌표 그대로 방 하나) + DRLGPRESET_InitPresetRoomData
+ *       + DRLGPRESET_InitPresetRoomGrids
  * @param mapX,mapY 레벨 기준 타일 좌표, mapW/mapH 맵 크기(타일)
+ * @param single 원작 bSingleRoom (미로 방: 크기 12×12 이하이면 방 하나 — DRLGMAZE_RollBasicPresets)
  */
-export function buildPresetRooms(d: Ds1, prest: { def: number; killEdge: boolean; populate: boolean; dt1Mask: number }, mapX: number, mapY: number, mapW: number, mapH: number, levelSeed: Rng): RoomBuild[] {
+export function buildPresetRooms(d: Ds1, prest: { def: number; killEdge: boolean; populate: boolean; dt1Mask: number }, mapX: number, mapY: number, mapW: number, mapH: number, levelSeed: Rng, single = false): RoomBuild[] {
   const raw = d.raw;
   if (!raw) throw new Error('preset DS1 without raw layers');
   const rooms: RoomBuild[] = [];
   const units = ds1Units(d).filter((u) => u.x >= 0 && u.y >= 0 && u.x < mapW * 5 && u.y < mapH * 5);
-  for (let y = mapY; y < mapY + mapH; y += 8)
-    for (let x = mapX; x < mapX + mapW; x += 8) {
-      const w = Math.min(8, mapX + mapW - x), h = Math.min(8, mapY + mapH - y);
+  const step = single ? Math.max(mapW, mapH, 1) : 8;
+  for (let y = mapY; y < mapY + mapH; y += step)
+    for (let x = mapX; x < mapX + mapW; x += step) {
+      const w = Math.min(step, mapX + mapW - x), h = Math.min(step, mapY + mapH - y);
       if (!w || !h) continue;
       allocRoomSeed(levelSeed);
       const ox = x - mapX, oy = y - mapY;

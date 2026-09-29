@@ -62,11 +62,20 @@ export interface LvlSubRec {
 }
 
 /** LvlWarp.txt 한 행 */
-export interface LvlWarpRec { id: number; name: string; offsetX: number; offsetY: number; exitWalkX: number; exitWalkY: number; direction: string }
+export interface LvlWarpRec {
+  id: number; name: string; offsetX: number; offsetY: number; exitWalkX: number; exitWalkY: number; direction: string;
+  /** 클릭 상자 (이동 지점 화면 좌표 기준 픽셀) */
+  selectX: number; selectY: number; selectDX: number; selectDY: number;
+}
+
+/** LvlMaze.txt 한 행 (난이도별 방 수는 Normal 열 Rooms 사용) */
+export interface LvlMazeRec { levelId: number; rooms: number; sizeX: number; sizeY: number; merge: number }
 
 /** 엔진이 원작 데이터를 읽는 창구 (src/data 에서 구현) */
 export interface DrlgData {
   level(id: number): LevelRec;
+  /** 출처: DATATBLS_GetLvlMazeTxtRecordFromLevelId */
+  lvlMaze(levelId: number): LvlMazeRec;
   lvlPrest(def: number): LvlPrestRec;
   lvlPrestByLevel(levelId: number): LvlPrestRec | undefined;
   /** LvlSub 전체 행 (원작처럼 같은 Type 행이 연속) */
@@ -81,7 +90,13 @@ export interface DrlgData {
 // ---- 레벨 ID (출처: LevelsIds.h D2C_Levels) ----
 export const LEVEL = {
   ROGUEENCAMPMENT: 1, BLOODMOOR: 2, COLDPLAINS: 3, STONYFIELD: 4, DARKWOOD: 5, BLACKMARSH: 6, TAMOEHIGHLAND: 7,
-  DENOFEVIL: 8, BURIALGROUNDS: 17, FORGOTTENTOWER: 20, MONASTERYGATE: 26, OUTERCLOISTER: 27, TRISTRAM: 38, MOOMOOFARM: 39,
+  DENOFEVIL: 8, CAVELEV1: 9, UNDERGROUNDPASSAGELEV1: 10, HOLELEV1: 11, PITLEV1: 12,
+  CAVELEV2: 13, UNDERGROUNDPASSAGELEV2: 14, HOLELEV2: 15, PITLEV2: 16,
+  BURIALGROUNDS: 17, CRYPT: 18, MAUSOLEUM: 19, FORGOTTENTOWER: 20,
+  TOWERCELLARLEV1: 21, TOWERCELLARLEV2: 22, TOWERCELLARLEV3: 23, TOWERCELLARLEV4: 24, TOWERCELLARLEV5: 25,
+  MONASTERYGATE: 26, OUTERCLOISTER: 27, BARRACKS: 28, JAILLEV1: 29, JAILLEV2: 30, JAILLEV3: 31,
+  INNERCLOISTER: 32, CATHEDRAL: 33, CATACOMBSLEV1: 34, CATACOMBSLEV2: 35, CATACOMBSLEV3: 36, CATACOMBSLEV4: 37,
+  TRISTRAM: 38, MOOMOOFARM: 39,
 } as const;
 
 // ---- LvlPrest Def (출처: LevelsIds.h D2C_LvlPrestIds — LvlPrest.txt 행 번호와 같음) ----
@@ -94,7 +109,13 @@ export const PREST = {
   RIVER_UPPER: 26, RIVER_LOWER: 27, BRIDGE: 28, STONE_FILL_1: 29, STONE_FILL_2: 30, CORRAL_FILL: 31,
   SWAMP_FILL_1: 38, SWAMP_FILL_2: 39, TREE_FILL: 40, RUIN: 41, FALLEN_CAMP_1: 42, FALLEN_CAMP_2: 43, FALLEN_CAMP_BISHIBOSH: 44,
   CAMP: 45, POND: 46, COTTAGES_1: 47, COTTAGES_2: 48, COTTAGES_3: 49, BIVOUAC: 50, CAVE_ENTRANCE: 51, DOE_ENTRANCE: 52,
+  // 출처: LevelsIds.h — Act 1 미로 프리셋 (방향 비트: W=1, E=2, S=4, N=8 을 기준 Def 에 더함 — DRLGMAZE_PickRoomPreset)
+  CAVE_PREV_W: 83, CAVE_NEXT_W: 87, CAVE_DOWN_W: 91, CAVE_DEN_OF_EVIL_W: 95, CAVE_COLDCROW_W: 99,
   GRAVEYARD: 108,
+  CRYPT_PREV_W: 139, CRYPT_NEXT_W: 143, CRYPT_BONEBREAK_W: 147, CRYPT_CHEST_W: 151, CRYPT_PORTAL_W: 155,
+  BARRACKS_COURT_CONNECT: 167, BARRACKS_NEXT_W: 198, BARRACKS_FORGE_W: 202, BARRACKS_FORGE_N: 205,
+  JAIL_PREV_W: 236, JAIL_NEXT_W: 240, JAIL_CATH_W: 244, JAIL_WAYPOINT_W: 248, JAIL_PITSPAWN_W: 252,
+  CATHEDRAL: 257, TRISTRAM: 300, CATACOMBS_PREV_EW: 288, CATACOMBS_PREV_NS: 289, CATACOMBS_PREV_NSEW: 290, CATACOMBS_NEXT_W: 291, CATACOMBS_WAYPOINT_W: 295,
   // 출처: LevelsIds.h — Act 1 야외 특수 프리셋 (Stony Field 돌, Dark Wood 이니퍼스 나무, Black Marsh 탑)
   CAIRN_STONES: 160, INIFUS: 161, TOWER_TOME: 162, TOWER_1: 163,
   // 출처: LevelsIds.h — Act 2 사막 테두리 (SpawnOutdoorLevelPresetEx 의 bBorder 판정에만 사용)
@@ -105,7 +126,10 @@ export const PREST = {
 export const LVLSUB = { BORDER_CLIFFS: 0, BORDER_MIDDLE: 1, BORDER_CORNER: 2, BORDER_BORDER: 3 } as const;
 
 // ---- LvlTypes Id (출처: LevelsIds.h D2C_LvlTypes) ----
-export const LVLTYPE = { ACT1_TOWN: 1, ACT1_WILDERNESS: 2 } as const;
+export const LVLTYPE = {
+  ACT1_TOWN: 1, ACT1_WILDERNESS: 2, ACT1_CAVE: 3, ACT1_CRYPT: 4, ACT1_MONASTERY: 5, ACT1_COURTYARD: 6, ACT1_BARRACKS: 7,
+  ACT1_JAIL: 8, ACT1_CATHEDRAL: 9, ACT1_CATACOMBS: 10, ACT1_TRISTRAM: 11,
+} as const;
 
 export const DRLGTYPE = { MAZE: 1, PRESET: 2, OUTDOOR: 3 } as const;
 

@@ -40,7 +40,7 @@ export interface LevelLayout {
 
 const MAX_WALL_LAYERS = 4, MAX_FLOOR_LAYERS = 2;
 
-class Assembler {
+export class Assembler {
   readonly W: number;
   readonly H: number;
   readonly floors: Uint32Array[];
@@ -161,7 +161,7 @@ class Assembler {
 }
 
 /** 프리셋 셀 하나 → 방들 (출처: DRLGPRESET_AllocDrlgMap + DRLGPRESET_SetPickedFileInDrlgMap + DRLGPRESET_BuildArea) */
-function presetMapRooms(data: DrlgData, seed: Rng, prestId: number, picked: number, x: number, y: number, fallbackW: number, fallbackH: number): { rooms: RoomBuild[]; picked: number } {
+export function presetMapRooms(data: DrlgData, seed: Rng, prestId: number, picked: number, x: number, y: number, fallbackW: number, fallbackH: number): { rooms: RoomBuild[]; picked: number } {
   const prest = data.lvlPrest(prestId);
   // AllocDrlgMap: 파일 수만큼 롤 (이후 격자의 파일 번호로 덮어씀)
   const rolled = seed.pick(prest.files);
@@ -170,8 +170,9 @@ function presetMapRooms(data: DrlgData, seed: Rng, prestId: number, picked: numb
   const h = prest.sizeX && prest.sizeY ? prest.sizeY : fallbackH;
   const path = prest.file[file];
   if (!path) throw new Error(`LvlPrest ${prestId} (${prest.name}) has no file ${file}`);
-  // 근사(원작 미확인): DRLGPRESET_AddPresetUnitToDrlgMap 의 유닛별 롤(함정·Act 2/4/5 몬스터)은
-  //   Act 1 Scan/Pops 프리셋에 해당 유닛이 없어 레벨 시드에 영향 없음 — 생략
+  // 근사(원작 미확인): DRLGPRESET_AddPresetUnitToDrlgMap 의 유닛별 롤(OBJECT_FLOORTRAP/TOMBFLOORTRAP·581 번·Act 2/4/5 몬스터)은
+  //   생략. Act 1 Scan 프리셋 중 트리스트럼(Tri_Town4.ds1)에만 "a trap"(objects.txt 250) 이 있으나 250 이 OBJECT_FLOORTRAP 인지
+  //   확인하지 못했다 — 롤을 하든 않든 프리셋 레벨의 파일 선택은 롤보다 먼저라 타일 배치는 같다(방 시드만 달라질 수 있음)
   const rooms = buildPresetRooms(data.ds1(path), { def: prestId, killEdge: prest.killEdge, populate: prest.populate, dt1Mask: prest.dt1Mask }, x, y, w, h, seed);
   return { rooms, picked: file };
 }

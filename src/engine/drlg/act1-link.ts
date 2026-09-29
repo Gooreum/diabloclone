@@ -278,10 +278,13 @@ export function placeAct1(data: DrlgData, initSeed: number): Act1Placement {
     const rec = data.level(id);
     lv = { id, drlgType: rec.drlgType, box: { x: 0, y: 0, w: 0, h: 0 }, vis: [...rec.vis], warp: [...rec.warp], orths: [], outdoorFlags: 0, presetDirection: 0 };
     levels.set(id, lv);
-    if (rec.drlgType === DRLGTYPE.PRESET) {
-      const prest = data.lvlPrestByLevel(id);
-      const seed = levelSeed(startSeed, id);
-      lv.presetDirection = prest && prest.files ? seed.pick(prest.files) : -1;
+    // 출처: DRLGMAZE_InitLevelData (미로: LvlMaze 레코드 + 위치·크기만, 시드 소비 없음)
+    if (rec.drlgType === DRLGTYPE.PRESET || rec.drlgType === DRLGTYPE.MAZE) {
+      if (rec.drlgType === DRLGTYPE.PRESET) {
+        const prest = data.lvlPrestByLevel(id);
+        const seed = levelSeed(startSeed, id);
+        lv.presetDirection = prest && prest.files ? seed.pick(prest.files) : -1;
+      }
       // 출처: DRLG_SetLevelPositionAndSize
       let px = 0, py = 0;
       if (rec.depend) {
@@ -388,5 +391,8 @@ export function placeAct1(data: DrlgData, initSeed: number): Act1Placement {
       }
     }
   }
+  // 원작은 레벨을 처음 참조할 때 할당한다 (DRLG_GetLevel). 할당은 공용 시드를 쓰지 않으므로
+  // 나머지 Act 1 레벨(던전·트리스트럼)을 여기서 한꺼번에 할당해도 결과는 같다.
+  for (let id = LEVEL.DENOFEVIL; id <= LEVEL.TRISTRAM; id++) getLevel(id);
   return { startSeed, levels };
 }

@@ -2,7 +2,7 @@
 // 출처: D2MOO DataTbls/LevelsTbls.cpp — Levels/LvlPrest/LvlSub/LvlWarp 로더 필드 (난이도별 크기는 Normal 열 SizeX/SizeY)
 import { parseDs1, type Ds1 } from '../formats/ds1';
 import type { TxtRow } from '../formats/txt';
-import type { DrlgData, LevelRec, LvlPrestRec, LvlSubRec, LvlWarpRec } from '../engine/drlg/types';
+import type { DrlgData, LevelRec, LvlMazeRec, LvlPrestRec, LvlSubRec, LvlWarpRec } from '../engine/drlg/types';
 import { num, type AssetSource, type GameTables } from './tables';
 
 export const TILES_DIR = 'data\\global\\tiles\\';
@@ -38,7 +38,13 @@ export function lvlSubRec(r: TxtRow): LvlSubRec {
 }
 
 export function lvlWarpRec(r: TxtRow): LvlWarpRec {
-  return { id: num(r.Id, -1), name: r.Name ?? '', offsetX: num(r.OffsetX), offsetY: num(r.OffsetY), exitWalkX: num(r.ExitWalkX), exitWalkY: num(r.ExitWalkY), direction: r.Direction ?? 'b' };
+  return { id: num(r.Id, -1), name: r.Name ?? '', offsetX: num(r.OffsetX), offsetY: num(r.OffsetY), exitWalkX: num(r.ExitWalkX), exitWalkY: num(r.ExitWalkY), direction: r.Direction ?? 'b',
+    selectX: num(r.SelectX), selectY: num(r.SelectY), selectDX: num(r.SelectDX), selectDY: num(r.SelectDY) };
+}
+
+/** 출처: DATATBLS_LoadLvlMazeTxt — Level, Rooms (Normal), SizeX, SizeY, Merge */
+export function lvlMazeRec(r: TxtRow): LvlMazeRec {
+  return { levelId: num(r.Level), rooms: num(r.Rooms), sizeX: num(r.SizeX), sizeY: num(r.SizeY), merge: num(r.Merge) };
 }
 
 /** 테이블/파일 접근을 DrlgData 로 감싼다 (파싱 결과 캐시) */
@@ -49,6 +55,8 @@ export function makeDrlgData(src: AssetSource, tables: GameTables): DrlgData & {
   for (const r of tables.table('LvlPrest')) if (r.Def !== undefined && r.Def !== '') prests.set(num(r.Def), lvlPrestRec(r));
   // 원작 로더는 "Expansion" 구분 행을 건너뛴다 (Type 이 비어 있는 행)
   const lvlSub = tables.table('LvlSub').filter((r) => r.Type !== undefined && r.Type !== '').map(lvlSubRec);
+  const mazes = new Map<number, LvlMazeRec>();
+  for (const r of tables.table('LvlMaze')) if (r.Level !== undefined && r.Level !== '' && num(r.Level) > 0) mazes.set(num(r.Level), lvlMazeRec(r));
   const lvlWarp = tables.table('LvlWarp').filter((r) => r.Id !== undefined && r.Id !== '').map(lvlWarpRec);
   const subClass = new Map<number, number>();
   for (const r of tables.table('Objects')) if (r.Id !== undefined && r.Id !== '') subClass.set(num(r.Id), num(r.SubClass));
@@ -61,6 +69,11 @@ export function makeDrlgData(src: AssetSource, tables: GameTables): DrlgData & {
     level(id) {
       const r = levels.get(id);
       if (!r) throw new Error(`levels.txt: id ${id} not found`);
+      return r;
+    },
+    lvlMaze(levelId) {
+      const r = mazes.get(levelId);
+      if (!r) throw new Error(`LvlMaze.txt: level ${levelId} not found`);
       return r;
     },
     lvlPrest(def) {

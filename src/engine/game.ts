@@ -103,6 +103,11 @@ export interface LevelExit {
   dy?: number;
   /** 지정 시 도착 x = 현재 x + dx (남북으로 맞닿은 야외 경계) */
   dx?: number;
+  /**
+   * 레벨 이동 타일 (동굴 입구·계단): 이동 지점(서브타일)과 LvlWarp 클릭 상자(이동 지점 화면 좌표 기준 픽셀).
+   * 상자 안을 클릭하면 출구로 걸어간다. 출처: LvlWarp.txt SelectX/SelectY/SelectDX/SelectDY
+   */
+  warp?: { x: number; y: number; selectX: number; selectY: number; selectDX: number; selectDY: number };
 }
 
 export interface LevelDef {
@@ -257,6 +262,8 @@ export class Game {
   private readonly player: PlayerState;
   private readonly levels = new Map<string, LevelState>();
   private level: LevelState;
+  /** 출구로 막 넘어옴: 도착 칸을 덮는 출구는 벗어날 때까지 무시 */
+  private exitHold = false;
   private nextUnitId = 100;
   private events: GameEvent[] = [];
   private passiveCache: { key: string; list: PassiveStat[] } | null = null;
@@ -341,6 +348,7 @@ export class Game {
   changeLevel(id: string, x: number, y: number): void {
     const next = this.levels.get(id);
     if (!next) throw new Error(`unknown level ${id}`);
+    this.exitHold = false;
     this.level = next;
     const p = this.player;
     p.x = x;
@@ -446,16 +454,46 @@ export class Game {
 
   private checkExits(): void {
     const p = this.player;
+    const inside = (e: LevelExit) => p.x >= e.x && p.x < e.x + e.w && p.y >= e.y && p.y < e.y + e.h;
+    // 출구로 넘어온 직후 도착 칸이 상대 출구 안이면, 그 출구를 벗어날 때까지 다시 넘어가지 않는다 (왕복 방지)
+    if (this.exitHold) {
+      if (this.level.def.exits.some(inside)) return;
+      this.exitHold = false;
+    }
     for (const e of this.level.def.exits) {
-      if (p.x >= e.x && p.x < e.x + e.w && p.y >= e.y && p.y < e.y + e.h) {
+      if (inside(e)) {
         const target = this.levels.get(e.to);
         const ty = e.dy !== undefined ? p.y + e.dy : e.toY;
         const tx = e.dx !== undefined ? p.x + e.dx : e.toX;
         const spot = target ? nearestWalkable(target.def.map, { x: tx, y: ty }, 12) : null;
         this.changeLevel(e.to, spot ? spot.x + 0.5 : tx, spot ? spot.y + 0.5 : ty);
+        this.exitHold = true;
         return;
       }
     }
+  }
+
+  /**
+   * 레벨 이동 타일 클릭: LvlWarp 클릭 상자(이동 지점 화면 좌표 기준 픽셀) 안이면 출구 안의 걷기 가능한 칸을 돌려준다.
+   * 화면 좌표 = ((x − y)·16, (x + y)·8) (render/iso.ts 와 같은 등각 변환)
+   */
+  private warpClickTarget(x: number, y: number): { x: number; y: number } | null {
+    for (const e of this.level.def.exits) {
+      const w = e.warp;
+      if (!w) continue;
+      const dx = x - w.x, dy = y - w.y;
+      const px = (dx - dy) * 16, py = (dx + dy) * 8;
+      if (px < w.selectX || px > w.selectX + w.selectDX || py < w.selectY || py > w.selectY + w.selectDY) continue;
+      let best: { x: number; y: number } | null = null, bd = Infinity;
+      for (let j = e.y; j < e.y + e.h; j++)
+        for (let i = e.x; i < e.x + e.w; i++) {
+          if (!this.map.walkable(i, j)) continue;
+          const d = Math.hypot(i + 0.5 - w.x, j + 0.5 - w.y);
+          if (d < bd) { bd = d; best = { x: i + 0.5, y: j + 0.5 }; }
+        }
+      if (best) return best;
+    }
+    return null;
   }
 
   enqueue(cmd: Command): void {
@@ -552,7 +590,8 @@ export class Game {
       case 'move': {
         if (this.isBusy()) return;
         p.action = null;
-        this.pathPlayerTo(cmd.x, cmd.y, cmd.run);
+        const warp = this.warpClickTarget(cmd.x, cmd.y);
+        this.pathPlayerTo(warp ? warp.x : cmd.x, warp ? warp.y : cmd.y, cmd.run);
         return;
       }
       case 'attack': {

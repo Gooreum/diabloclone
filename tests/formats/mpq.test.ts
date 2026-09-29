@@ -30,7 +30,7 @@ describe('MPQ 아카이브 (합성 테스트 아카이브)', () => {
     { name: 'data\\enc_fix.bin', data: long, encrypted: true, fixKey: true },
     { name: 'data\\single.bin', data: enc('single unit file!'), singleUnit: true, encrypted: true },
     { name: 'data\\packed_raw.bin', data: long, encrypted: true, compressed: { flag: 'compress' } },
-    { name: 'data\\huff.wav', data: big(512), compressed: { flag: 'compress', sectors: [Uint8Array.from([COMPRESSION.HUFFMAN, 1, 2, 3])] } },
+    { name: 'data\\huff.wav', data: big(512), compressed: { flag: 'compress', sectors: [Uint8Array.from([COMPRESSION.BZIP2, 1, 2, 3])] } },
     { name: 'data\\imploded.bin', data: big(512), compressed: { flag: 'implode', sectors: [Uint8Array.from([9, 9, 9])] } },
     { name: '(listfile)', data: enc('data\\global\\excel\\monstats.txt\r\ndata\\single.bin\r\n') },
   ]));
@@ -53,11 +53,11 @@ describe('MPQ 아카이브 (합성 테스트 아카이브)', () => {
     expect(mpq.read('data\\nope.txt')).toBeNull();
     expect(mpq.has('data\\nope.txt')).toBe(false);
   });
-  it('미지원 압축(huffman)은 명확한 에러', () => {
-    expect(() => mpq.read('data\\huff.wav')).toThrow(/unsupported compression 0x1/);
+  it('미지원 압축(bzip2 — D2 MPQ 미사용)은 명확한 에러', () => {
+    expect(() => mpq.read('data\\huff.wav')).toThrow(/unsupported compression 0x10/);
   });
-  it('등록된 압축 해제기가 호출되고 해제하면 원래대로 돌아간다 (huffman 슬롯)', () => {
-    const undo = registerDecompressor(COMPRESSION.HUFFMAN, (_in, size) => new Uint8Array(size).fill(7));
+  it('등록된 압축 해제기가 호출되고 해제하면 원래대로 돌아간다 (bzip2 슬롯)', () => {
+    const undo = registerDecompressor(COMPRESSION.BZIP2, (_in, size) => new Uint8Array(size).fill(7));
     try {
       expect(mpq.read('data\\huff.wav')).toEqual(new Uint8Array(512).fill(7));
     } finally {

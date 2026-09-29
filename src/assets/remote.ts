@@ -30,6 +30,13 @@ export class MpqRemote extends MpqIndex {
     return new MpqRemote(url, fetchRange, new MpqIndex(h, parseHashTable(ht, h.hashCount), parseBlockTable(bt, h.blockCount)));
   }
 
+  /** 블록 원본 바이트 (복호화·해제 전) — 사운드 워커가 직접 해제한다 */
+  async readRaw(path: string): Promise<Uint8Array | null> {
+    const block = this.findBlock(path);
+    if (!block) return null;
+    return this.fetchRange(this.url, this.header.base + block.offset, block.compressedSize);
+  }
+
   async read(path: string): Promise<Uint8Array | null> {
     const block = this.findBlock(path);
     if (!block) return null;

@@ -3,6 +3,8 @@
 // 출처: StormLib — SBaseCommon.cpp / SFileReadFile.cpp (https://github.com/ladislav-zezula/StormLib)
 import { explode } from './compress/pkware.ts';
 import { inflateZlib } from './compress/zlib.ts';
+import { decompressHuffman } from './compress/huffman.ts';
+import { decompressAdpcmMono, decompressAdpcmStereo } from './compress/adpcm.ts';
 
 export const MPQ_FILE_IMPLODE = 0x00000100;
 export const MPQ_FILE_COMPRESS = 0x00000200;
@@ -27,10 +29,14 @@ export const COMPRESSION = {
 export type Decompressor = (input: Uint8Array, outSize: number) => Uint8Array;
 
 // 실제 D2 MPQ 조사 결과(scripts/mpq-block-survey.mjs): 그래픽·데이터는 PKWARE(0x08)/IMPLODE, 일부 zlib(0x02).
-// huffman·ADPCM 은 사운드 MPQ 전용 → Phase 11 에서 추가.
+// 사운드 MPQ(Phase 11, 전 섹터를 읽어 압축 비트 집계): d2sfx WAV 2290개 0x41(huffman+ADPCM 모노)·29개 0x81,
+// d2music 33개 전부 0x81(huffman+ADPCM 스테레오), d2speech 1565개 전부 0x41. bzip2(0x10)·sparse 는 미사용 → 미구현.
 const decompressors = new Map<number, Decompressor>([
   [0x08, explode],
   [0x02, inflateZlib],
+  [0x01, decompressHuffman],
+  [0x40, decompressAdpcmMono],
+  [0x80, decompressAdpcmStereo],
 ]);
 
 /** 실제 MPQ 조사 결과 필요한 압축 방식만 등록한다 (plan.md Phase 2 Step 1). */

@@ -6,7 +6,7 @@ import { OBJMODE_TOKENS, type ObjectDb } from '../engine/objects';
 import type { WorldSnapshot } from '../engine/game';
 import type { PickBox } from '../input/dom';
 import { toCanvas, type Camera } from './iso';
-import type { ItemGfx, MissileGfx, UnitGfx } from './units';
+import type { CompositeSpec, ItemGfx, MissileGfx, UnitGfx } from './units';
 import type { DepthSprite } from './world';
 
 /** 몬스터가 보이면 미리 불러 둘 동작 (NU·WL 외): 맞기 GH, 공격 A1, 죽기 DT·시체 DD */
@@ -40,6 +40,44 @@ const animFrame = (anim: AnimData, key: string, modeTick: number, loop = true): 
   const f = Math.floor((modeTick * r.speed) / 256);
   return loop ? f : Math.min(f, r.frames - 1);
 };
+
+type SnapMonster = Readonly<WorldSnapshot>['monsters'][number];
+
+/** 몬스터 그림 사양 (없으면 null, 색 바꿈 표를 불러오는 중이면 undefined) */
+function monsterSpec(d: Pick<SceneDeps, 'units' | 'monsters'>, m: SnapMonster): CompositeSpec | null | undefined {
+  const t = d.monsters?.types.get(m.typeId);
+  if (!t) return null;
+  const equip: Record<string, string> = {};
+  // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
+  for (const [layer, variants] of Object.entries(t.layers)) {
+    const v = variants[(m.components?.[layer] ?? m.id) % variants.length] ?? 'lit';
+    if (v !== 'nil') equip[layer] = v;
+  }
+  // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
+  const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
+  if (shift === undefined) return undefined;
+  // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
+  return { root: 'MONSTERS', token: t.code, mode: m.anim?.mode ?? m.mode, wclass: t.baseW, equip, shift };
+}
+
+/** 레벨에 들어갈 때 미리 불러 둘 몬스터 수·거리 (서브타일) */
+const WARM_COUNT = 40, WARM_RADIUS = 60;
+
+/**
+ * 레벨에 들어가면 플레이어 가까운 몬스터들의 서 있기·걷기·맞기·공격·죽기 그림을 지금 방향으로 미리 불러 해석한다.
+ * 로딩 화면이 이것이 끝날 때까지 기다리므로, 들어가자마자 싸울 때 그림을 읽느라 비거나 멈칫하지 않는다.
+ */
+export function warmLevel(s: Readonly<WorldSnapshot>, d: Pick<SceneDeps, 'units' | 'monsters'>): void {
+  const p = s.player;
+  const near = s.monsters
+    .filter((m) => !m.npc && Math.hypot(m.x - p.x, m.y - p.y) < WARM_RADIUS)
+    .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))
+    .slice(0, WARM_COUNT);
+  for (const m of near) {
+    const spec = monsterSpec(d, m);
+    if (spec) for (const mode of ['NU', 'WL', 'GH', 'A1', 'DT', 'DD']) d.units.warm({ ...spec, mode }, m.dir);
+  }
+}
 
 export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps, picks: PickBox[]): DepthSprite[] {
   const out: DepthSprite[] = [];
@@ -94,18 +132,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!onScreen(m.x, m.y)) continue;
     const t = d.monsters?.types.get(m.typeId);
     if (!t) continue;
-    const equip: Record<string, string> = {};
-    // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
-    for (const [layer, variants] of Object.entries(t.layers)) {
-      const v = variants[(m.components?.[layer] ?? m.id) % variants.length] ?? 'lit';
-      if (v !== 'nil') equip[layer] = v;
-    }
-    // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
-    const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
-    if (shift === undefined) continue;
-    // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
-    const mode = m.anim?.mode ?? m.mode;
-    const spec = { root: 'MONSTERS' as const, token: t.code, mode, wclass: t.baseW, equip, shift };
+    const spec = monsterSpec(d, m);
+    if (!spec) continue;
+    const mode = spec.mode;
     const shown = d.units.getFor(`m${m.id}`, spec, m.dir);
     // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 지금 방향으로 미리 해석해 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
     if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.warm({ ...spec, mode: pre }, m.dir);

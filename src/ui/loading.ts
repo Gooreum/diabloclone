@@ -11,6 +11,9 @@ export class LoadingScreen {
   private readonly art: UiArt;
   private start = 0;
   private until = 0;
+  /** 이 조건이 참인 동안(최대 maxUntil 까지) 로딩 화면을 유지한다 — 그 레벨 그림이 준비될 때까지 */
+  private hold: (() => boolean) | null = null;
+  private maxUntil = 0;
 
   constructor(art: UiArt) {
     this.art = art;
@@ -23,13 +26,21 @@ export class LoadingScreen {
 
   /** 지금 보이는가 (레벨 이동 때 잠깐) */
   active(now: number): boolean {
-    return now < this.until;
+    if (now < this.until) return true;
+    if (this.hold && now < this.maxUntil && this.hold()) return true;
+    this.hold = null;
+    return false;
   }
 
-  /** 레벨 이동: ms 동안 게임 위에 로딩 화면 */
-  flash(now: number, ms = 350): void {
+  /**
+   * 레벨 이동: ms 동안 게임 위에 로딩 화면. hold 가 있으면 그것이 거짓이 될 때까지(최대 maxMs) 더 유지한다.
+   * 근사(원작 미확인): 원작은 레벨 그림을 다 읽을 때까지 로딩 화면 — 여기서는 보이는 몬스터 그림 준비를 기다린다 (최대 4초)
+   */
+  flash(now: number, ms = 350, hold?: () => boolean, maxMs = 4000): void {
     this.start = now;
     this.until = now + ms;
+    this.hold = hold ?? null;
+    this.maxUntil = now + maxMs;
   }
 
   /** 한 장 그리기 (검은 화면 + 가운데 그림). t = 시작 뒤 흐른 ms */

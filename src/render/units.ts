@@ -53,6 +53,15 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
 /** DCC 레이어: 방향은 처음 그릴 때 해석한다 (undefined = 아직 안 함, 'loading' = 해석 중, null = 없음) */
 interface LayerGfx { h: DccHandle; dirs: (DccDirection | null | 'loading' | undefined)[]; id: number }
 
+/** 불러오거나 해석 중인 그림 수 (로딩 화면이 기다린다) */
+let inflight = 0;
+const track = <T>(p: Promise<T>): Promise<T> => {
+  inflight++;
+  return p.finally(() => inflight--);
+};
+/** 유닛·미사일 그림을 불러오거나 해석하는 중인가 */
+export const gfxBusy = (): boolean => inflight > 0;
+
 /** 레이어의 방향 d (해석 중이면 undefined — 요청을 보낸다) */
 function layerDir(lg: LayerGfx, d: number): DccDirection | null | undefined {
   const v = lg.dirs[d];
@@ -60,7 +69,7 @@ function layerDir(lg: LayerGfx, d: number): DccDirection | null | undefined {
   if (v !== undefined) return v;
   if (d < 0 || d >= lg.h.directions) return null;
   lg.dirs[d] = 'loading';
-  lg.h.dir(d).then((x) => (lg.dirs[d] = x)).catch(() => (lg.dirs[d] = null));
+  track(lg.h.dir(d)).then((x) => (lg.dirs[d] = x)).catch(() => (lg.dirs[d] = null));
   return undefined;
 }
 export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; shift?: ColorShift }
@@ -169,7 +178,7 @@ export class UnitGfx {
       return hit;
     }
     unitGfxStats.loads++;
-    this.cache.set(k, this.load(spec).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
+    this.cache.set(k, track(this.load(spec)).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
     unitGfxStats.cached = this.cache.size;
     for (const key of this.cache.keys()) {
       if (this.cache.size <= MAX_COMPOSITES) break;
@@ -275,9 +284,9 @@ export class MissileGfx {
     const hit = this.cache.get(key);
     if (hit === undefined) {
       this.cache.set(key, 'loading');
-      openDcc(this.assets,
+      track(openDcc(this.assets,
         // 상태 오버레이는 엔진이 'overlays\<Filename>' 으로 보낸다 (data\global\overlays, 출처: overlay.txt Filename)
-        celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
+        celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`))
         .then((h) => this.cache.set(key, h ? { h, dirs: [], id: newSpriteId() } : null))
         .catch(() => this.cache.set(key, null));
       return;

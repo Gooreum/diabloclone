@@ -18,8 +18,8 @@ import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
 import { GlSink, glStats } from './render/gl/glsink';
 import { type Camera } from './render/iso';
-import { ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
-import { buildScene } from './render/scene';
+import { gfxBusy, ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
+import { buildScene, warmLevel } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
@@ -728,9 +728,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               wpPanel.open = false;
               // 원작: 계단·입구로 다른 레벨에 들어가면 잠깐 로딩 화면 (야외끼리 이어진 경계는 없음 — 근사: 자동 지도 이름으로 야외 판단)
               const to = String(ev.level);
-              if (!(outdoor(prevLevel) && outdoor(to))) loading.flash(performance.now());
+              // 그 레벨 가까운 몬스터 그림이 준비될 때까지 로딩 화면 유지 (최대 4초)
+              if (!(outdoor(prevLevel) && outdoor(to))) loading.flash(performance.now(), 350, gfxBusy);
               prevLevel = to;
-            } else if (ev.type === 'waypointTravel' || ev.type === 'portalTaken') loading.flash(performance.now());
+            } else if (ev.type === 'waypointTravel' || ev.type === 'portalTaken') loading.flash(performance.now(), 350, gfxBusy);
             else if (ev.type === 'shrine') {
               messageLog.push(tables.string(String(ev.message)), performance.now());
               shrineMsg = true;
@@ -775,12 +776,18 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       }
       input.update(now);
       const s = game.snapshot();
+      // 로딩 화면 동안 가까운 몬스터 그림을 미리 불러 해석한다 (로딩 화면은 그동안 기다린다)
       cam.x = s.player.x;
       cam.y = s.player.y;
       const rarm = game.equipment.rarm, larm = game.equipment.larm;
       const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
       void larm;
       const equip: Record<string, string> = { ...BODY, ...playerLayers(data.items, game.equipment) };
+      if (loading.active(now)) {
+        warmLevel(s, { units, monsters: data.monsters });
+        // 플레이어가 곧 쓸 동작 (걷기·달리기·공격·맞기)
+        for (const mode of ['NU', 'WL', 'RN', 'A1', 'A2', 'GH']) units.warm({ root: 'CHARS', token, mode, wclass, equip }, s.player.dir);
+      }
       const cpItems = game.corpse?.items;
       const corpseLook = cpItems
         ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: ((cpItems.rarm ? data.items.base(cpItems.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase() }

@@ -7,6 +7,9 @@ describe('조명 계산', () => {
   it('주변광: 실내 0, 야외·마을 31', () => {
     expect(ambientOf(true)).toBe(0);
     expect(ambientOf(false)).toBe(FULL_LIGHT);
+    // 낮·밤 밝기 매핑: 128 이상 = 31, 한밤 64 = 22, 일식 32 = 16, 불꽃의 강 16 = 11, 0 = 0
+    expect([255, 128, 64, 32, 16, 0].map((i) => ambientOf(false, i))).toEqual([31, 31, 22, 16, 11, 0]);
+    expect(ambientOf(true, 255)).toBe(0);
   });
   it('lightAt: 광원 중심 31, 반경 끝 0, 반경 밖은 주변광', () => {
     const src = [{ x: 10, y: 10, r: 10 }];

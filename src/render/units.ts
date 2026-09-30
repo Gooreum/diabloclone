@@ -100,6 +100,27 @@ export class UnitGfx {
     return identity ? null : { key: `ps${token}${i}`, map };
   }
 
+  /** 유닛별로 마지막으로 그린 그림 (새 동작 그림을 불러오는 동안 대신 그려 깜박임을 막는다) */
+  private readonly lastShown = new Map<string, Composite>();
+
+  /**
+   * 유닛 하나의 그림: 이 동작 그림이 준비됐으면 그것, 아직이면 그 유닛이 직전에 쓰던 그림.
+   * 원작은 동작이 바뀌어도 그림이 비는 순간이 없으므로, 불러오는 동안 빈 화면(깜박임)을 보이지 않게 한다.
+   */
+  getFor(unitKey: string, spec: CompositeSpec): Composite | null {
+    const c = this.get(spec);
+    if (c) {
+      this.lastShown.delete(unitKey);
+      this.lastShown.set(unitKey, c);
+      if (this.lastShown.size > 3000) {
+        const first = this.lastShown.keys().next().value;
+        if (first !== undefined) this.lastShown.delete(first);
+      }
+      return c;
+    }
+    return this.lastShown.get(unitKey) ?? null;
+  }
+
   /** 준비되면 Composite, 로딩 중이면 undefined, 없으면 null */
   get(spec: CompositeSpec): Composite | null | undefined {
     const k = specKey(spec);

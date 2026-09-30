@@ -9,6 +9,9 @@ import { toCanvas, type Camera } from './iso';
 import type { ItemGfx, MissileGfx, UnitGfx } from './units';
 import type { DepthSprite } from './world';
 
+/** 몬스터가 보이면 미리 불러 둘 동작 (NU·WL 외): 맞기 GH, 공격 A1, 죽기 DT·시체 DD */
+const PRELOAD_MODES = ['GH', 'A1', 'DT', 'DD', 'WL'] as const;
+
 export interface SceneDeps {
   units: UnitGfx;
   items: ItemGfx;
@@ -102,7 +105,10 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (shift === undefined) continue;
     // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
     const mode = m.anim?.mode ?? m.mode;
-    const comp = d.units.get({ root: 'MONSTERS', token: t.code, mode, wclass: t.baseW, equip, shift });
+    const spec = { root: 'MONSTERS' as const, token: t.code, mode, wclass: t.baseW, equip, shift };
+    const comp = d.units.getFor(`m${m.id}`, spec);
+    // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 미리 불러 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
+    if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.get({ ...spec, mode: pre });
     const loop = !(m.mode === 'DT' || m.mode === 'DD') && ['NU', 'WL', 'RN'].includes(m.mode);
     const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
@@ -155,7 +161,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
-  const comp = d.units.get({ root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip });
+  const comp = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip });
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
   out.push({

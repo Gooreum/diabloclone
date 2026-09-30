@@ -42,11 +42,12 @@ export class WorldRenderer {
 
   render(sink: SpriteSink, cam: Camera, sprites: DepthSprite[] = []): void {
     sink.begin(cam.width, cam.height);
-    const draw = (i: number, tx: number, ty: number, dy: number) => {
+    // 바닥·그림자 타일은 픽셀마다 빛을 재고, 벽·지붕은 타일 가운데 바닥 한 점에서 (벽 위쪽이 먼 바닥 빛을 받지 않게)
+    const draw = (i: number, tx: number, ty: number, dy: number, wall = false) => {
       const t = this.tile(i);
       const o = this.tileOrigin(cam, tx, ty);
       if (!this.visible(cam, o, t.img.height, t.img.top + dy)) return;
-      sink.draw(t.image, o.x, o.y + t.img.top + dy);
+      sink.draw(t.image, o.x, o.y + t.img.top + dy, wall ? { lightAt: toCanvas(cam, tx * 5 + 2.5, ty * 5 + 2.5) } : undefined);
     };
     for (const f of this.level.floors) draw(f.tileIndex, f.x, f.y, 0);
     for (const s of this.level.shadows) draw(s.tileIndex, s.x, s.y, 0);
@@ -58,7 +59,7 @@ export class WorldRenderer {
       items.push({
         depth: (w.x + w.y) * 5 + (lower ? 0 : 4.9),
         draw: () => {
-          draw(w.tileIndex, w.x, w.y, w.orientation >= 1 && w.orientation <= 14 ? 80 : 0);
+          draw(w.tileIndex, w.x, w.y, w.orientation >= 1 && w.orientation <= 14 ? 80 : 0, true);
         },
       });
     }
@@ -67,7 +68,7 @@ export class WorldRenderer {
     for (const w of this.level.walls) {
       if (w.orientation !== 15) continue;
       const t = this.level.tiles[w.tileIndex];
-      draw(w.tileIndex, w.x, w.y, -(t?.roofHeight ?? 0));
+      draw(w.tileIndex, w.x, w.y, -(t?.roofHeight ?? 0), true);
     }
     sink.end();
   }

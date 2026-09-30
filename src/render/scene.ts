@@ -29,6 +29,8 @@ export interface SceneDeps {
   objectDb?: ObjectDb;
   /** 마우스를 올린 유닛 (지난 프레임 클릭 상자 기준) — 밝게 그린다 */
   hover?: { kind: string; id: number } | null;
+  /** 몬스터 그림자 여부 (monstats2 Shadow). 없으면 그림자 없음 */
+  shadowOf?: (typeId: string) => boolean;
 }
 
 /** 오브젝트 COF 레이어는 모두 기본 외형 'lit' (출처: objects.txt HD~S8 = 레이어 사용 여부, 원작 오브젝트 DCC 이름 <토큰><레이어>LIT<모드>HTH) */
@@ -145,7 +147,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit);
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit, m.mode !== 'DD' && !!d.shadowOf?.(m.typeId));
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
@@ -197,7 +199,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     depth: pm.x + pm.y,
     draw: (sink, cm) => {
       const p = toCanvas(cm, pm.x, pm.y);
-      if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y);
+      if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, false, !!d.shadowOf);
     },
   });
   return out;

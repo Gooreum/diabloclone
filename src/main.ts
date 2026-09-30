@@ -20,6 +20,9 @@ import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
 import { GlSink, glStats } from './render/gl/glsink';
+import { buildLightMap, type LightMap } from './render/lightmap';
+import { FULL_LIGHT, LightTables, PLAYER_LIGHT, ambientOf, lightSources } from './engine/lighting';
+import { parsePl2Light } from './formats/pl2';
 import { type Camera } from './render/iso';
 import { gfxBusy, ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
 import { buildScene, warmLevel } from './render/scene';
@@ -272,7 +275,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const levelNames: Record<string, string> = {};
   const worldByKey = new Map<string, WorldLevel>();
   // 막별 월드·그림 (막 팔레트로 타일·유닛·아이템·미사일). 막에 처음 들어갈 때 만든다 (출처: D2MOO DRLG_AllocDrlg — 막 단위)
-  interface ActView { world: ActWorld; pal: Palette; units: UnitGfx; itemGfx: ItemGfx; missileGfx: MissileGfx }
+  /** light = 막 Pal.PL2 밝기 단계 표 (읽기 전에는 null — 조명 없이 그린다) */
+  interface ActView { world: ActWorld; pal: Palette; units: UnitGfx; itemGfx: ItemGfx; missileGfx: MissileGfx; light: Uint8Array | null }
   const views = new Map<number, ActView>();
   const actView = (act: number): ActView => {
     const have = views.get(act);
@@ -289,10 +293,17 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       levelNames[l.key] = l.name;
       worldByKey.set(l.key, l);
     }
-    const v: ActView = { world: w, pal: apal, units: new UnitGfx(assets), itemGfx: new ItemGfx(assets), missileGfx: new MissileGfx(assets) };
+    const v: ActView = { world: w, pal: apal, units: new UnitGfx(assets), itemGfx: new ItemGfx(assets), missileGfx: new MissileGfx(assets), light: null };
+    void assets.load(`data\\global\\palette\\ACT${act + 1}\\Pal.pl2`).then((b) => {
+      if (b) v.light = parsePl2Light(b);
+    }).catch(() => undefined);
     views.set(act, v);
     return v;
   };
+  // 조명: 원작 표 (levels IsInside · monstats2 Light/Shadow · missiles Light · objects Lit)
+  const lightTables = new LightTables({ levels: tables.table('Levels'), monStats: tables.table('MonStats'), monStats2: tables.table('MonStats2'), missiles: tables.table('Missiles'), objects: tables.table('Objects') });
+  const shadowOf = (typeId: string) => lightTables.monsterShadow(typeId);
+  let lightMap: LightMap | undefined;
   // 출처: PlrSave2.cpp — 시작 막 = 고른 난이도의 nTown (actByDiff)
   const diffAct = startActFor(save, difficulty);
   const startAct = save && actAvailable(diffAct) && sh.prefetched.has(diffAct) ? diffAct : 0;
@@ -946,12 +957,19 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const view = views.get(game.act) ?? actView(startAct);
       // 막 팔레트 (타일·유닛 색은 그리는 쪽이 팔레트로 입힌다)
       worldSink.setPalette(view.pal);
+      // 조명: 실내는 빛 반경 밖이 어둡다 (야외·마을은 낮 밝기 — 광원 계산 생략)
+      if (worldSink instanceof GlSink) {
+        const ambient = ambientOf(lightTables.isInside(game.levelDef(game.levelId)?.levelNo ?? 0));
+        const src = ambient >= FULL_LIGHT ? [] : lightSources(s, lightTables, PLAYER_LIGHT + game.lightRadiusBonus());
+        lightMap = buildLightMap(cam.x, cam.y, ambient, src, lightMap);
+        worldSink.setLight(lightMap, cam, view.light);
+      }
       // UI 캔버스는 투명으로 시작 (아래 월드 캔버스가 비친다)
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       (renderers[game.levelId] as WorldRenderer).render(
         worldSink,
         cam,
-        buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow }, input.pickBoxes),
+        buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow, shadowOf }, input.pickBoxes),
       );
       // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
       const worldPx = captureWaiters.length ? readWorld() : null;

@@ -50,7 +50,7 @@ void main() {
 const FULL_MAP = new Uint8Array(LIGHTMAP_SIZE * LIGHTMAP_SIZE).fill(255);
 
 /** 진단용 */
-export const glStats = { pages: 0, sprites: 0, uploads: 0, shiftUploads: 0, evictions: 0, drawCalls: 0, lost: 0, restored: 0 };
+export const glStats = { pages: 0, sprites: 0, uploads: 0, shiftUploads: 0, evictions: 0, drawCalls: 0, lost: 0, restored: 0, shadows: 0 };
 
 interface GlRes {
   prog: WebGLProgram; vao: WebGLVertexArrayObject; vbo: WebGLBuffer; pages: WebGLTexture[]; shift: WebGLTexture; pal: WebGLTexture;
@@ -281,6 +281,7 @@ export class GlSink implements SpriteSink {
       row = r.row;
     }
     const blend = o?.shadow ? SHADOW_BLEND : QuadBatch.normBlend(o?.blend);
+    if (o?.shadow) glStats.shadows++;
     this.batch.push(slot.page, blend, x, y, img.w, img.h, slot.x, slot.y, row, o?.bright ? 1.6 : 1, o?.lightAt ?? o?.shadow, o?.shadow);
   }
 

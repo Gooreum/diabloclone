@@ -31,6 +31,9 @@ function paint(c: Drawable, pixels: Uint8Array, w: number, h: number, pal: Palet
  * 한 번 만들고 계속 쓰는 UI 그림(조작판·커서·글꼴)은 다시 만들지 않아 사라진 채 남았다 → 감지하면 제자리에 다시 그린다.
  * 캔버스는 약한 참조로만 잡아 캐시에서 버려지면 기록도 정리된다.
  */
+/** 진단용: 브라우저가 버린(contextlost)·되찾은(contextrestored) 그림 수 */
+export const gfxEvents = { lost: 0, restored: 0 };
+
 interface PaintRec { ref: WeakRef<Drawable>; pixels: Uint8Array; w: number; h: number; pal: Palette }
 const painted = new Set<PaintRec>();
 
@@ -45,6 +48,12 @@ export function indexedToCanvas(pixels: Uint8Array, w: number, h: number, pal: P
   const c = makeCanvas(w, h);
   paint(c, pixels, w, h, pal);
   painted.add({ ref: new WeakRef(c), pixels, w, h, pal });
+  // Chrome 은 그래픽 메모리가 모자라면 캔버스를 하나씩 골라 버린다(contextlost) — 되찾으면(contextrestored) 비어 있으므로 그 그림만 다시 그린다
+  c.addEventListener('contextlost', () => gfxEvents.lost++);
+  c.addEventListener('contextrestored', () => {
+    gfxEvents.restored++;
+    paint(c, pixels, w, h, pal);
+  });
   if (painted.size % 4096 === 0) sweep();
   return c;
 }

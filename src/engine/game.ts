@@ -20,14 +20,14 @@ import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, 
 import { adjustedExperience } from './experience';
 import { StateList, type StateOverlayDef } from './states';
 import { ItemStore } from './itemstore';
-import { computeDerived, type Derived } from './charstats';
+import { computeDerived, itemSkillBonus, skillBonusOf, type Derived, type ItemSkillBonus } from './charstats';
 import { gemStats } from './itemgen';
 import type { TxtRow } from '../formats/txt';
 import type { NpcPrice } from './price';
 import type { Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
-import type { SkillDb, SkillRecord } from './skills/db';
+import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
 import { levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
@@ -430,6 +430,9 @@ export class Game {
   private nextUnitId = 100;
   private events: GameEvent[] = [];
   private passiveCache: { key: string; list: PassiveStat[] } | null = null;
+  /** 장비 +스킬 합계 (derived() 와 같이 다시 계산) · 다시 계산할 때마다 늘어나는 번호 (패시브 캐시 키) */
+  private itemSkillCache: ItemSkillBonus | null = null;
+  private itemSkillVersion = 0;
   /** 플레이어 소환수 (레벨을 옮겨 다녀도 따라온다) */
   readonly pets: MonsterUnit[] = [];
   /** 켜져 있는 오라 (오른쪽 버튼의 오라 스킬) */
@@ -1600,7 +1603,7 @@ export class Game {
     if (s.passive) return false;
     if (hand === 'left' && !s.leftSkill) return false;
     if (s.id === SKILL_ATTACK || s.id === SKILL_THROW) return true;
-    return (this.character?.skills[s.id] ?? 0) > 0;
+    return this.effectiveSkillLevel(s.id) > 0;
   }
 
   private isBusy(): boolean {
@@ -1661,23 +1664,43 @@ export class Game {
   }
 
   /**
-   * 스킬 공식의 사용자: 유효 레벨 = 하드 포인트 + 전체 스킬 보너스(Battle Command item_allskills, 스킬 신전),
+   * 스킬 공식의 사용자: 유효 레벨 = effectiveSkillLevel (하드 + 아이템 +스킬 + Battle Command item_allskills + 스킬 신전),
    * 원소 마스터리 = passive_<원소>_mastery (Fire/Lightning Mastery). 출처: SUNITDMG_FillDamageValues (STAT_PASSIVE_FIRE_MASTERY …)
    */
   private owner(): SkillOwner {
     const c = this.character;
     if (!c) return { baseLevel: () => 0, skillLevel: () => 0, unitLevel: 1 };
     const base = characterOwner(c);
-    const bonus = this.allSkillsBonus();
     const MASTERY: Record<string, string> = { fire: 'passive_fire_mastery', ltng: 'passive_ltng_mastery', cold: 'passive_cold_mastery', pois: 'passive_pois_mastery', mag: 'passive_mag_mastery' };
     return {
       ...base,
-      skillLevel: (id) => {
-        const hard = c.skills[id] ?? 0;
-        return hard > 0 ? hard + bonus : 0;
-      },
+      skillLevel: (id) => this.effectiveSkillLevel(id),
       mastery: (eType) => (MASTERY[eType] ? passiveStat(this.passives(), MASTERY[eType] as string) : 0),
     };
+  }
+
+  /** 스킬 툴팁용 SkillOwner (유효 레벨·마스터리 — 게임 공식과 같은 값) */
+  skillOwner(): SkillOwner {
+    return this.owner();
+  }
+
+  /**
+   * 유효 스킬 레벨 = 하드 포인트 + 아이템(+모든/직업/탭/개별 스킬) + 스킬 신전·Battle Command.
+   * 하드 포인트가 0 이면 개별 스킬 아이템 보너스가 있을 때만 (원작: 개별 스킬 아이템은 배우지 않은 스킬도 쓰게 해 준다).
+   * 출처: D2MOO SKILLS_GetSkillLevel. 스킬 트리 숫자·배우기 조건·시너지(blvl) 는 하드 포인트 그대로
+   */
+  effectiveSkillLevel(id: number): number {
+    const c = this.character, s = this.skillRecord(id);
+    if (!c || !s) return 0;
+    if (s.id <= 5) return 1;
+    const hard = c.skills[id] ?? 0;
+    const { total, single } = skillBonusOf(this.itemSkills(), s, CLASS_CODE[c.cls]);
+    return hard > 0 || single > 0 ? hard + total + this.allSkillsBonus() : 0;
+  }
+
+  private itemSkills(): ItemSkillBonus {
+    this.derived();
+    return this.itemSkillCache ?? { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map() };
   }
 
   /** 전체 스킬 +: 스킬 신전(allskills) + Battle Command(item_allskills). 출처: itemstatcost.txt item_allskills */
@@ -1689,8 +1712,9 @@ export class Game {
     const c = this.character, db = this.data?.skills, calc = this.data?.skillCalc;
     if (!c || !db || !calc) return [];
     const aura = this.aura?.skill.id ?? -1;
-    const key = JSON.stringify(c.skills) + c.level + ':' + aura;
-    if (this.passiveCache?.key !== key) this.passiveCache = { key, list: passiveStats(c, db, calc, aura) };
+    this.derived();
+    const key = JSON.stringify(c.skills) + c.level + ':' + aura + ':' + this.itemSkillVersion + ':' + this.allSkillsBonus();
+    if (this.passiveCache?.key !== key) this.passiveCache = { key, list: passiveStats(c, db, calc, aura, this.owner()) };
     return this.passiveCache.list;
   }
 
@@ -1742,6 +1766,8 @@ export class Game {
     const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}`;
     if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
       this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty);
+      this.itemSkillCache = itemSkillBonus(this.equipment, data.items, data.treasure.gen);
+      this.itemSkillVersion++;
       this.derivedKey = key;
       this.statsDirty = false;
     }
@@ -2212,7 +2238,7 @@ export class Game {
     const c = this.character, data = this.data, calc = data?.skillCalc;
     if (!c || !calc || this.isDead) return;
     const s = this.skillRecord(c.rightSkill);
-    const lvl = s ? (c.skills[s.id] ?? 0) : 0;
+    const lvl = s ? this.effectiveSkillLevel(s.id) : 0;
     if (!s || !s.aura || lvl <= 0) {
       if (this.aura) this.endAura();
       return;
@@ -2321,11 +2347,9 @@ export class Game {
   }
 
   private skillLevel(s: SkillRecord): number {
-    if (s.id <= 5) return 1;
-    const hard = this.character?.skills[s.id] ?? 0;
     // 스킬 신전: 배운 스킬 +Arg0 (shrines.txt Skill Boost Arg0 = 2, 상태 shrine_skill). 근사(원작 미확인): 원작은 상태 해제 콜백에서 스킬을 다시 계산
     // Battle Command: item_allskills +1 (출처: skills.txt Battle Command aurastat1)
-    return hard > 0 ? hard + this.allSkillsBonus() : 0;
+    return this.effectiveSkillLevel(s.id);
   }
 
   private isRangedWeapon(): boolean {
@@ -5719,7 +5743,7 @@ export class Game {
     for (const id of [c?.leftSkill ?? 0, c?.rightSkill ?? 0]) {
       const s = this.skillRecord(id);
       if (!s) continue;
-      const lvl = c?.skills[s.id] ?? 0;
+      const lvl = this.effectiveSkillLevel(s.id);
       if (s.name === 'Blizzard' || s.name === 'Meteor' || (s.name === 'Fire Wall' && lvl > 3) || (s.name === 'Immolation Arrow' && lvl > 7)) special = true;
     }
     const tp = this.townPortal;

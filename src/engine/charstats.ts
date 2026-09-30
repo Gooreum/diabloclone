@@ -166,3 +166,46 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
     stat: get,
   };
 }
+
+/**
+ * 장비 +스킬 합계. 출처: itemstatcost.txt item_allskills / item_addclassskills(param 직업) / item_addskill_tab(param 직업×8+탭) /
+ * item_singleskill(param 스킬 Id) / item_elemskill(param 원소: fire 1, ltng 2, mag 3, cold 4, pois 5 — Magefist "+1 to Fire Skills"), D2MOO SKILLS_GetSkillLevel. computeDerived 와 같은 규칙: 부서진 것 제외, 감정된 것만, 소켓·세트 보너스 포함
+ */
+export interface ItemSkillBonus { all: number; cls: Map<number, number>; tab: Map<number, number>; single: Map<number, number>; elem: Map<number, number> }
+
+export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null): ItemSkillBonus {
+  const out: ItemSkillBonus = { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map() };
+  const addTo = (m: Map<number, number>, k: number, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  const add = (s: { stat: string; param: number; value: number }) => {
+    if (s.stat === 'item_allskills') out.all += s.value;
+    else if (s.stat === 'item_addclassskills') addTo(out.cls, s.param, s.value);
+    else if (s.stat === 'item_addskill_tab') addTo(out.tab, s.param, s.value);
+    else if (s.stat === 'item_singleskill') addTo(out.single, s.param, s.value);
+    else if (s.stat === 'item_elemskill') addTo(out.elem, s.param, s.value);
+  };
+  const live = Object.values(equipment).filter((it) => items.base(it.code) && !isBroken(it));
+  for (const it of live) {
+    if (it.identified) it.stats.forEach(add);
+    for (const g of it.socketed) g.stats.forEach(add);
+  }
+  setBonusStats(live.filter((it) => it.identified), gen, items).forEach(add);
+  return out;
+}
+
+/** 직업 번호 (item_addclassskills 파라미터 · charstats 행 순서) */
+export const CLASS_INDEX: Record<string, number> = { ama: 0, sor: 1, nec: 2, pal: 3, bar: 4 };
+/** 원소 번호 (item_elemskill 파라미터 · ElemTypes.txt 순서) */
+const ELEM_INDEX: Record<string, number> = { fire: 1, ltng: 2, mag: 3, cold: 4, pois: 5 };
+
+/**
+ * 한 스킬에 붙는 아이템 보너스. 직업·탭·개별 보너스는 캐릭터 자기 직업 스킬에만 (원작 "(Sorceress Only)").
+ * single: 개별 스킬 보너스 — 하드 포인트가 없어도 이 값이 있으면 스킬을 쓸 수 있다.
+ * 근사(원작 미확인): 탭 번호 = skilldesc SkillPage − 1, 원소 스킬 보너스는 skills.txt EType 이 같은 자기 직업 스킬에
+ */
+export function skillBonusOf(b: ItemSkillBonus, s: { id: number; charclass: string; page: number; eType: string }, clsCode: string): { total: number; single: number } {
+  const cls = CLASS_INDEX[s.charclass];
+  if (cls === undefined || s.charclass !== clsCode) return { total: b.all, single: 0 };
+  const single = b.single.get(s.id) ?? 0;
+  const elem = ELEM_INDEX[s.eType] !== undefined ? (b.elem.get(ELEM_INDEX[s.eType]!) ?? 0) : 0;
+  return { total: b.all + (b.cls.get(cls) ?? 0) + (b.tab.get(cls * 8 + s.page - 1) ?? 0) + single + elem, single };
+}

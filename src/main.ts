@@ -63,7 +63,7 @@ import { LoadingScreen } from './ui/loading';
 import { GoldPopup } from './ui/goldpopup';
 import { MessageLog } from './ui/messages';
 import { drawGroundLabels, type GroundLabel } from './ui/groundlabels';
-import { keyBindings } from './ui/keys';
+import { keyBindings, SKILL_SLOTS, type SkillSlot } from './ui/keys';
 import { SkillTip } from './ui/skilltip';
 import { QUALITY_COLOR } from './ui/itemtext';
 import type { Hover } from './input/mapper';
@@ -728,12 +728,26 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (goldPopup.key(e)) return;
       // 게임 메뉴가 열려 있으면 위·아래·Enter·Esc 만 (단축키 바꾸는 중이면 그 키)
       if (panels.menuOpen) {
-        if (e.key === 'Tab' || e.key === 'Alt') e.preventDefault();
+        // F1 도움말·F5 새로고침 같은 브라우저 동작 대신 단축키로 (키 바꾸기 중에도)
+        if (e.key === 'Tab' || e.key === 'Alt' || /^F\d+$/.test(e.key)) e.preventDefault();
         if (e.key === 'Escape') panels.back();
         else panels.key(e.key);
         return;
       }
       const act = keyBindings.actionOf(e);
+      // 원작 스킬 단축키 (Skill 1~8, 기본 F1~F8): 스킬 고르기 목록에서 아이콘을 가리키고 누르면 그 손에 등록, 아니면 등록한 스킬로 바꾼다
+      const slot = SKILL_SLOTS.indexOf(act as SkillSlot);
+      if (slot >= 0) {
+        e.preventDefault();
+        const m = input.mouse;
+        const hover = hud.skillMenu && m ? hud.hoveredMenuSkill(m.x, m.y) : null;
+        if (hover !== null && hud.skillMenu) game.enqueue({ type: 'setHotkey', slot, skill: hover, hand: hud.skillMenu });
+        else {
+          const hk = ch.hotkeys?.[slot];
+          if (hk) game.enqueue({ type: 'setSkill', hand: hk.hand, skill: hk.skill });
+        }
+        return;
+      }
       if (act === 'showitems') {
         e.preventDefault();
         altHeld = true;
@@ -790,7 +804,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
     // 컨트롤 패널 동작 (클릭)
-    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand) => game.canSelectSkill(s, hand), mouse: input.mouse });
+    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand) => game.canSelectSkill(s, hand), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str) });
     onHud = (a: HudAction, button: number, cur: ItemInstance | null) => {
       if (a.kind === 'run') input.run = !input.run;
       else if (a.kind === 'minipanel') hud.miniOpen = !hud.miniOpen;

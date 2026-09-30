@@ -57,7 +57,12 @@ export interface Character {
   /** 마우스 왼쪽/오른쪽 버튼 스킬 Id (0 = Attack) */
   leftSkill: number;
   rightSkill: number;
+  /** 스킬 단축키 Skill 1~8 칸 (원작: 스킬 고르기 목록에서 아이콘을 가리키고 단축키 → 그 손에 등록). 키는 옵션에서 바꾼다 */
+  hotkeys?: (SkillHotkey | null)[];
 }
+
+export interface SkillHotkey { skill: number; hand: 'left' | 'right' }
+export const HOTKEY_SLOTS = 8;
 
 /** 시작 생명 = vit + hpadd, 마나 = 에너지, 스태미나 = stamina 컬럼 (예: 바바리안 55/10/92) */
 export function createCharacter(cs: ClassStats): Character {
@@ -66,7 +71,7 @@ export function createCharacter(cs: ClassStats): Character {
     cls: cs.cls, level: 1, experience: 0,
     str: cs.str, dex: cs.dex, vit: cs.vit, ene: cs.ene, statPoints: 0, skillPoints: 0,
     maxLife, maxMana, maxStamina, life: maxLife, mana: maxMana, stamina: maxStamina,
-    skills: {}, leftSkill: 0, rightSkill: 0,
+    skills: {}, leftSkill: 0, rightSkill: 0, hotkeys: Array<SkillHotkey | null>(HOTKEY_SLOTS).fill(null),
   };
 }
 

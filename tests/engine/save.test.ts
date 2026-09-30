@@ -3,7 +3,7 @@ import { makeSave, parseSave, serializeSave, summarize, validHeroName } from '..
 import type { Character } from '../../src/engine/player';
 import { QUALITY, type ItemInstance } from '../../src/engine/treasure';
 
-const ch: Character = { cls: 'Barbarian', level: 3, experience: 1600, str: 35, dex: 20, vit: 30, ene: 10, statPoints: 0, skillPoints: 2, maxLife: 79, maxMana: 12, maxStamina: 99, life: 40, mana: 5, stamina: 80, skills: { 126: 2 }, leftSkill: 126, rightSkill: 0 };
+const ch: Character = { cls: 'Barbarian', level: 3, experience: 1600, str: 35, dex: 20, vit: 30, ene: 10, statPoints: 0, skillPoints: 2, maxLife: 79, maxMana: 12, maxStamina: 99, life: 40, mana: 5, stamina: 80, skills: { 126: 2 }, leftSkill: 126, rightSkill: 0, hotkeys: Array(8).fill(null) };
 const item = (id: number, code: string): ItemInstance => ({ id, code, quality: QUALITY.NORMAL, ilvl: 1, identified: true, quantity: 1, durability: 20, maxDurability: 28, defense: 0, invW: 1, invH: 1, levelReq: 0, prefixes: [], suffixes: [], sockets: 0, socketed: [], stats: [] });
 
 describe('저장/불러오기', () => {
@@ -14,6 +14,15 @@ describe('저장/불러오기', () => {
     delete old.character.rightSkill;
     const back = parseSave(JSON.stringify(old));
     expect([back.character.skills, back.character.leftSkill, back.character.rightSkill]).toEqual([{}, 0, 0]);
+  });
+  it('스킬 단축키: 예전 저장은 빈 8칸, 저장 왕복 후 유지', () => {
+    const raw = JSON.parse(serializeSave(makeSave('Old', ch, 0, { inventory: [], equipment: {} }, 1))) as { character: Record<string, unknown> };
+    delete raw.character.hotkeys;
+    expect(parseSave(JSON.stringify(raw)).character.hotkeys).toEqual(Array(8).fill(null));
+    const c = structuredClone(ch);
+    c.hotkeys = [{ skill: 126, hand: 'left' }, null, null, null, null, null, null, { skill: 0, hand: 'right' }];
+    const back = parseSave(serializeSave(makeSave('Hk', c, 0, { inventory: [], equipment: {} }, 1)));
+    expect(back.character.hotkeys).toEqual(c.hotkeys);
   });
   it('직렬화 왕복 후 스탯·레벨·경험치·골드·인벤토리·장착이 동일', () => {
     const s = makeSave('Conan', ch, 123, { inventory: [{ item: item(5, 'isc'), x: 3, y: 1 }], belt: [item(6, 'hp1')], stash: [{ item: item(7, 'cap'), x: 0, y: 0 }], equipment: { rarm: item(1, 'hax') }, stashGold: 50 }, 1000);

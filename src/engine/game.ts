@@ -15,7 +15,7 @@ import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } 
 import { aiName, escape, hasAi, idle, MONMODE_INDEX, think, thinkNpc, walkToTarget, type AiWorld, type MonCast, type MonMode, type MonsterUnit, type NpcPathNode, type PetInfo, type SkillTarget } from './ai';
 import { applyUModInit, calcPercentage, MONFLAG, rollMinionCount, UMOD, xferMods, type UniqueDb, type UModContext } from './uniques';
 import { ChaosState, SEAL_IDS, type ChaosAction } from './chaos';
-import { addExperience, spendStat, type Character, type ClassName, type ClassStats, type ExpTable } from './player';
+import { addExperience, spendStat, HOTKEY_SLOTS, type Character, type ClassName, type ClassStats, type ExpTable, type SkillHotkey } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
 import { StateList, type StateOverlayDef } from './states';
@@ -1579,6 +1579,15 @@ export class Game {
         if (!c || !s || !this.canSelectSkill(s, cmd.hand)) return;
         if (cmd.hand === 'left') c.leftSkill = s.id;
         else c.rightSkill = s.id;
+        return;
+      }
+      // 원작: 스킬 고르기 목록에서 아이콘을 가리키고 단축키 → 그 손의 단축키. 한 스킬(같은 손)에는 키 하나
+      case 'setHotkey': {
+        const s = this.data?.skills?.byId.get(cmd.skill);
+        if (!c || !s || !this.canSelectSkill(s, cmd.hand) || !Number.isInteger(cmd.slot) || cmd.slot < 0 || cmd.slot >= HOTKEY_SLOTS) return;
+        const hk = (c.hotkeys ??= Array<SkillHotkey | null>(HOTKEY_SLOTS).fill(null));
+        for (let i = 0; i < HOTKEY_SLOTS; i++) if (hk[i]?.skill === s.id && hk[i]?.hand === cmd.hand) hk[i] = null;
+        hk[cmd.slot] = { skill: s.id, hand: cmd.hand };
         return;
       }
       default:

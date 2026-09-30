@@ -78,6 +78,8 @@ export interface HudState {
   str: (k: string) => string;
   canSelect: (s: SkillRecord, hand: 'left' | 'right') => boolean;
   mouse: { x: number; y: number } | null;
+  /** 스킬 단축키 칸(0~7)의 지금 키 이름 (옵션에서 바꾼 키) */
+  hotkeyLabel?: (slot: number) => string;
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
@@ -136,6 +138,12 @@ export class ControlPanel {
       const x = hand === 'right' ? HUD.rskill.x - col * 48 : HUD.lskill.x + col * 48;
       this.menuRects.push({ id: s.id, r: { x, y, w: 48, h: 48 } });
     });
+  }
+
+  /** 스킬 고르기 목록에서 (x, y) 아래 스킬 (단축키 등록용) */
+  hoveredMenuSkill(x: number, y: number): number | null {
+    if (!this.skillMenu) return null;
+    return this.menuRects.find((m) => inRect(m.r, x, y))?.id ?? null;
   }
 
   /** e2e: 스킬 고르기 목록에서 스킬 아이콘 가운데 */
@@ -302,7 +310,13 @@ export class ControlPanel {
     }
     // 스킬 고르기 목록
     this.layoutMenu(st);
-    for (const m of this.menuRects) this.skillIcon(ctx, m.id, m.r.x, m.r.y);
+    for (const m of this.menuRects) {
+      this.skillIcon(ctx, m.id, m.r.x, m.r.y);
+      // 등록된 단축키 이름 (근사(원작 미확인): 위치 = 아이콘 오른쪽 아래, 글꼴 font16)
+      const slot = st.ch.hotkeys?.findIndex((h) => h?.skill === m.id && h.hand === this.skillMenu) ?? -1;
+      const label = slot >= 0 ? st.hotkeyLabel?.(slot) : undefined;
+      if (label) drawText(ctx, label, m.r.x + 46, m.r.y + 30, { font: 'font16', align: 'right', color: 'white' });
+    }
     this.hover(ctx, st);
     if (st.dead) {
       // 근사(원작 미확인): 원작 사망 문구 위치·글꼴

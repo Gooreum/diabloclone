@@ -811,6 +811,28 @@ describe.skipIf(!hasGameData)('원작 skills.txt 수치', () => {
       expect([ch.rightSkill, ch.leftSkill]).toEqual([S('Howl').id, S('Bash').id]);
     });
 
+    it('setHotkey: 목록에서 등록한 칸에 스킬·손, 같은 스킬(같은 손)을 다른 칸에 다시 달면 옮겨 간다, 못 쓰는 스킬은 무시', () => {
+      const { game, ch } = setup('Barbarian', { Bash: 1, Howl: 1 }, { rarm: item('hax') });
+      expect(ch.hotkeys).toEqual(Array(8).fill(null));
+      game.enqueue({ type: 'setHotkey', slot: 0, hand: 'right', skill: S('Howl').id });
+      game.enqueue({ type: 'setHotkey', slot: 1, hand: 'left', skill: S('Bash').id });
+      run(game, 1);
+      expect(ch.hotkeys!.slice(0, 2)).toEqual([{ skill: S('Howl').id, hand: 'right' }, { skill: S('Bash').id, hand: 'left' }]);
+      // 같은 스킬·손 → 칸 0 비우고 칸 3 에
+      game.enqueue({ type: 'setHotkey', slot: 3, hand: 'right', skill: S('Howl').id });
+      // 배우지 않은 스킬, 왼쪽 불가 스킬, 칸 범위 밖은 무시
+      game.enqueue({ type: 'setHotkey', slot: 4, hand: 'right', skill: S('Leap').id });
+      game.enqueue({ type: 'setHotkey', slot: 5, hand: 'left', skill: S('Howl').id });
+      game.enqueue({ type: 'setHotkey', slot: 8, hand: 'right', skill: S('Bash').id });
+      run(game, 1);
+      expect(ch.hotkeys).toEqual([null, { skill: S('Bash').id, hand: 'left' }, null, { skill: S('Howl').id, hand: 'right' }, null, null, null, null]);
+      // 같은 스킬이라도 다른 손이면 따로
+      game.enqueue({ type: 'setHotkey', slot: 6, hand: 'right', skill: S('Bash').id });
+      run(game, 1);
+      expect(ch.hotkeys![1]).toEqual({ skill: S('Bash').id, hand: 'left' });
+      expect(ch.hotkeys![6]).toEqual({ skill: S('Bash').id, hand: 'right' });
+    });
+
     it('spendSkill / spendStat 명령', () => {
       const { game, ch } = setup('Barbarian', {}, { rarm: item('hax') });
       ch.skillPoints = 1;

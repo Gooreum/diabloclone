@@ -29,6 +29,8 @@ export type Command =
   | { type: 'spendStat'; stat: 'str' | 'dex' | 'vit' | 'ene' }
   | { type: 'spendSkill'; skill: number }
   | { type: 'setSkill'; hand: 'left' | 'right'; skill: number }
+  /** 스킬 단축키 칸(0~7)에 스킬 등록 — 같은 스킬·손이 붙어 있던 다른 칸은 비운다 */
+  | { type: 'setHotkey'; slot: number; hand: 'left' | 'right'; skill: number }
   /** 자기 시체 줍기 (걸어가서 장비를 되찾음) */
   | { type: 'takeCorpse' }
   /** NPC 메뉴 고르기 (talk/trade/tradeRepair/gamble/hire/resurrect/identify/imbue/goEast/cancel, 퀘스트 항목 quest:<퀘스트>:<문자열 번호>) */

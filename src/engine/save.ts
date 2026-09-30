@@ -7,7 +7,7 @@
 //   예전 저장(필드 없음)은 Normal·Act 1 로 읽는다. waypoints/questFlags 는 Normal 값의 사본으로 남긴다 (예전 코드 호환).
 // 난이도 (Phase 8): 난이도별 마지막 막 actByDiff (원작 .d2s 헤더 nTown[3] — 게임을 시작하면 그 난이도의 이 막 마을에서),
 //   칭호용 진행 값 progression (원작 .d2s 진행 바이트). 출처: D2MOO PlrSave2.cpp (nTown[pGame->nDifficulty] & 0x7F = 시작 막)
-import type { Character, ClassName } from './player';
+import { HOTKEY_SLOTS, type Character, type ClassName } from './player';
 import type { ItemInstance } from './treasure';
 import type { Placed } from './inventory';
 import type { MercSave } from './hireling';
@@ -146,6 +146,12 @@ export function mergeDifficulty(prev: Pick<CharacterSave, 'waypointsByDiff' | 'q
   return { waypointsByDiff: wp, questFlagsByDiff: qf };
 }
 
+/** 스킬 단축키 8칸 (없거나 모자라면 빈 칸) */
+function normalHotkeys(hk: Character['hotkeys']): NonNullable<Character['hotkeys']> {
+  const a = Array.isArray(hk) ? hk : [];
+  return Array.from({ length: HOTKEY_SLOTS }, (_, i) => (a[i] ? { ...a[i] } : null));
+}
+
 export function makeSave(name: string, character: Character, gold: number, items: SaveItems, now = Date.now()): CharacterSave {
   // 난이도별 기록: Normal 칸은 waypoints/questFlags 가 있으면 그것 (예전 호출 호환), 없으면 waypointsByDiff[0]
   const byDiff = mergeDifficulty({ waypointsByDiff: items.waypointsByDiff ?? [], questFlagsByDiff: items.questFlagsByDiff ?? [] }, 0,
@@ -159,7 +165,7 @@ export function makeSave(name: string, character: Character, gold: number, items
   return {
     version: SAVE_VERSION,
     name,
-    character: structuredClone(character),
+    character: { ...structuredClone(character), hotkeys: normalHotkeys(character.hotkeys) },
     gold,
     inventory: structuredClone(items.inventory),
     stash: structuredClone(items.stash ?? []),
@@ -218,6 +224,8 @@ export function parseSave(text: string): CharacterSave {
   s.character.skills ??= {};
   s.character.leftSkill ??= 0;
   s.character.rightSkill ??= 0;
+  // 스킬 단축키가 없던 저장 호환 (빈 8칸)
+  s.character.hotkeys = normalHotkeys(s.character.hotkeys);
   const inv = s.inventory as Placed[];
   for (const p of inv) normalizeItem(p.item);
   for (const p of s.stash ?? []) normalizeItem(p.item);

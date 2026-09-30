@@ -104,7 +104,8 @@ const BAR_ROW = { labelX: 110, barX: 400, w: 290, h: 33 } as const;
 /** 켜고 끄는 항목: 이름 왼쪽, 값 오른쪽 */
 const OPT_ROW = { labelX: 60, valueX: 740 } as const;
 /** 단축키 목록 틀 */
-const CTRL = { x: 100, y: 64, w: 600, h: 420, rowTop: 104, rowH: 22, keyX: 470 } as const;
+const CTRL = { x: 100, y: 64, w: 600, h: 420, rowTop: 104, rowH: 22, keyDX: 160 } as const;
+const KEY_ROWS = 12;
 
 export class Panels {
   private readonly art: UiArt;
@@ -173,8 +174,10 @@ export class Panels {
     return { x: 400 - w / 2, y, w, h: ITEM_H };
   }
 
+  /** 단축키 줄: 기능이 23개라 두 칸 (왼쪽 12 · 오른쪽 11). 근사(원작 미확인): 원작은 한 줄 목록을 스크롤 */
   private keyRow(i: number): HRect {
-    return { x: CTRL.x + 14, y: CTRL.rowTop + i * CTRL.rowH, w: CTRL.w - 28, h: CTRL.rowH };
+    const col = i < KEY_ROWS ? 0 : 1, row = i % KEY_ROWS, w = (CTRL.w - 28) / 2;
+    return { x: CTRL.x + 14 + col * w, y: CTRL.rowTop + row * CTRL.rowH, w, h: CTRL.rowH };
   }
 
   private go(scr: Screen): void {
@@ -288,8 +291,11 @@ export class Panels {
     const s = this.str;
     drawText(ctx, s('cfgCtrl').toUpperCase(), 400, 20, { font: 'font30', align: 'center' });
     this.box(ctx, CTRL.x, CTRL.y, CTRL.w, CTRL.h);
-    drawText(ctx, s('CfgFunction'), CTRL.x + 24, CTRL.y + 14, { color: 'gold' });
-    drawText(ctx, s('CfgPrimaryKey'), CTRL.keyX, CTRL.y + 14, { color: 'gold' });
+    for (const i of [0, KEY_ROWS]) {
+      const r = this.keyRow(i);
+      drawText(ctx, s('CfgFunction'), r.x + 10, CTRL.y + 14, { color: 'gold' });
+      drawText(ctx, s('CfgPrimaryKey'), r.x + CTRL.keyDX, CTRL.y + 14, { color: 'gold' });
+    }
     KEY_ACTIONS.forEach((a, i) => {
       const r = this.keyRow(i);
       const waiting = this.waitingKey === a;
@@ -297,11 +303,11 @@ export class Panels {
         ctx.fillStyle = 'rgba(80,60,20,0.6)';
         ctx.fillRect(r.x, r.y, r.w, r.h);
       }
-      drawText(ctx, s(KEY_LABEL[a]), CTRL.x + 24, r.y + 3, { color: 'white' });
+      drawText(ctx, s(KEY_LABEL[a]), r.x + 10, r.y + 3, { color: 'white' });
       const key = keyBindings.map[a];
       // 기다리는 동안 깜빡이는 빈 칸 (근사)
       const label = waiting ? (Math.floor(now / 300) % 2 ? '_' : '') : keyBindings.label(key, s);
-      drawText(ctx, label, CTRL.keyX, r.y + 3, { color: key ? 'white' : 'grey' });
+      drawText(ctx, label, r.x + CTRL.keyDX, r.y + 3, { color: key ? 'white' : 'grey' });
     });
     drawText(ctx, s('CfgDefault'), CTRL.x + 80, CTRL.y + CTRL.h - 32, { align: 'center', color: 'gold' });
     if (now - this.assignedAt < 1500) drawText(ctx, s('KeysAssigned'), CTRL.x + CTRL.w - 24, CTRL.y + CTRL.h - 32, { align: 'right' });

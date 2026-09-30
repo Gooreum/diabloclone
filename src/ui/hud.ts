@@ -123,7 +123,8 @@ export class ControlPanel {
     if (!db) return [];
     const ch = st.ch;
     const general = [0, 1, 2, 3, 4, 5].map((i) => db.byId.get(i)).filter((s): s is SkillRecord => !!s);
-    const learned = db.classSkills(ch.cls).filter((s) => (ch.skills[s.id] ?? 0) > 0);
+    // 배운 스킬 + 아이템 개별 스킬로 얻은 스킬 (canSelect = 유효 레벨 > 0)
+    const learned = db.classSkills(ch.cls);
     return [...general, ...learned].filter((s) => !s.passive && st.canSelect(s, hand));
   }
 

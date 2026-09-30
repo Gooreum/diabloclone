@@ -697,7 +697,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (automapMode !== 'off') automapMode = automapStyle;
     };
     // 스킬 툴팁 레벨별 줄 (skilldesc desc/dsc2/dsc3 + 엔진 SkillCalc)
-    const skillTip = data.skillCalc ? new SkillTip({ calc: data.skillCalc, owner: () => characterOwner(ch), str }) : null;
+    const skillTip = data.skillCalc ? new SkillTip({ calc: data.skillCalc, owner: () => game.skillOwner(), str }) : null;
     // 캐릭터 패널(C, 왼쪽)·스킬 트리(T, 오른쪽) — 원작 DC6, 투명 단추 층 #charpanel / #skilltree
     const charPanel = new CharPanel(stage, art, {
       character: () => ch, heroName: name, derived: () => game.derived(), classStats: cs, exp: table,
@@ -715,6 +715,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
           db: data.skills,
           character: () => ch,
           learn: (id) => game.enqueue({ type: 'spendSkill', skill: id }),
+          skillLevel: (id) => game.effectiveSkillLevel(id),
           str,
           describe: (s) => {
             const key = skilldesc.get(skillsRows.get(s.id)?.skilldesc ?? '')?.['str long'];

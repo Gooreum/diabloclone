@@ -44,6 +44,8 @@ export interface SkillPanelDeps {
   describe: (s: SkillRecord) => string;
   /** 레벨별 줄 (skilldesc desc/dsc2/dsc3) */
   tip?: (s: SkillRecord, lvl: number) => SkillTipLines;
+  /** 유효 스킬 레벨 (아이템 +스킬 포함) — 툴팁 "Current Skill Level" 에 쓴다. 트리 숫자는 원작처럼 하드 포인트 */
+  skillLevel?: (id: number) => number;
   onClose: () => void;
 }
 
@@ -156,7 +158,7 @@ export class SkillTree {
 
   private tooltip(ctx: CanvasRenderingContext2D, sk: SkillRecord, ch: Character, mouse: { x: number; y: number }): void {
     const s = this.deps.str;
-    const lvl = ch.skills[sk.id] ?? 0;
+    const lvl = this.deps.skillLevel?.(sk.id) ?? ch.skills[sk.id] ?? 0;
     const desc = this.deps.describe(sk);
     const lines: { text: string; color: TextColorName }[] = [{ text: sk.displayName, color: 'green' }];
     // 원작 string.tbl 설명은 줄 순서가 아래→위로 저장돼 있다 (예: skillld126 "to enemies…\npowerful blow…")

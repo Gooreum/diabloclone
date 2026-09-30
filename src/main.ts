@@ -16,7 +16,7 @@ import { makeSave, summarize, type CharacterSave } from './engine/save';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
 import { type Camera } from './render/iso';
-import { ItemGfx, MissileGfx, UnitGfx } from './render/units';
+import { ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
 import { buildScene } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
@@ -848,7 +848,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             player: { x: Math.round(s.player.x), y: Math.round(s.player.y), mode: s.player.mode, life: Math.round(s.player.life), dead: game.isDead },
             monsters: s.monsters.length, missiles: s.missiles.length, voices: audio?.voices?.length ?? -1, unlocked: audio?.unlocked,
             centerPixel: [px[0], px[1], px[2]], cam: [Math.round(cam.x), Math.round(cam.y)],
-            sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
+            unitLoads: unitGfxStats.loads, units: unitGfxStats.cached, sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
           };
           diagFrames = 0;
           diagMaxMs = 0;

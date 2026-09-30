@@ -16,7 +16,9 @@ export interface AsyncAssets {
 
 const loadOnce = (a: AsyncAssets, path: string) => (a.loadOnce ? a.loadOnce(path) : a.load(path));
 /** 해석한 유닛 그림(COF+DCC) 을 기억할 최대 개수 — 넘으면 오래 안 쓴 것부터 버린다 */
-const MAX_COMPOSITES = 160;
+const MAX_COMPOSITES = 1200;
+/** 진단용: 유닛 그림을 불러와 해석한 횟수와 기억 중인 수 */
+export const unitGfxStats = { loads: 0, cached: 0 };
 
 // 출처: OpenDiablo2 dcc_dir_lookup.go (64방향 테이블)
 const DIR4 = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -109,7 +111,9 @@ export class UnitGfx {
       this.cache.set(k, hit);
       return hit;
     }
+    unitGfxStats.loads++;
     this.cache.set(k, this.load(spec).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
+    unitGfxStats.cached = this.cache.size;
     for (const key of this.cache.keys()) {
       if (this.cache.size <= MAX_COMPOSITES) break;
       if (!(this.cache.get(key) instanceof Promise)) this.cache.delete(key);

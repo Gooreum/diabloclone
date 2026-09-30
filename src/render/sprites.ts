@@ -80,8 +80,8 @@ export class CanvasLru {
   }
 }
 
-/** 약 2천4백만 픽셀 (RGBA 약 96MB) — 동굴에서 몬스터 수십 종 + 스킬 효과가 약 1천만 픽셀이라 넉넉하다 */
-export const spriteCache = new CanvasLru(24_000_000);
+/** 약 4천8백만 픽셀 (RGBA 약 190MB) — 블러드 무어(나무 타일 다수 + 몬스터 100마리)가 2천4백만을 넘어 버렸다 다시 만들기를 반복했다 */
+export const spriteCache = new CanvasLru(48_000_000);
 let nextSpriteId = 1;
 /** 캐시 키에 쓸 고유 번호 (그림 묶음마다 하나) */
 export const newSpriteId = (): number => nextSpriteId++;

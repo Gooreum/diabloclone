@@ -62,6 +62,8 @@ export type PlayerMode = string;
 export const CLASS_TOKEN: Record<ClassName, string> = { Amazon: 'AM', Sorceress: 'SO', Necromancer: 'NE', Paladin: 'PA', Barbarian: 'BA' };
 const PLAYER_SIZE = 2;
 const PICKUP_RANGE = 2;
+/** 근사(원작 미확인): 봉인 보스가 봉인을 연 플레이어에게서 생기는 거리 한도 (서브타일) — 800×600 화면 안 */
+const SEAL_BOSS_RADIUS = 10;
 /** 스킬 Id: 일반 스킬 (skills.txt 0~5) */
 export const SKILL_ATTACK = 0;
 export const SKILL_THROW = 2;
@@ -5784,10 +5786,9 @@ export class Game {
   private runChaos(actions: ChaosAction[], sx: number, sy: number): void {
     for (const a of actions) {
       if (a.kind === 'spawnBoss') {
-        // 근사(원작 미확인): 원작 오프셋 자리가 봉인에서 걸어 갈 수 없는 곳이면 (우리 맵 배치 차이로 고립 지역에 떨어짐),
-        //   봉인(플레이어)과 이어진 칸 중 그 자리에 가장 가까운 칸. 이어져 있으면 원작 자리 그대로
-        //   출발은 봉인을 연 플레이어 자리 (걸어서 온 곳이라 길과 이어져 있다)
-        const at = reachableNear(this.map, this.player, { x: sx + a.dx, y: sy + a.dy }, 120) ?? { x: sx + a.dx, y: sy + a.dy };
+        // 근사(원작 미확인): 원작 오프셋은 원작 봉인 좌표 기준이라 우리 DRLG 배치에서는 화면 밖 먼 곳·고립 지역에 떨어진다.
+        //   봉인을 연 플레이어(걸어서 온 곳 — 길과 이어짐)에서 걸어 이어진 SEAL_BOSS_RADIUS 칸 안 중 원작 방향에 가장 가까운 칸 — 열면 화면 안에 나타난다
+        const at = reachableNear(this.map, this.player, { x: sx + a.dx, y: sy + a.dy }, SEAL_BOSS_RADIUS) ?? { x: sx + a.dx, y: sy + a.dy };
         const b = this.spawnSuperUnique(a.superUnique, at.x, at.y, undefined, true);
         if (b) {
           b.sealBoss = true;

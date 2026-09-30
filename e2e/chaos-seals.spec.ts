@@ -7,7 +7,7 @@ test.setTimeout(600_000);
 
 // 원작 A4Q2: 봉인 5 개를 열면 봉인 보스 3 (Grand Vizier·Lord De Seis·Infector) — 셋을 잡으면 디아블로.
 // 맵은 게임마다 다르므로 여러 판에서 보스가 입구에서 걸어 갈 수 있는 곳에 생기는지 본다.
-test('카오스 생추어리: 봉인 5개 → 보스 3마리가 입구에서 갈 수 있는 곳에 생기고, 셋을 잡으면 디아블로 (3판)', async ({ page }) => {
+test('카오스 생추어리: 봉인을 열면 그 보스가 화면 안(걸어갈 수 있는 곳)에 나타나고, 셋을 잡으면 디아블로 (3판)', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   for (let run = 0; run < 3; run++) {
@@ -58,6 +58,19 @@ test('카오스 생추어리: 봉인 5개 → 보스 3마리가 입구에서 갈
         g.enqueue({ type: 'interact', unitId: s.id });
       }, s);
       await page.waitForFunction((id) => (window.__game!.game.objects.find((o) => o.id === id)?.mode ?? 0) > 0, s.id, { timeout: 10_000 });
+      // 보스 봉인(392·394·396)이면 그 보스가 곧 화면에 그려진다 (클릭 상자)
+      const boss = await page.evaluate((id) => {
+        const g = window.__game!.game;
+        const o = g.objects.find((x) => x.id === id)!;
+        const su = ({ 392: 36, 394: 37, 396: 38 } as Record<number, number>)[o.type.id];
+        const b = su ? g.monsters.find((m) => m.superUnique === su) : undefined;
+        const p = g.snapshot().player;
+        return su ? { su, id: b?.id ?? -1, dist: b ? Math.hypot(b.x - p.x, b.y - p.y) : 999 } : null;
+      }, s.id);
+      if (boss) {
+        expect(boss.dist, `boss ${boss.su}`).toBeLessThanOrEqual(15);
+        await page.waitForFunction((id) => window.__game!.input!.pickBoxes.some((b) => b.kind === 'monster' && b.id === id), boss.id, { timeout: 5000 });
+      }
     }
     // 보스 3 마리가 입구에서 걸어서 갈 수 있는 곳에 있다
     const reach = await page.evaluate(() => {

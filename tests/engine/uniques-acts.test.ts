@@ -172,8 +172,9 @@ describe.skipIf(!hasGameData)('Act 2~4 슈퍼유니크·보스 (원작 데이터
           expect(sp!.superUnique).toBe(b.superUnique);
           const m = game.monsters.find((x) => x.id === sp!.monsterId)!;
           expect(m.superUnique).toBe(b.superUnique);
-          // 원작 자리 = 봉인 + 오프셋 이 있는 방 (QUESTS_SpawnMonster → SpawnSuperUnique: AutoPos 1 이면 그 방 안 무작위 자리)
-          expect(Math.hypot(m.x - (Math.floor(o.x) + b.dx), m.y - (Math.floor(o.y) + b.dy))).toBeLessThan(45);
+          // 원작 자리 = 봉인 + 오프셋 이 있는 방. 근사: 우리 맵에서는 그 자리가 화면 밖·고립 지역이라 원작 오프셋 대신 봉인을 연 플레이어 근처(걸어 이어진 10 칸 안) — 화면 안에 나타난다
+          const pl = game.snapshot().player;
+          expect(Math.hypot(m.x - pl.x, m.y - pl.y)).toBeLessThanOrEqual(15);
           bosses.push(m);
         } else expect(ev.some((e) => e.type === 'sealBossSpawned')).toBe(false);
       }

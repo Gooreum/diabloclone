@@ -7,6 +7,7 @@
 import type { ItemBase, ItemDb } from './items';
 import type { ItemInstance } from './treasure';
 import type { ClassName } from './player';
+import { statOf } from './itemgen';
 
 export const BODY_LOCS = ['head', 'neck', 'tors', 'rarm', 'larm', 'rrin', 'lrin', 'belt', 'feet', 'glov'] as const;
 export type BodyLoc = (typeof BODY_LOCS)[number];
@@ -119,13 +120,19 @@ export interface EquipContext {
 
 export type EquipError = 'slot' | 'level' | 'str' | 'dex' | 'twohand' | 'dualwield' | 'class';
 
-/** 아이템 요구치 (weapons/armor/misc.txt levelreq/reqstr/reqdex + 매직 접사·유니크 lvl req 중 큰 값) */
+/**
+ * 아이템 요구치 (weapons/armor/misc.txt levelreq/reqstr/reqdex + 매직 접사·유니크 lvl req 중 큰 값).
+ * 요구치 감소(properties ease → itemstatcost item_req_percent, 예: Steeldriver −50%)는 힘·민첩 요구치에만 곱한다.
+ * 근사(원작 미확인): 감정된 아이템에만 적용 (미감정 아이템은 마법 속성이 없는 것으로 보는 computeDerived 와 같게)
+ */
 export function requirements(items: ItemDb, item: ItemInstance): { level: number; str: number; dex: number } {
   const b = items.base(item.code);
+  const pct = item.identified ? statOf(item, 'item_req_percent') : 0;
+  const req = (v: number) => Math.max(0, Math.trunc((v * (100 + pct)) / 100));
   return {
     level: Math.max(b?.levelReq ?? 0, item.levelReq ?? 0),
-    str: b?.reqStr ?? 0,
-    dex: b?.reqDex ?? 0,
+    str: req(b?.reqStr ?? 0),
+    dex: req(b?.reqDex ?? 0),
   };
 }
 

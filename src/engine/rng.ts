@@ -59,3 +59,14 @@ export class Rng {
     return { low: this.low, high: this.high };
   }
 }
+
+/** 항상 최댓값을 고르는 RNG (pick(n) = n − 1). 프리셋 아이템처럼 가변 옵션을 최대값으로 만들 때만 쓴다 — 게임 굴림에는 쓰지 않는다 */
+export class MaxRng extends Rng {
+  constructor() {
+    super(1);
+  }
+
+  override pick(modulo: number): number {
+    return (modulo | 0) < 1 ? 0 : (modulo | 0) - 1;
+  }
+}

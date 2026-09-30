@@ -12,7 +12,7 @@
 import type { TxtRow } from '../formats/txt';
 import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type ItemStat, type Quality } from './treasure';
-import { Rng } from './rng';
+import { MaxRng, Rng } from './rng';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 const CLASSIC = (version: string | undefined) => n(version) < 100;
@@ -235,6 +235,40 @@ export class ItemGen {
     item.quality = q;
     if (q === QUALITY.NORMAL || q === QUALITY.SUPERIOR) this.rollSockets(item, base, itemRng, startSeed);
     if (q === QUALITY.NORMAL) this.staffMods(item, base, itemRng);
+    this.finishStats(item, base);
+  }
+
+  /**
+   * 품질을 굴리지 않고 정해서 붙인다 (개발용 프리셋 캐릭터). 유니크·세트 행 또는 매직/레어 접사 행을 지정하고, 가변 옵션은 최대값.
+   * 요구 레벨은 굴림과 같은 규칙 (유니크·세트 lvl req, 접사 levelreq 중 큰 값). 감정된 상태로 만든다.
+   */
+  makeFixed(item: ItemInstance, base: ItemBase, spec: { uniqueIdx?: number; setIdx?: number; prefixes?: number[]; suffixes?: number[]; rareName?: [number, number] }): void {
+    const max = new MaxRng();
+    item.stats = [];
+    item.prefixes = [...(spec.prefixes ?? [])];
+    item.suffixes = [...(spec.suffixes ?? [])];
+    item.rareName = undefined;
+    if (spec.uniqueIdx !== undefined) {
+      const u = this.uniques[spec.uniqueIdx];
+      if (!u) throw new Error(`unique row not found: ${spec.uniqueIdx}`);
+      item.quality = QUALITY.UNIQUE;
+      item.uniqueIdx = u.idx;
+      item.levelReq = Math.max(item.levelReq, u.lvlReq);
+      this.assignMods(item, base, u.mods, max);
+    } else if (spec.setIdx !== undefined) {
+      const s = this.setItems[spec.setIdx];
+      if (!s) throw new Error(`set item row not found: ${spec.setIdx}`);
+      item.quality = QUALITY.SET;
+      item.setIdx = s.idx;
+      item.levelReq = Math.max(item.levelReq, s.lvlReq);
+      this.assignMods(item, base, s.mods, max);
+    } else {
+      item.quality = spec.rareName ? QUALITY.RARE : QUALITY.MAGIC;
+      if (spec.rareName) item.rareName = spec.rareName;
+      for (const i of item.prefixes) this.assignMods(item, base, this.prefixes[i]?.mods ?? [], max);
+      for (const i of item.suffixes) this.assignMods(item, base, this.suffixes[i]?.mods ?? [], max);
+    }
+    item.identified = true;
     this.finishStats(item, base);
   }
 

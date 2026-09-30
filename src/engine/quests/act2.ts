@@ -688,8 +688,8 @@ export class Act2Quests extends ActQuestBase {
   }
 
   /**
-   * 출처: ENVIRONMENT_TaintedSunBegin (Act 2 환경을 일식으로) + 패킷 0x53 (클라이언트 조명)
-   * 근사(원작 미확인): 원작 조명 곡선 대신 화면이 밤처럼 어두워지는 상태 하나 (렌더러가 taintedSun 을 본다)
+   * 출처: ENVIRONMENT_TaintedSunBegin (Act 2 환경을 일식으로) + 패킷 0x53 (클라이언트 조명).
+   * 일식 주기·밝기는 Game.updateEnvironment 가 이 상태(taintedSun)를 보고 Act 2 Environment 에 건다
    */
   private taintedSunBegin(): void {
     if (this.q3.dark) return;

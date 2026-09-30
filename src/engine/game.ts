@@ -1,4 +1,5 @@
 // 게임 시뮬레이션: 명령 큐 → 고정 25fps 틱 → 이벤트 + 읽기 전용 스냅샷. (DOM/렌더 비의존)
+import { Environment, PERIOD } from './environment';
 import type { Command } from './command';
 import { footprintsOverlap, type CollisionMap } from './collision';
 import { dir64, SUBTILES_PER_YARD, type Pt } from './geom';
@@ -400,6 +401,8 @@ export class Game {
   readonly rules: DifficultyRules;
   /** 현재 막 (0 = Act 1 … 3 = Act 4). 출처: D2MOO DRLG_GetActNoFromLevelId — 플레이어가 있는 레벨의 막 */
   act = 0;
+  /** 막별 낮·밤 (들어간 적 있는 막만) */
+  private readonly envs: (Environment | undefined)[] = [];
   /**
    * 막 월드 요청: 아직 만들지 않은 막으로 갈 때 부른다 (원작 DRLG_AllocDrlg 처럼 막 단위로 지연 생성).
    * 브라우저(main.ts)는 여기서 그 막 월드·렌더러를 만들어 돌려준다. null 이면 그 막으로 갈 수 없다
@@ -875,6 +878,7 @@ export class Game {
     this.questControl.update();
     // Phase 7: 이번 틱의 게임 사건 (보스 깨어남·큐브 퀘스트 아이템·봉인) 을 퀘스트에 알린다
     this.questControl.gameEvents(this.events);
+    this.updateEnvironment();
     this.tickCount++;
     return this.events;
   }
@@ -1686,6 +1690,35 @@ export class Game {
   /**
    * 파생 스탯 (기본 + 장착). 장착·레벨·스탯 포인트가 바뀌면 다시 계산.
    */
+  /**
+   * 막별 낮·밤 (출처: GAME_UpdateEnvironment — 게임 프레임마다 만들어진 막의 시간, 플레이어가 있는 막은 밝기까지).
+   * 오염된 태양(A2Q3)은 Act 2 환경의 일식 (출처: ENVIRONMENT_TaintedSunBegin/End)
+   */
+  private updateEnvironment(): void {
+    const env = (this.envs[this.act] ??= new Environment());
+    const sun = !!this.questControl.taintedSun;
+    const a2 = this.envs[1];
+    if (a2 && a2.eclipse !== sun) {
+      if (sun) a2.taintedSunBegin();
+      else a2.taintedSunEnd();
+    }
+    this.envs.forEach((e, i) => {
+      if (e && e !== env) e.tick(i);
+    });
+    env.update(this.level.def.levelNo ?? 0, this.act);
+  }
+
+  /** 지금 막의 낮·밤: 밝기 0~255, 시기 (PERIOD) */
+  environment(): { intensity: number; period: number } {
+    const e = this.envs[this.act];
+    return e ? { intensity: e.intensity, period: e.period } : { intensity: 128, period: PERIOD.DAY };
+  }
+
+  /** 디버그·테스트: 지금 막 환경 */
+  envOf(act = this.act): Environment {
+    return (this.envs[act] ??= new Environment());
+  }
+
   /** 아이템 빛 반경 보너스 (ItemStatCost item_lightradius — 장착 아이템 합) */
   lightRadiusBonus(): number {
     return this.derived()?.stat('item_lightradius') ?? 0;

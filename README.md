@@ -128,6 +128,12 @@ npm run dev          # http://localhost:5173
 - `http://localhost:5173/?local` 로 열면 웹 배포판과 같은 "파일 불러오기" 방식으로 실행합니다.
 - 크롬 계열 브라우저를 권장합니다(WebGL2 필요).
 
+### 99레벨 프리셋 캐릭터
+- 처음 열면 캐릭터 목록 맨 아래에 직업별 99레벨 캐릭터 5개(`Preset-Amazon`, `Preset-Sorc`, `Preset-Necro`, `Preset-Pala`, `Preset-Barb`)가 들어 있습니다. Hell까지 끝낸 상태이고 장비·스킬은 `src/presets/SUMMARY.md`에 있습니다.
+- 지우거나 플레이한 프리셋은 다시 덮어쓰지 않습니다.
+- 주소 뒤에 `?preset=paladin`(amazon, sorceress, necromancer, paladin, barbarian)을 붙이면 그 캐릭터를 처음 상태로 되돌려 Hell 마을에서 바로 시작합니다. `?preset=all`은 5개를 모두 처음 상태로 되돌립니다.
+- 프리셋 파일에는 아이템 코드와 수치만 있고 원작 그림·소리는 없습니다.
+
 ### 배포
 - `main`에 push하면 GitHub Actions(`.github/workflows/pages.yml`)가 게임 코드만 빌드해 GitHub Pages에 올립니다.
 - 빌드 결과에 `.mpq`가 섞이면 배포를 멈춥니다.

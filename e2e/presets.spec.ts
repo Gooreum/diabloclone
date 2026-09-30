@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 
 test.skip(!existsSync('game-data/d2data.mpq'), '원작 game-data 필요');
 
-// 개발용 99레벨 프리셋 (src/presets, scripts/gen-presets.ts): ?preset=<직업> 은 메뉴 없이 Hell Act 1 마을에서 바로 시작
+// 99레벨 프리셋 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 5개 (배포판 포함), ?preset=<직업> 은 메뉴 없이 Hell Act 1 마을에서 바로 시작
 
 test('?preset=sorceress: 메뉴 없이 Hell 마을, 레벨 99, 사양 장비, 퀘스트 보상을 다시 받지 않는다', async ({ page }) => {
   const errors: string[] = [];
@@ -36,10 +36,54 @@ test('?preset=all: 캐릭터 목록에 프리셋 5개', async ({ page }) => {
   for (const n of ['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb']) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
 });
 
-test('?preset 없이 들어가면 원래 메뉴', async ({ page }) => {
+const PRESET_NAMES = ['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb'];
+
+test('?preset 없이 들어가면 원래 메뉴, 캐릭터 목록에 프리셋 5개가 기본으로', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   expect(await page.evaluate(() => window.__game?.ready ?? false)).toBe(false);
+  await page.click('#btn-single');
+  for (const n of PRESET_NAMES) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
+  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.installed'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
+});
+
+test('지운 프리셋은 다시 열어도 생기지 않고, 새 캐릭터는 프리셋보다 위', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  await page.click('#btn-single');
+  await page.click('#hero-Preset-Barb');
+  await page.click('#btn-delete');
+  await page.click('#btn-delete-yes');
+  await expect(page.locator('#hero-Preset-Barb')).toHaveCount(0);
+  // 새 캐릭터 저장 (savedAt 이 지금이라 목록 맨 위)
+  await page.evaluate(async () => {
+    const all = await new Promise<string[]>((resolve, reject) => {
+      const req = indexedDB.open('diabloclone', 1);
+      req.onsuccess = () => {
+        const g = req.result.transaction('heroes', 'readonly').objectStore('heroes').getAll();
+        g.onsuccess = () => resolve(g.result as string[]);
+        g.onerror = () => reject(g.error);
+      };
+    });
+    const s = JSON.parse(all[0]!) as { name: string; savedAt: number };
+    s.name = 'Newbie';
+    s.savedAt = Date.now();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.open('diabloclone', 1);
+      req.onsuccess = () => {
+        const t = req.result.transaction('heroes', 'readwrite');
+        t.objectStore('heroes').put(JSON.stringify(s), s.name);
+        t.oncomplete = () => resolve();
+      };
+    });
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  await page.click('#btn-single');
+  await expect(page.locator('#hero-Preset-Sorc')).toHaveCount(1);
+  await expect(page.locator('#hero-Preset-Barb')).toHaveCount(0);
+  const ids = await page.locator('[id^="hero-"]:not(#hero-name)').evaluateAll((els) => els.map((e) => e.id));
+  expect(ids[0]).toBe('hero-Newbie');
 });
 
 for (const [id, cls, slots] of [['amazon', 'Amazon', 10], ['necromancer', 'Necromancer', 10], ['paladin', 'Paladin', 10], ['barbarian', 'Barbarian', 9]] as const) {

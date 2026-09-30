@@ -284,8 +284,10 @@ async function boot(): Promise<void> {
     if (inMenu) sound.setMusic('music_options');
   }).catch(() => undefined);
   if (import.meta.env.DEV) window.__audio = sound;
-  // dev 전용 프리셋 캐릭터 (src/presets, scripts/gen-presets.ts): ?preset=<직업> 은 메뉴를 건너뛰어 Hell 로 바로, ?preset=all 은 캐릭터 목록에 5개
-  let presetStart = import.meta.env.DEV ? await installPresets(new URLSearchParams(location.search).get('preset')) : null;
+  // 99레벨 프리셋 캐릭터 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 5개.
+  // ?preset=<직업> 은 그 프리셋으로 덮어써 메뉴를 건너뛰고 Hell 로 바로, ?preset=all 은 5개를 덮어쓴다
+  await addMissingPresets();
+  let presetStart = await installPresets(new URLSearchParams(location.search).get('preset'));
   for (;;) {
     window.__menuReady = true;
     inMenu = true;
@@ -309,11 +311,36 @@ async function boot(): Promise<void> {
   }
 }
 
-/** dev 전용: 프리셋 세이브를 캐릭터 저장소에 넣는다 (같은 이름은 덮어씀). 바로 시작할 캐릭터 이름 (all·없는 직업이면 null) */
+// 프리셋 세이브는 배포판에도 들어간다: 아이템 코드·수치뿐 (원작 그림·소리·MPQ 없음)
+const PRESET_FILES: Record<string, () => Promise<unknown>> = import.meta.glob('./presets/*.json', { import: 'default' });
+const PRESETS_KEY = 'd2clone.presets.installed';
+
+/** 아직 넣은 적 없는 프리셋을 캐릭터 목록 맨 아래에 (지우거나 플레이한 프리셋은 다시 덮지 않는다) */
+async function addMissingPresets(): Promise<void> {
+  let done: string[] | null;
+  try {
+    done = JSON.parse(localStorage.getItem(PRESETS_KEY) ?? '[]') as string[];
+  } catch {
+    done = null;
+  }
+  const have = new Set((await HeroStore.list()).map((h) => h.name));
+  for (const load of Object.values(PRESET_FILES)) {
+    const s = parseSave(JSON.stringify(await load()));
+    if (have.has(s.name) || done?.includes(s.name)) continue;
+    await HeroStore.save({ ...s, savedAt: 1 });
+    done?.push(s.name);
+  }
+  try {
+    if (done) localStorage.setItem(PRESETS_KEY, JSON.stringify(done));
+  } catch {
+    // 기록을 못 남기면 다음에도 이름으로만 비교한다
+  }
+}
+
+/** 프리셋 세이브를 캐릭터 저장소에 넣는다 (같은 이름은 덮어씀). 바로 시작할 캐릭터 이름 (all·없는 직업이면 null) */
 async function installPresets(id: string | null): Promise<string | null> {
   if (!id) return null;
-  // 배포판에는 프리셋 파일을 넣지 않는다 (DEV 가 false 면 이 목록은 빈 객체로 지워진다)
-  const files: Record<string, () => Promise<unknown>> = import.meta.env.DEV ? import.meta.glob('./presets/*.json', { import: 'default' }) : {};
+  const files = PRESET_FILES;
   const keys = id === 'all' ? Object.keys(files) : [`./presets/${id}.json`];
   let name: string | null = null;
   for (const k of keys) {

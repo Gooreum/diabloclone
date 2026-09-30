@@ -11,9 +11,9 @@ export function makeCanvas(w: number, h: number): Drawable {
   return c;
 }
 
-export function indexedToCanvas(pixels: Uint8Array, w: number, h: number, pal: Palette): Drawable {
-  const c = makeCanvas(w, h);
-  const ctx = c.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+function paint(c: Drawable, pixels: Uint8Array, w: number, h: number, pal: Palette): void {
+  const ctx = c.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!ctx) return;
   const img = ctx.createImageData(Math.max(1, w), Math.max(1, h));
   for (let i = 0; i < w * h; i++) {
     const p = pixels[i] ?? 0;
@@ -24,9 +24,76 @@ export function indexedToCanvas(pixels: Uint8Array, w: number, h: number, pal: P
     img.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
+}
+
+/**
+ * 만든 그림과 그 원본(팔레트 인덱스) 기록. 브라우저가 탭을 숨기거나 그래픽 메모리가 모자라면 캔버스 내용을 버리는데,
+ * 한 번 만들고 계속 쓰는 UI 그림(조작판·커서·글꼴)은 다시 만들지 않아 사라진 채 남았다 → 감지하면 제자리에 다시 그린다.
+ * 캔버스는 약한 참조로만 잡아 캐시에서 버려지면 기록도 정리된다.
+ */
+interface PaintRec { ref: WeakRef<Drawable>; pixels: Uint8Array; w: number; h: number; pal: Palette }
+const painted = new Set<PaintRec>();
+
+function sweep(): void {
+  for (const r of painted) {
+    const c = r.ref.deref();
+    if (!c || c.width !== Math.max(1, r.w)) painted.delete(r);
+  }
+}
+
+export function indexedToCanvas(pixels: Uint8Array, w: number, h: number, pal: Palette): Drawable {
+  const c = makeCanvas(w, h);
+  paint(c, pixels, w, h, pal);
+  painted.add({ ref: new WeakRef(c), pixels, w, h, pal });
+  if (painted.size % 4096 === 0) sweep();
   return c;
 }
 
+/** 테스트용: 브라우저가 그림을 버린 상황을 흉내 낸다 (기록된 모든 그림을 지움) */
+export function wipeAllForTest(): void {
+  for (const r of painted) {
+    const c = r.ref.deref();
+    const ctx = c?.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null | undefined;
+    ctx?.clearRect(0, 0, c!.width, c!.height);
+  }
+}
+
+/** 기록된 그림을 모두 원본에서 다시 그린다. 다시 그린 수 반환 */
+export function repaintAll(): number {
+  let n = 0;
+  for (const r of painted) {
+    const c = r.ref.deref();
+    if (!c || c.width !== Math.max(1, r.w)) {
+      painted.delete(r);
+      continue;
+    }
+    paint(c, r.pixels, r.w, r.h, r.pal);
+    n++;
+  }
+  return n;
+}
+
+// 시험 그림: 작은 것(8×8)과 큰 것(256×256) 하나씩 흰색으로 채운다. 이 점이 사라지면 브라우저가 그림 내용을 버린 것이다
+// (큰 캔버스만 그래픽 가속되어 따로 버려질 수 있어 둘 다 본다).
+let probes: Drawable[] | null = null;
+const PROBE_PAL = new Uint8Array(256 * 4).fill(255) as unknown as Palette;
+
+/** 그림 내용이 사라졌으면 모두 다시 그린다 (주기적으로·탭 복귀·컨텍스트 복구 때 호출). 다시 그렸으면 true */
+export function healGraphics(): boolean {
+  if (!probes) {
+    probes = [8, 256].map((n) => indexedToCanvas(new Uint8Array(n * n).fill(1), n, n, PROBE_PAL));
+    return false;
+  }
+  for (const p of probes) {
+    const ctx = p.getContext('2d') as ((CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D) & { isContextLost?: () => boolean }) | null;
+    if (!ctx || ctx.isContextLost?.()) continue;
+    if ((ctx.getImageData(p.width >> 1, p.height >> 1, 1, 1).data[3] ?? 0) !== 255) {
+      repaintAll();
+      return true;
+    }
+  }
+  return false;
+}
 /**
  * 전역 그림 예산 (LRU). 유닛·미사일 프레임과 지형 타일을 캔버스로 만들어 두되, 픽셀 합이 예산을 넘으면
  * 가장 오래 안 쓴 것부터 버리고 필요할 때 다시 만든다.

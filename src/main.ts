@@ -1,5 +1,5 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
-import { spriteCache } from './render/sprites';
+import { healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { loadGameData } from './assets/gamedata-loader';
 import { parsePalette, type Palette } from './formats/palette';
@@ -103,7 +103,15 @@ async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const canvas = document.createElement('canvas');
   // 브라우저가 그래픽 메모리를 회수해 컨텍스트를 잃었다 되찾으면 만들어 둔 그림이 모두 비므로 캐시를 버린다
-  canvas.addEventListener('contextrestored', () => spriteCache.clear());
+  canvas.addEventListener('contextrestored', () => {
+    spriteCache.clear();
+    healGraphics();
+  });
+  // 탭으로 돌아오면 숨겨진 동안 버려진 그림(조작판·커서 등)이 있는지 보고 다시 그린다
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') healGraphics();
+  });
+  healGraphics();
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   canvas.id = 'game';
@@ -871,6 +879,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         }
       }
       diagFrames++;
+      // 약 1초마다 그림이 사라졌는지 확인 (브라우저가 그래픽 메모리를 회수한 경우 다시 그린다)
+      if (diagFrames % 60 === 0 && healGraphics()) reportClientError('healed', 'graphics repainted');
       diagMaxMs = Math.max(diagMaxMs, performance.now() - t0);
       requestAnimationFrame(frame);
     };

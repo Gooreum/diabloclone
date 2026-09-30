@@ -17,9 +17,11 @@ export interface LightSource { x: number; y: number; r: number }
 
 /**
  * 주변광: 실내(IsInside) = 0 (빛 밖은 검정), 야외·마을 = 낮·밤 밝기 (Environment.intensity 0~255).
- * 근사(원작 미확인): 클라이언트의 밝기 → 밝기 단계 매핑. 낮(128 이상) = 원래 밝기, 한밤(64) = 16단계, 일식(32) = 8단계
+ * 근사(원작 미확인): 클라이언트의 밝기 → 밝기 단계 매핑. 낮(128 이상) = 원래 밝기, 그 아래는 제곱근 곡선으로
+ *   어두운 야외도 멀리까지 보이게 — 한밤(64) 22단계, 일식(32) 16단계, Act 4 불꽃의 강(16) 11단계
  */
-export const ambientOf = (inside: boolean, intensity = 255): number => (inside ? 0 : Math.min(FULL_LIGHT, Math.round(intensity / 4)));
+export const ambientOf = (inside: boolean, intensity = 255): number =>
+  inside ? 0 : Math.round(FULL_LIGHT * Math.sqrt(Math.min(1, Math.max(0, intensity) / 128)));
 
 /** (x,y) 서브타일의 밝기 0~31: 가장 밝은 광원 기준 직선 감쇠, 주변광보다 어둡지 않다 */
 export function lightAt(ambient: number, src: readonly LightSource[], x: number, y: number): number {

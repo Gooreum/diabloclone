@@ -56,7 +56,8 @@ test('Act 4: 요새·초원·절망의 평원·저주받은 도시·불꽃의 �
       for (let i = 0; i < d.length; i += 4) {
         const r = d[i] ?? 0, gg = d[i + 1] ?? 0, b = d[i + 2] ?? 0;
         if (r + gg + b > 30) lit++;
-        if (r > 120 && r > gg * 1.6 && r > b * 1.6) red++;
+        // 원작 조명: Act 4 야외는 어둡다 (D2Environment 목표 밝기) — 어두운 빨강(용암)도 센다
+        if (r > 50 && r > gg * 1.6 && r > b * 1.6) red++;
       }
       return { lit: lit / (c.width * c.height), red: red / (c.width * c.height) };
     });

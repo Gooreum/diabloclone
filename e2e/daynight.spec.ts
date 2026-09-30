@@ -43,7 +43,7 @@ test('낮·밤: 정오로 시작, 밤이면 마을이 어두워지고 밤 배경
   await page.waitForTimeout(800);
   const night = await lum(page);
   console.log('[daynight] day', Math.round(day), 'night', Math.round(night));
-  expect(night).toBeLessThan(day * 0.75);
+  expect(night).toBeLessThan(day * 0.85);
   expect(night).toBeGreaterThan(day * 0.2);
   await page.locator('#game').screenshot({ path: 'test-results/daynight-night.png' });
   expect(errors).toEqual([]);

@@ -5,14 +5,15 @@ import type { PresetLevel } from '../engine/drlg/preset';
 import { renderTile, type TileImage } from '../formats/dt1';
 import type { Palette } from '../formats/palette';
 import { toCanvas, type Camera } from './iso';
-import { indexedToCanvas, type Drawable } from './sprites';
+import { indexedToCanvas, newSpriteId, spriteCache, type Drawable } from './sprites';
 
 type Ctx = CanvasRenderingContext2D;
 
 export interface DepthSprite { depth: number; draw: (ctx: Ctx, cam: Camera) => void }
 
 export class WorldRenderer {
-  private readonly images: ({ img: TileImage; canvas: Drawable } | null)[];
+  private readonly images: (TileImage | null)[];
+  private readonly id = newSpriteId();
   private readonly level: PresetLevel;
   private readonly pal: Palette;
 
@@ -23,13 +24,14 @@ export class WorldRenderer {
   }
 
   private tile(i: number): { img: TileImage; canvas: Drawable } {
-    let t = this.images[i];
-    if (!t) {
-      const img = renderTile(this.level.tiles[i]!);
-      t = { img, canvas: indexedToCanvas(img.pixels, img.width, img.height, this.pal) };
-      this.images[i] = t;
+    // 타일 픽셀(인덱스)은 레벨마다 기억하고, 캔버스는 전역 예산(spriteCache)에서 빌린다
+    let img = this.images[i];
+    if (!img) {
+      img = renderTile(this.level.tiles[i]!);
+      this.images[i] = img;
     }
-    return t;
+    const src = img;
+    return { img: src, canvas: spriteCache.get(`t${this.id}:${i}`, () => indexedToCanvas(src.pixels, src.width, src.height, this.pal)) };
   }
 
   /** 타일 (tx,ty) 이미지 좌상단 캔버스 좌표 (바닥 마름모의 위 꼭짓점 기준 −80) */

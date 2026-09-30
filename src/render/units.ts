@@ -6,9 +6,17 @@ import { parseCof, type Cof } from '../formats/cof';
 import { parseDcc, type Dcc } from '../formats/dcc';
 import { parseDc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
-import { indexedToCanvas, type Drawable } from './sprites';
+import { indexedToCanvas, newSpriteId, spriteCache, type Drawable } from './sprites';
 
-export interface AsyncAssets { load(path: string): Promise<Uint8Array | null> }
+export interface AsyncAssets {
+  load(path: string): Promise<Uint8Array | null>;
+  /** 캐시에 남기지 않고 읽기 (있으면 사용) */
+  loadOnce?(path: string): Promise<Uint8Array | null>;
+}
+
+const loadOnce = (a: AsyncAssets, path: string) => (a.loadOnce ? a.loadOnce(path) : a.load(path));
+/** 해석한 유닛 그림(COF+DCC) 을 기억할 최대 개수 — 넘으면 오래 안 쓴 것부터 버린다 */
+const MAX_COMPOSITES = 160;
 
 // 출처: OpenDiablo2 dcc_dir_lookup.go (64방향 테이블)
 const DIR4 = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -26,8 +34,8 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
   return d % numDirs;
 }
 
-interface LayerGfx { dcc: Dcc; canvases: Map<number, Drawable> }
-export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array }
+interface LayerGfx { dcc: Dcc; id: number }
+export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array; transKey?: string }
 
 /** 팔레트 색 바꿈 표 (256 바이트: 원래 색 번호 → 바뀐 색 번호) */
 export interface ColorShift { key: string; map: Uint8Array }
@@ -95,8 +103,17 @@ export class UnitGfx {
     const k = specKey(spec);
     const hit = this.cache.get(k);
     if (hit instanceof Promise) return undefined;
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) {
+      // 최근 사용으로 옮긴다
+      this.cache.delete(k);
+      this.cache.set(k, hit);
+      return hit;
+    }
     this.cache.set(k, this.load(spec).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
+    for (const key of this.cache.keys()) {
+      if (this.cache.size <= MAX_COMPOSITES) break;
+      if (!(this.cache.get(key) instanceof Promise)) this.cache.delete(key);
+    }
     return undefined;
   }
 
@@ -111,11 +128,11 @@ export class UnitGfx {
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
-        const b = await this.assets.load(`${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
-        if (b) layers.set(l.type, { dcc: parseDcc(b), canvases: new Map() });
+        const b = await loadOnce(this.assets, `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
+        if (b) layers.set(l.type, { dcc: parseDcc(b), id: newSpriteId() });
       }),
     );
-    return trans ? { cof, layers, trans } : { cof, layers };
+    return trans ? { cof, layers, trans, transKey: s.shift?.key } : { cof, layers };
   }
 
   /**
@@ -135,13 +152,10 @@ export class UnitGfx {
       const dir = lg.dcc.directions[d];
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
-      const key = d * 1000 + f;
-      let c = lg.canvases.get(key);
-      if (!c) {
-        const tr = comp.trans;
-        c = indexedToCanvas(tr ? fr.pixels.map((p) => (p ? tr[p] ?? p : 0)) : fr.pixels, dir.box.width, dir.box.height, this.pal);
-        lg.canvases.set(key, c);
-      }
+      const tr = comp.trans;
+      const c = spriteCache.get(`u${lg.id}:${d}:${f}:${comp.transKey ?? ''}`, () =>
+        indexedToCanvas(tr ? fr.pixels.map((p) => (p ? tr[p] ?? p : 0)) : fr.pixels, dir.box.width, dir.box.height, this.pal),
+      );
       // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사
       const blend = layer?.transparent ? layer.drawEffect : -1;
       if (blend >= 0 || bright) {
@@ -215,10 +229,10 @@ export class MissileGfx {
     const hit = this.cache.get(key);
     if (hit === undefined) {
       this.cache.set(key, 'loading');
-      this.assets
+      loadOnce(this.assets,
         // 상태 오버레이는 엔진이 'overlays\<Filename>' 으로 보낸다 (data\global\overlays, 출처: overlay.txt Filename)
-        .load(celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
-        .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), canvases: new Map() } : null))
+        celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
+        .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), id: newSpriteId() } : null))
         .catch(() => this.cache.set(key, null));
       return;
     }
@@ -229,12 +243,7 @@ export class MissileGfx {
     const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
     const fr = dir.frames[f];
     if (!fr) return;
-    const k = d * 1000 + f;
-    let c = hit.canvases.get(k);
-    if (!c) {
-      c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
-      hit.canvases.set(k, c);
-    }
+    const c = spriteCache.get(`m${hit.id}:${d}:${f}`, () => indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal));
     ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
   }
 }

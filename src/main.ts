@@ -1,4 +1,5 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
+import { spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { loadGameData } from './assets/gamedata-loader';
 import { parsePalette, type Palette } from './formats/palette';
@@ -101,6 +102,8 @@ window.addEventListener('unhandledrejection', (e) => reportClientError('rejectio
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const canvas = document.createElement('canvas');
+  // 브라우저가 그래픽 메모리를 회수해 컨텍스트를 잃었다 되찾으면 만들어 둔 그림이 모두 비므로 캐시를 버린다
+  canvas.addEventListener('contextrestored', () => spriteCache.clear());
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   canvas.id = 'game';
@@ -845,6 +848,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             player: { x: Math.round(s.player.x), y: Math.round(s.player.y), mode: s.player.mode, life: Math.round(s.player.life), dead: game.isDead },
             monsters: s.monsters.length, missiles: s.missiles.length, voices: audio?.voices?.length ?? -1, unlocked: audio?.unlocked,
             centerPixel: [px[0], px[1], px[2]], cam: [Math.round(cam.x), Math.round(cam.y)],
+            sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
           };
           diagFrames = 0;
           diagMaxMs = 0;

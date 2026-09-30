@@ -34,6 +34,21 @@ export class AssetLoader implements AssetSource {
     return null;
   }
 
+  /**
+   * 한 번 쓰고 버릴 파일 (몬스터·미사일 DCC 처럼 읽어서 해석한 결과만 보관하는 것): 캐시에 남기지 않는다.
+   * 원본 바이트를 전부 영구 보관하면 몬스터 종류가 많은 곳에서 메모리가 계속 늘었다.
+   */
+  async loadOnce(path: string): Promise<Uint8Array | null> {
+    const k = this.key(path);
+    if (this.cache.has(k)) {
+      const hit = this.cache.get(k) ?? null;
+      this.cache.delete(k);
+      return hit;
+    }
+    for (const a of this.archives) if (a.has(path)) return a.read(path);
+    return null;
+  }
+
   async preload(paths: string[]): Promise<void> {
     await Promise.all(paths.map((p) => this.load(p)));
   }

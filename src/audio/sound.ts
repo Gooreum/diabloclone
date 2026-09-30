@@ -223,7 +223,8 @@ export class SoundSystem {
         r.channels.forEach((d, i) => buf.copyToChannel(d as Float32Array<ArrayBuffer>, i));
         return buf;
       }).catch(() => null);
-      this.buffers.set(path, p);
+      // 배경음악은 한 곡이 수십 MB(풀린 PCM) 라 기억하지 않는다 — 재생 중인 목소리가 버퍼를 붙잡고 있고, 바뀌면 버려진다
+      if (!/\\music\\/i.test(path)) this.buffers.set(path, p);
     }
     return p;
   }

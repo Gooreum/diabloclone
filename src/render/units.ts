@@ -4,7 +4,7 @@
 // 출처: OpenDiablo2 d2dcc/dcc_dir_lookup.go Dir64ToDcc (64방향 → 파일 방향 인덱스)
 import { parseCof, type Cof } from '../formats/cof';
 import { parseDcc, type Dcc } from '../formats/dcc';
-import { parseDc6 } from '../formats/dc6';
+import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from './sprites';
 
@@ -27,6 +27,34 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
 }
 
 interface LayerGfx { dcc: Dcc; canvases: Map<number, Drawable> }
+
+/**
+ * DC6 레이어를 DCC 모양으로 (방향마다 프레임들의 합집합 상자, 프레임 픽셀을 그 상자에 놓는다).
+ * 출처: Phrozen Keep DC6 문서 — offsetX = 왼쪽, offsetY = 프레임 아래쪽 기준 (위쪽 = offsetY − height)
+ */
+function dc6AsDcc(d: Dc6): Dcc {
+  const fpd = Math.max(1, d.framesPerDirection);
+  const directions = Array.from({ length: Math.max(1, d.directions) }, (_, di) => {
+    const frs = d.frames.slice(di * fpd, di * fpd + fpd);
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const f of frs) {
+      left = Math.min(left, f.offsetX);
+      top = Math.min(top, f.offsetY - f.height);
+      right = Math.max(right, f.offsetX + f.width);
+      bottom = Math.max(bottom, f.offsetY);
+    }
+    if (!Number.isFinite(left)) left = top = right = bottom = 0;
+    const box = { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+    const frames = frs.map((f) => {
+      const pixels = new Uint8Array(box.width * box.height);
+      const ox = f.offsetX - left, oy = f.offsetY - f.height - top;
+      for (let y = 0; y < f.height; y++) pixels.set(f.pixels.subarray(y * f.width, y * f.width + f.width), (y + oy) * box.width + ox);
+      return { box: { ...box }, pixels };
+    });
+    return { box, frames };
+  });
+  return { directions, framesPerDirection: fpd };
+}
 export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array }
 
 /** 팔레트 색 바꿈 표 (256 바이트: 원래 색 번호 → 바뀐 색 번호) */
@@ -111,8 +139,14 @@ export class UnitGfx {
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
-        const b = await this.assets.load(`${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
+        const stem = `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}`;
+        const b = await this.assets.load(`${stem}.dcc`);
         if (b) layers.set(l.type, { dcc: parseDcc(b), canvases: new Map() });
+        else {
+          // 원작 몇몇 몬스터 레이어는 DC6 (Mephisto 전부, Diablo·Maggot Queen 죽음, Tyrael) — 같은 이름의 .dc6 (d2data.mpq 목록)
+          const b6 = await this.assets.load(`${stem}.dc6`);
+          if (b6) layers.set(l.type, { dcc: dc6AsDcc(parseDc6(b6)), canvases: new Map() });
+        }
       }),
     );
     return trans ? { cof, layers, trans } : { cof, layers };
@@ -210,7 +244,7 @@ export class MissileGfx {
     this.pal = pal;
   }
 
-  draw(ctx: CanvasRenderingContext2D, celFile: string, dir64: number, frame: number, x: number, y: number): void {
+  draw(ctx: CanvasRenderingContext2D, celFile: string, dir64: number, frame: number, x: number, y: number, blend?: number): void {
     const key = celFile.toLowerCase();
     const hit = this.cache.get(key);
     if (hit === undefined) {
@@ -234,6 +268,14 @@ export class MissileGfx {
     if (!c) {
       c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
       hit.canvases.set(k, c);
+    }
+    // missiles.txt / overlay.txt Trans ≠ 0: 빛 더하기 (검은 바탕이 비친다). 근사(원작 미확인): 원작 DrawMode 종류별 혼합 대신 가산 하나
+    if (blend) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
+      ctx.restore();
+      return;
     }
     ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
   }

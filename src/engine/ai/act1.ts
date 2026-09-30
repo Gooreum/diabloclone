@@ -506,13 +506,19 @@ const vampire: AiFn = (w, m, dist, combat) => {
 
 /** 출처: AITHINK_Fn030_Fetish (Rat Man) — aip1 공격, aip2 대기, aip3 연속 공격 수, aip4 약함 % (대상 생명) */
 const fetish: AiFn = (w, m, dist, combat) => {
-  if (m.command === 1) {
+  // 출처: 같은 함수 — AI 명령 1 (Fetish Shaman 공격 명령) · 14 (부활 자리로) 면 그 대상에게 걸어간다
+  if (m.command === 1 || m.command === 14) {
+    const cmd = m.command;
     m.command = 0;
-    m.ai[0] = 0;
-    m.ai[1] = 0;
-    setVelocity(m, 50);
-    w.moveTo(m, w.target.x, w.target.y, false, 1);
-    return;
+    const u = m.cmdTarget !== undefined && m.cmdTarget >= 0 ? w.unit?.(m.cmdTarget) : undefined;
+    const t = u ?? (cmd === 1 ? w.target : undefined);
+    if (t) {
+      m.ai[0] = 0;
+      m.ai[1] = 0;
+      setVelocity(m, 50);
+      w.moveTo(m, t.x, t.y, false, 1);
+      return;
+    }
   }
   const tl = w.targetLifePct();
   switch (m.ai[0]) {

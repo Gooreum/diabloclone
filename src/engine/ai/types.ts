@@ -25,6 +25,12 @@ export interface MonCast {
   fired: number;
   /** 판정 틱 (시작 기준, 모드 애니메이션 또는 시퀀스 이벤트) */
   events: number[];
+  /** 대상이 고정 지점 (움직이는 플레이어를 따라가지 않는다: Hydra·운석·Nest 자리) */
+  fixed?: boolean;
+  /** 돌진 스킬의 일격을 이미 했다 */
+  dashHit?: boolean;
+  /** 되풀이 남은 횟수 (Mosquito 빨기) */
+  repeat?: number;
 }
 
 export interface MonsterUnit {
@@ -116,6 +122,32 @@ export interface MonsterUnit {
   lastBolt?: number;
   /** 마을 NPC·장식 유닛 (공격 불가, NPC AI) */
   npc?: NpcState;
+  // ---- Phase 5 (Act 2~4 몬스터) ----
+  /**
+   * 대상이 될 수 없다 (원작 UNITFLAG_TARGETABLE|CANBEATTACKED|ISVALIDTARGET 꺼짐 + 충돌 없음):
+   * 굴에 들어간 Sand Maggot, 물에 잠긴 Frog Demon·Tentacle, 하늘로 날아오른 Vulture, 알. 그리지도 않는다
+   */
+  hidden?: boolean;
+  /** HP 재생 보너스 (원작 dwAiParam[2] = hpregen × aip / 8 — Baboon·Bat Demon 이 쉴 때). 재생 × (1 + regenX8 / 8) */
+  regenX8?: number;
+  /** AI 명령 대상 유닛 (원작 AI 명령 nCmdParam[1]: Fetish Shaman 14 = 부활할 시체로, 1 = 공격 대상) */
+  cmdTarget?: number;
+  /** 정해진 프레임에 사라지는 소환 유닛 (Hydra·Bone Prison) — 원작 dwAiParam[0] 만료 프레임 */
+  expires?: number;
+  /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */
+  summonLvl?: number;
+  /** 돌진 스킬 (Leap·Charge·SerpentCharge·DiabRun) 진행: 목표 지점, 맞힐 대상, 판정 여부 */
+  dash?: { x: number; y: number; targetId?: number; hit: boolean; speed: number };
+  /** 연속 분사 스킬 (Inferno·DiabLight): 끝 프레임, 다음 미사일 프레임, 간격 */
+  stream?: { until: number; next: number; every: number };
+  /** 오라 스킬 (Duriel Holy Freeze) 다음 효과 프레임 */
+  auraNext?: number;
+  /** 이번 행동 모드가 끝난 뒤 다음 판단까지의 프레임 (원작 AITACTICS_Idle(ENDANIM 프레임 + n − 현재) — Thorn Hulk 연속 공격). 한 번 쓰고 지운다 */
+  nextAfterMode?: number;
+  /** 카오스 생추어리 봉인 보스 (봉인이 불렀다 — 처치하면 A4Q2 보스 수 증가) */
+  sealBoss?: boolean;
+  /** 걷기·달리기가 아닌 모드로 경로 이동 중 (Vulture S1 비행 — 원작 ChangeModeAndTargetCoordinatesOneStep(…, MONMODE_SKILL1)) */
+  pathMode?: boolean;
 }
 
 export interface PetInfo {
@@ -139,7 +171,7 @@ export interface PetInfo {
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean; id?: number }
 
 /** 스킬 대상: 유닛(id) 또는 지점 */
-export interface SkillTarget { unitId?: number; x: number; y: number }
+export interface SkillTarget { unitId?: number; x: number; y: number; /** 고정 지점 (플레이어 위치를 따라가지 않음) */ fixed?: boolean }
 
 /** AI 가 게임 월드에 요청하는 동작 (Game 이 구현) */
 export interface AiWorld {
@@ -164,4 +196,42 @@ export interface AiWorld {
   canUseSkill(m: MonsterUnit, slot: number, target: SkillTarget | null): boolean;
   /** 몬스터를 죽음 모드로 (드롭·경험치 없음) — Foul Crow Nest 소진 */
   dieQuietly(m: MonsterUnit): void;
+  // ---- Phase 5 (Act 2~4 몬스터 AI 가 쓰는 요청) — 없으면 AI 가 가능한 범위에서 생략한다 ----
+  /** 대상 없음 (원작 pAiTickParam->pTarget == nullptr: AI 표의 대상 방식 0·2·5 는 대상 없이도 AI 함수를 부른다) */
+  noTarget?: boolean;
+  /** 레벨 번호 (levels.txt Id) */
+  levelNo?: number;
+  /**
+   * 지정 모드로 한 걸음 이동 (원작 AITACTICS_ChangeModeAndTargetCoordinatesOneStep / MoveInRadiusToTarget(nMode) —
+   * Vulture 이륙 S1 · 착륙 S2 비행)
+   */
+  moveMode?(m: MonsterUnit, x: number, y: number, mode: MonMode): boolean;
+  /** 모드 바꾸기 (원작 AITACTICS_ChangeModeAndTargetUnit(…, nMode, nullptr) — 대상 없이) */
+  modeOnly?(m: MonsterUnit, mode: MonMode): void;
+  /** 대상 정보 (Summoner 냉기/화염 저항 비교, Diablo 기술 가중치): 저항·냉기 상태·생명%·특수 기술(Blizzard·Meteor·Fire Wall>3·Immolation>7) */
+  targetInfo?(): {
+    fireRes: number; coldRes: number; lightRes: number; cold: boolean; lifePct: number; special: boolean; states: readonly string[];
+    /** 플레이어의 마을 포털 (이 레벨에 있으면) — Diablo 포털 감옥 */
+    portal?: { x: number; y: number };
+    /** 원작 AITHINK_GetTargetScore */
+    score?: number;
+  };
+  /** 미사일 벽이 사이를 막는가 (원작 UNITS_TestCollisionWithUnit(…, COLLIDE_MISSILE_BARRIER)) */
+  missileBlocked?(m: MonsterUnit): boolean;
+  /** 몬스터 생성 (원작 D2GAME_SpawnMonster_6FC69F10 — Maggot Queen 의 새끼). 경험치 없음 */
+  spawn?(owner: MonsterUnit, typeId: string, x: number, y: number, mode: MonMode): MonsterUnit | null;
+  /** 원작 sub_6FC68350: 그 자리에 몬스터를 놓을 수 있다 */
+  canSpawnAt?(typeId: string, x: number, y: number): boolean;
+  /** 원작 QUESTRECORD_GetQuestState (플레이어 퀘스트 기록) */
+  questState?(quest: number, flag: number): boolean;
+  /** 원작 SUNIT_GetServerUnit: id 로 몬스터 찾기 */
+  unit?(id: number): MonsterUnit | undefined;
+  /** 미사일 사거리 (missiles.txt Range) */
+  missileRange?(name: string): number;
+  /** 몬스터 스킬 칸의 실제 레벨 (원작 SKILLS_GetSkillLevel: Sk*lvl + 난이도 MonsterSkillBonus) */
+  skillLevel?(m: MonsterUnit, slot: number): number;
+  /** 레벨별 AI 공용 값 (원작 D2MonsterRegionStrc — 예: unk0x2D4 함정 종류) */
+  levelVars?: Record<string, number>;
+  /** 게임 사건 알림 (퀘스트 훅: 원작 ACT2Q1_OnRadamentActivated · ACT2Q5_OnSummonerActivated · ACT4Q1_OnIzualActivated) */
+  event?(e: { type: string; [k: string]: unknown }): void;
 }

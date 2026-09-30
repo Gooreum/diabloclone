@@ -39,6 +39,8 @@ test('Act 4: 요새·초원·절망의 평원·저주받은 도시·불꽃의 �
             if (ok && d < bd) { bd = d; best = { x, y }; }
           }
         g.changeLevel(k, best.x + 0.5, best.y + 0.5);
+        // Phase 5 부터 몬스터가 원작 AI 로 싸운다 — 레벨 그림만 보는 테스트라 레벨 몬스터를 멈춘다 (1 레벨 영웅이 죽지 않게)
+        for (const mo of g.monsters) mo.nextThink = 1e12;
         return { found: !!o || typeof t !== 'number', dist: bd };
       }
       return { found: true, dist: 0 };

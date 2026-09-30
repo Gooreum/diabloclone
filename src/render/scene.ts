@@ -131,7 +131,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       depth: ms.x + ms.y + 0.25,
       draw: (ctx, cm) => {
         const p = toCanvas(cm, ms.x, ms.y);
-        d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y);
+        d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y, ms.blend);
       },
     });
   }

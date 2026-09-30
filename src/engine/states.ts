@@ -81,7 +81,7 @@ export class StateList {
 }
 
 /** 상태 오버레이 그림 (overlay.txt 한 행) */
-export interface StateOverlayDef { file: string; frames: number; predraw: boolean }
+export interface StateOverlayDef { file: string; frames: number; predraw: boolean; /** overlay.txt Trans (0 불투명, 그 밖 = 빛 더하기) */ trans?: number }
 
 /**
  * states.txt overlay1~4 → overlay.txt (Filename, Frames, PreDraw). 'null' 그림은 뺀다.
@@ -92,7 +92,7 @@ export function parseStateOverlays(states: Record<string, string | undefined>[],
   for (const r of overlays) {
     const file = r.Filename ?? '';
     if (!r.overlay || !file || file.toLowerCase() === 'null') continue;
-    ov.set(r.overlay.toLowerCase(), { file, frames: Math.max(1, Number(r.Frames ?? 1) || 1), predraw: r.PreDraw === '1' });
+    ov.set(r.overlay.toLowerCase(), { file, frames: Math.max(1, Number(r.Frames ?? 1) || 1), predraw: r.PreDraw === '1', trans: Number(r.Trans ?? 0) || 0 });
   }
   const out = new Map<string, StateOverlayDef[]>();
   for (const r of states) {

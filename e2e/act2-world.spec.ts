@@ -51,6 +51,8 @@ test('Act 2: 루트 골레인·사막 야외·하수도·비전의 성역·탈 �
           if (ok && d < bd) { bd = d; best = { x, y }; }
         }
       g.changeLevel(k, best.x + 0.5, best.y + 0.5);
+      // Phase 5 부터 몬스터가 원작 AI 로 싸운다 — 레벨 그림만 보는 테스트라 레벨 몬스터를 멈춘다 (1 레벨 영웅이 죽지 않게)
+      for (const mo of g.monsters) mo.nextThink = 1e12;
       // 스크린샷은 타일 확인용: 첫 방문에 배치된 몬스터는 치운다 (Act 2 몬스터 AI 는 Phase 5)
       g.monsters.length = 0;
       return { found: !!o || t === 'open', dist: bd };

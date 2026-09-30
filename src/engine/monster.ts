@@ -80,6 +80,14 @@ export interface MonsterType {
   /** monstats2: 유니크 색 (Utrans, Normal), 유니크 색 바꿈 없음 (noUniqueShift), 부활 모드·스킬, 스폰 충돌, 움직이지 않음 (inert) */
   utrans: number; noUniqueShift: boolean; resurrectMode: string; resurrectSkill: string; spawnCol: number; inert: boolean;
   critter: boolean; corpseSel: boolean;
+  /** monstats2 soft (Corpse Spitter 가 먹을 수 있는 무른 시체), InfernoLen / InfernoAnim / InfernoRollback (불길·번개 숨결 반복 프레임) */
+  soft: boolean; infernoLen: number; infernoAnim: number; infernoRollback: number;
+  /** monstats threat (원작 AITHINK_GetTargetScore: 1 이하 몬스터는 보스의 대상이 아니다) */
+  threat: number;
+  /** monstats deathDmg (죽을 때 터진다 — Undead Stygian Doll), SplEndDeath (1 = 시체가 minion1 로 바뀐다 — Fetish Shaman) */
+  deathDmg: boolean; splEndDeath: number;
+  /** monstats SplEndGeneric (모드가 끝나면 바로 AI — Vulture S1·Willowisp WL·Bat Demon S3/S4·Frog Demon SQ·Trapped Soul) */
+  splEndGeneric: boolean;
 }
 
 export class MonsterDb {
@@ -140,6 +148,8 @@ export class MonsterDb {
         inTown: n(r.inTown) === 1, neverCount: n(r.neverCount) === 1, interact: n(r.interact) === 1,
         utrans: n(r2.Utrans), noUniqueShift: n(r2.noUniqueShift) === 1, resurrectMode: r2.ResurrectMode ?? 'NU', resurrectSkill: r2.ResurrectSkill ?? '',
         spawnCol: n(r2.spawnCol), inert: n(r2.inert) === 1, critter: n(r2.critter) === 1, corpseSel: n(r2.corpseSel) === 1,
+        soft: n(r2.soft) === 1, infernoLen: n(r2.InfernoLen), infernoAnim: n(r2.InfernoAnim), infernoRollback: n(r2.InfernoRollback), threat: n(r.threat),
+        deathDmg: n(r.deathDmg) === 1, splEndDeath: n(r.SplEndDeath), splEndGeneric: n(r.SplEndGeneric) === 1,
       };
       this.types.set(r.Id, t);
       this.list.push(t);

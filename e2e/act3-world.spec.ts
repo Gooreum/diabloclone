@@ -37,6 +37,8 @@ test('Act 3: 부두·정글 3 개·쿠라스트·트라빈칼·사원·억류지
           if (ok && d < bd) { bd = d; best = { x, y }; }
         }
       g.changeLevel(k, best.x + 0.5, best.y + 0.5);
+      // Phase 5 부터 몬스터가 원작 AI 로 싸운다 — 레벨 그림만 보는 테스트라 레벨 몬스터를 멈춘다 (1 레벨 영웅이 죽지 않게)
+      for (const mo of g.monsters) mo.nextThink = 1e12;
       return { dist: bd };
     }, [key, target] as const);
     expect(where.dist, key).toBeLessThan(Infinity);

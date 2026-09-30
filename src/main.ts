@@ -25,6 +25,7 @@ import { Panels } from './ui/panels';
 import { SkillTree } from './ui/skillpanel';
 import { CharPanel } from './ui/charpanel';
 import { StashPanel } from './ui/stashpanel';
+import { CubePanel } from './ui/cubepanel';
 import { UiArt } from './ui/art';
 import { d2text, drawText } from './ui/text';
 import { ItemText } from './ui/itemtext';
@@ -75,6 +76,8 @@ declare global {
         quest: QuestPanel;
         /** e2e: 원작 DC6 컨트롤 패널·캐릭터(C)·스킬 트리(T)·보관함·게임 메뉴 */
         hud: ControlPanel; charPanel: CharPanel; skillTree: SkillTree; stash: StashPanel; gameMenu: Panels; art: UiArt;
+        /** e2e (Phase 6): 호라드릭 큐브 창 */
+        cube: CubePanel;
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
       };
@@ -266,7 +269,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     inventoryGrid = save.inventory;
     stash = save.stash;
     belt = save.belt;
-    const all = [...inventoryGrid.map((p) => p.item), ...stash.map((p) => p.item), ...belt.filter((x): x is ItemInstance => !!x), ...Object.values(equipment)];
+    const all = [...inventoryGrid.map((p) => p.item), ...stash.map((p) => p.item), ...(save.cube ?? []).map((p) => p.item), ...belt.filter((x): x is ItemInstance => !!x), ...Object.values(equipment)];
     data.treasure.reserveIds(Math.max(0, ...all.map((i) => i.id)));
   } else {
     // 출처: charstats.txt 클래스별 시작 장비 (예: 바바리안 hax 오른손·buc 왼손, 아마존 jav·buc, 소서리스 sst …, hp1 ×4, 두루마리)
@@ -288,7 +291,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const game = new Game({
     map: world.byKey.get(world.townId)!.def.map, levels: world.levels.map((l) => l.def), act: startAct, difficulty,
     player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
-    seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, belt, gold: save?.gold ?? 0,
+    seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, cube: save?.cube ?? [], belt, gold: save?.gold ?? 0,
     stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}),
   });
   // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)
@@ -348,6 +351,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 원작 DC6 컨트롤 패널 (HUD)·보관함
   const hud = new ControlPanel(art, icons, data.skills);
   const stashPanel = new StashPanel(art, icons);
+  // 호라드릭 큐브 창 (원작 supertransmogrifier.dc6)
+  const cubePanel = new CubePanel(art, icons);
   // NPC: 메뉴·대사·상점(원작 buysell.dc6)·고용 목록, 왼쪽 위 용병 초상 (원작 rogueicon.dc6)
   const storePanel = new StorePanel(assets, pal, icons);
   const npcMenu = new NpcMenu();
@@ -385,6 +390,29 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     if (ha) {
       onHud(ha, button, cur0);
       return true;
+    }
+    // 호라드릭 큐브 창 (원작: 칸 왼쪽 클릭 = 집기/놓기, 트랜스뮤트 단추, 닫기)
+    const ch3 = cubePanel.hit(x, y);
+    if (ch3) {
+      if (ch3.kind === 'close') {
+        cubePanel.open = false;
+        game.enqueue({ type: 'closeCube' });
+      } else if (ch3.kind === 'transmute' && button === 0) {
+        cubePanel.press(performance.now());
+        game.enqueue({ type: 'transmute' });
+      } else if (ch3.kind === 'cell' && button === 0) {
+        if (cur0) game.enqueue({ type: 'moveItem', itemId: cur0.id, to: { kind: 'cube', ...cubePanel.placeAt(cur0, x, y) } });
+        else {
+          const it = game.store.cube.at(ch3.x, ch3.y)?.item;
+          if (it) game.enqueue({ type: 'moveItem', itemId: it.id, to: { kind: 'cursor' } });
+        }
+      }
+      return true;
+    }
+    if (cubePanel.open && !invPanel.hit(x, y)) {
+      // 근사(원작 미확인): 큐브 창이 열린 채 바깥 클릭 = 닫고 이동
+      cubePanel.open = false;
+      game.enqueue({ type: 'closeCube' });
     }
     // 보관함 (원작: 왼쪽 클릭 = 집기/놓기)
     const sh = stashPanel.hit(x, y);
@@ -579,10 +607,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         })
       : null;
     // 원작: 왼쪽 패널 자리(캐릭터·퀘스트·웨이포인트·보관함·상점) 와 오른쪽(인벤토리·스킬 트리)은 하나씩만
-    const openLeft = (which: 'char' | 'quest' | 'stash' | null) => {
+    const openLeft = (which: 'char' | 'quest' | 'stash' | 'cube' | null) => {
       charPanel.open = which === 'char';
       if (which !== 'quest') questPanel.open = false;
       stashPanel.open = which === 'stash';
+      if (cubePanel.open && which !== 'cube') game.enqueue({ type: 'closeCube' });
+      cubePanel.open = which === 'cube';
       if (which) wpPanel.open = false;
     };
     const openRight = (which: 'inv' | 'tree' | null) => {
@@ -630,7 +660,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         return;
       }
       // 원작: Esc 는 열린 패널부터 모두 닫는다
-      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || stashPanel.open || invPanel.open || skillPanels?.open || hud.beltOpen)) {
+      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || stashPanel.open || cubePanel.open || invPanel.open || skillPanels?.open || hud.beltOpen)) {
         wpPanel.open = false;
         questPanel.open = false;
         hud.beltOpen = false;
@@ -698,7 +728,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const st = game.store;
       // 난이도별 기록: 이번 게임 난이도 칸만 바꾼다 (다른 난이도는 불러온 저장 그대로)
       const byDiff = mergeDifficulty(save, game.difficulty, game.waypoints.list(), game.questRecord.toJSON());
-      await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, belt: st.belt, equipment: game.equipment,
+      await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, cube: st.cube.items, belt: st.belt, equipment: game.equipment,
         stashGold: game.stashGold, merc: game.mercSave(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
         act: game.act, difficulty: game.difficulty, difficultyUnlocked: save?.difficultyUnlocked ?? 0, ...byDiff,
       }));
@@ -729,7 +759,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
           store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel,
-          hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art,
+          hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel,
           gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
         },
       };
@@ -750,7 +780,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             if (ev.type === 'waypointMenu') {
               openLeft(null);
               openWaypointPanel();
-            } else if (ev.type === 'objectUnsupported' && Number(ev.operateFn) === 32) {
+            } else if (ev.type === 'cubeOpened') {
+              // 호라드릭 큐브: 큐브 창 + 인벤토리
+              openLeft('cube');
+              openRight('inv');
+            } else if (ev.type === 'cubeClosed') cubePanel.open = false;
+            else if (ev.type === 'objectUnsupported' && Number(ev.operateFn) === 32) {
               // 원작 보관함 (objects.txt bank, OperateFn 32): 보관함 + 인벤토리
               openLeft('stash');
               openRight('inv');
@@ -802,9 +837,13 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               openLeft(null);
               openRight('inv');
               talkBox.hide();
-            } else if (ev.type === 'actChange') {
-              // TODO(Act 2 범위 밖): 클래식 Act 2 (Lut Gholein) 가 없다
-              messageLog.push('Lut Gholein (Act II) - not available', performance.now());
+            } else if (ev.type === 'actChange' && !ev.available) {
+              // 막 월드 파일을 아직 읽지 못함: 읽은 뒤 막 이동을 다시 보낸다 (조건은 엔진이 다시 본다)
+              const act = Number(ev.act);
+              if (actAvailable(act)) {
+                loading.flash(performance.now(), 700);
+                void prefetchAct(sh, act).then(() => game.enqueue({ type: 'travelAct', act }));
+              }
             }
           }
         }
@@ -824,7 +863,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         : undefined;
       // 가리킨 유닛 (지난 프레임 클릭 상자 — 패널·메뉴 위면 없음). 원작: 가리킨 유닛·오브젝트를 밝게
       const mm = input.mouse;
-      const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
+      const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || !!cubePanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
       hoverNow = overUi || !mm ? null : input.hoverAt(mm.x, mm.y);
       const view = views.get(game.act) ?? actView(startAct);
       (renderers[game.levelId] as WorldRenderer).render(
@@ -892,6 +931,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 왼쪽 패널 자리: 캐릭터·보관함·웨이포인트·퀘스트 / 오른쪽: 스킬 트리·인벤토리
       charPanel.draw(ctx, input.mouse);
       stashPanel.draw(ctx, game.store, game.stashGold, ch.level, str, input.mouse, (it) => itemText.lines(it, reqCtx));
+      if (cubePanel.open && !game.cubeOpen) cubePanel.open = false;
+      cubePanel.draw(ctx, game.store, str, input.mouse, (it) => itemText.lines(it, reqCtx), now);
       // 웨이포인트에서 멀어지면 패널을 닫는다 (원작 SUNIT_ResetInteractInfo)
       if (wpPanel.open && !game.waypointOpen) wpPanel.open = false;
       wpPanel.draw(ctx);
@@ -906,7 +947,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 레벨 이동 로딩 화면 (원작: 계단·입구·웨이포인트·포털)
       loading.draw(ctx, now);
       // 원작 커서: 아이템을 들면 그 그림, 감정 = 돋보기, 수리 모드 = 망치, 가리키면 손 애니메이션
-      const overInv = !!input.mouse && !!(invPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? stashPanel.itemAt(game.store, input.mouse.x, input.mouse.y));
+      const overInv = !!input.mouse && !!(invPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? stashPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? cubePanel.itemAt(game.store, input.mouse.x, input.mouse.y));
       cursor.draw(ctx, art, input.mouse, cursor.pick({
         holding: !!game.store.cursor, identify: identifyWith !== null,
         repair: storePanel.mode === 'repair' && !!inter && inter.mode === 'trade' && !panels.menuOpen,

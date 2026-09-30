@@ -1,7 +1,9 @@
 // 마을 NPC AI (monstats AI = Npc / Navi / Idle).
 // 출처: D2MOO D2Game/src/AI/AiThink.cpp — AITHINK_Fn032_Npc, sub_6FCE5EE0 (플레이어 쪽으로 다가가기·인사), sub_6FCE69A0 (명령 4 걷기·7 스킬),
 //       AITHINK_ExecuteMapAiAction + sub_6FCE61E0 / sub_6FCE6270 / sub_6FCE6340 / sub_6FCE64D0 (DS1 경로 동작 1~5), AITHINK_Fn058_Navi
-//       AiTactics.cpp sub_6FCCFD70 (거리 15 안 가장 가까운 플레이어) (https://github.com/ThePhrozenKeep/D2MOO)
+//       AiTactics.cpp sub_6FCCFD70 (거리 15 안 가장 가까운 플레이어),
+//       AITHINK_Fn041_Towner (마을 주민: 명령 → 경로 동작 → 12 프레임), AITHINK_Fn042_Vendor (노점상: 20% S1),
+//       AITHINK_Fn054_NpcStationary (Tyrael: 제자리, 인사 60 프레임), AITHINK_Fn081_JarJar (Kaelan: 문지기 자리) (https://github.com/ThePhrozenKeep/D2MOO)
 import { aiDistance } from '../monster';
 import { dir64 } from '../geom';
 import { idle, rollPct, walkInRadius } from './tactics';
@@ -30,9 +32,11 @@ export interface NpcState {
 }
 
 /**
- * NPC 가 도착 후 바라보는 방향 (64 방향). 출처: sub_6FCE69A0 — Charsi 0x38, Warriv 0x34 (명령 7 도착 시 D2COMMON_10160_PathUpdateDirection)
+ * NPC 가 도착 후 바라보는 방향 (64 방향). 출처: sub_6FCE69A0 — Charsi 0x38, Warriv 0x34, Fara 4, Jamella S1 0x34 / S2 0x30
+ *   (명령 7 도착 시 D2COMMON_10160_PathUpdateDirection)
  */
-const FACE: Record<string, number> = { charsi: 0x38, warriv1: 0x34 };
+const FACE: Record<string, number> = { charsi: 0x38, warriv1: 0x34, fara: 4, jamella: 0x34 };
+const faceFor = (id: string, mode: MonMode | null): number | undefined => (id === 'jamella' && mode === 'S2' ? 0x30 : FACE[id]);
 
 const dirTo = (m: MonsterUnit, x: number, y: number): number => (x === m.x && y === m.y ? m.dir : dir64(x - m.x, y - m.y));
 
@@ -84,7 +88,7 @@ function runCommands(w: AiWorld, m: MonsterUnit, s: NpcState): boolean {
   const d = aiDistance(m.x, m.y, sk.x, sk.y);
   if (d <= 0 || sk.tries <= 0) {
     if (d > 1) sk.mode = null;
-    const f = FACE[m.type.id];
+    const f = faceFor(m.type.id, sk.mode);
     if (f !== undefined) m.dir = f;
     if (sk.mode) {
       if (m.mode === sk.mode) idle(w, m, 50);
@@ -97,6 +101,8 @@ function runCommands(w: AiWorld, m: MonsterUnit, s: NpcState): boolean {
       return true;
     }
     s.skill = undefined;
+    // 출처: sub_6FCE69A0 — Fara 는 66% 로 다시 망치질 (명령 7 을 모드 8(S1)로)
+    if (m.type.id === 'fara' && rollPct(m) < 66 && m.type.modes.has('S1')) s.skill = { mode: 'S1', x: m.x, y: m.y, tries: 0 };
     return false;
   }
   sk.tries--;
@@ -128,9 +134,50 @@ export function thinkNpc(w: AiWorld, m: MonsterUnit, s: NpcState, playerBusy: bo
   const face = (u: MonsterUnit) => {
     u.dir = dirTo(u, w.target.x, w.target.y);
   };
+  if (m.type.ai === 'Towner') {
+    // 출처: AITHINK_Fn041_Towner — 명령(걷기·스킬) → DS1 경로 동작 → 12 프레임 대기
+    if (runCommands(w, m, s) || mapAction(w, m, s)) return;
+    idle(w, m, 12);
+    return;
+  }
+  if (m.type.ai === 'Vendor') {
+    // 출처: AITHINK_Fn042_Vendor — 20% 로 S1 (호객), 아니면 30 프레임 대기
+    if (rollPct(m) < 20 && m.type.modes.has('S1')) w.startMode(m, 'S1');
+    else idle(w, m, 30);
+    return;
+  }
   if (m.type.ai === 'Idle' || !s.interact) {
     // 장식 유닛 (Rogue 경비·닭·소): 제자리 (출처: AI Idle)
     idle(w, m, 25);
+    return;
+  }
+  if (m.type.ai === 'NpcStationary') {
+    // 출처: AITHINK_Fn054_NpcStationary — 움직이지 않는다. 대화 중·바쁜 플레이어면 10, 24 안에 들어오면 인사(60 프레임마다) 후 20
+    const dist = aiDistance(m.x, m.y, w.target.x, w.target.y);
+    if (s.talking || playerBusy) {
+      idle(w, m, 10);
+      return;
+    }
+    if (dist < 24) {
+      if (s.greet > 0) s.greet--;
+      else {
+        s.greet = 60;
+        s.greeted = w.frame;
+      }
+    }
+    idle(w, m, 20);
+    return;
+  }
+  if (m.type.ai === 'JarJar') {
+    // 출처: AITHINK_Fn081_JarJar — 문지기 자리(원위치)에서 1 넘게 벗어나면 돌아가고, 자리에 있으면 플레이어에게 인사(sub_6FCE5EE0)
+    // 근사(원작 미확인): ACT2Q4 가 정하는 경비 이동(궁전 문 열기)은 Phase 7 — 여기서는 원위치만
+    if (aiDistance(m.x, m.y, s.home.x, s.home.y) > 1 && !s.talking) {
+      if (!w.moveTo(m, s.home.x, s.home.y, false)) idle(w, m, 20);
+      return;
+    }
+    const dist = aiDistance(m.x, m.y, w.target.x, w.target.y);
+    if (s.talking || (dist <= 15 && !w.target.dead)) face(m);
+    idle(w, m, 20);
     return;
   }
   if (m.type.ai === 'Navi') {

@@ -24,6 +24,8 @@ export interface CharacterSave {
   /** 인벤토리 격자 (x < 0 이면 불러올 때 빈 자리에 자동 배치 — 버전 1 호환) */
   inventory: Placed[];
   stash: Placed[];
+  /** 호라드릭 큐브 칸 (원작: 캐릭터 인벤토리의 INVPAGE_CUBE 쪽). 예전 저장은 [] */
+  cube: Placed[];
   belt: (ItemInstance | null)[];
   equipment: Record<string, ItemInstance>;
   /** 창고 골드 */
@@ -59,6 +61,7 @@ export interface HeroSummary { name: string; cls: ClassName; level: number; save
 export interface SaveItems {
   inventory: Placed[];
   stash?: Placed[];
+  cube?: Placed[];
   belt?: (ItemInstance | null)[];
   equipment: Record<string, ItemInstance>;
   stashGold?: number;
@@ -114,6 +117,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     gold,
     inventory: structuredClone(items.inventory),
     stash: structuredClone(items.stash ?? []),
+    cube: structuredClone(items.cube ?? []),
     belt: structuredClone(items.belt ?? []),
     equipment: structuredClone(items.equipment),
     stashGold: items.stashGold ?? 0,
@@ -169,6 +173,9 @@ export function parseSave(text: string): CharacterSave {
   const inv = s.inventory as Placed[];
   for (const p of inv) normalizeItem(p.item);
   for (const p of s.stash ?? []) normalizeItem(p.item);
+  // 큐브 칸이 없던 저장 호환 (모양이 맞지 않으면 버린다)
+  s.cube = Array.isArray(s.cube) ? s.cube.filter((p) => p && typeof p === 'object' && p.item && Number.isInteger(p.x) && Number.isInteger(p.y)) : [];
+  for (const p of s.cube) normalizeItem(p.item);
   for (const it of s.belt ?? []) if (it) normalizeItem(it);
   for (const it of Object.values(s.equipment)) normalizeItem(it);
   s.stash ??= [];

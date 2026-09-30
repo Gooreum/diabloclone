@@ -118,6 +118,14 @@ export class HirelingDb {
   }
 }
 
+/**
+ * hireling.txt Mode 번호 → 몬스터 모드 (출처: D2MOO MONMODE_* — 1 NU(오라), 4 A1(화살), 7 SC(주문), 14 SQ(Jab 시퀀스))
+ */
+export const MERC_MODES = ['DT', 'NU', 'WL', 'GH', 'A1', 'A2', 'BL', 'SC', 'S1', 'S2', 'S3', 'S4', 'DD', 'KB', 'SQ', 'RN'] as const;
+
+/** 용병 초상 (data\global\ui\HIREABLES) — monstats 행별. 출처: d2data.mpq rogueicon / act2hireableicon / act3hireableicon */
+export const MERC_ICONS: Record<string, string> = { roguehire: 'rogueicon', act2hire: 'act2hireableicon', act3hire: 'act3hireableicon' };
+
 /** 캐릭터 저장에 넣는 용병 (원작 .d2s 용병 기록: 이름·시드·종류·경험치 + 사망 여부) */
 export interface MercSave { name: string; seed: number; hirelingId: number; level: number; experience: number; dead: boolean }
 

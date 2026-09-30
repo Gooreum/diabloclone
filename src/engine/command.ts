@@ -4,6 +4,8 @@ import type { NpcOption } from './npc';
 export type ItemLocation =
   | { kind: 'inventory'; x: number; y: number }
   | { kind: 'stash'; x: number; y: number }
+  /** 호라드릭 큐브 칸 (3×4) */
+  | { kind: 'cube'; x: number; y: number }
   | { kind: 'equip'; slot: string }
   | { kind: 'belt'; slot: number }
   | { kind: 'ground' }
@@ -43,6 +45,12 @@ export type Command =
   | { type: 'hire'; index: number }
   /** NPC 대화·상점 닫기 */
   | { type: 'closeNpc' }
+  /** 호라드릭 큐브: 열기(인벤토리·보관함의 큐브 오른쪽 클릭과 같음) · 트랜스뮤트 단추 · 닫기 */
+  | { type: 'openCube' }
+  | { type: 'transmute' }
+  | { type: 'closeCube' }
+  /** 막 이동 다시 시도 (막 월드를 읽는 동안 미뤄 둔 Warriv·Meshif·포털 이동 — 조건은 엔진이 다시 본다) */
+  | { type: 'travelAct'; act: number }
   // ---- [UI Phase 12 Step 2] 골드 옮기기 (원작 금화 창: 보관함 넣기·빼기, 인벤토리에서 떨어뜨리기)
   | { type: 'goldTransfer'; to: 'stash' | 'inventory' | 'ground'; amount: number }
   // ---- [UI Phase 12 Step 2] 끝

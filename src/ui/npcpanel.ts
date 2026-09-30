@@ -1,6 +1,7 @@
 // NPC 대화 메뉴·대사 상자·용병 고용 목록 (캔버스).
 // 출처: string.tbl — NPC 이름(monstats NameStr), 메뉴 TalkMenu "talk" / NPCMenuTrade "trade" / NPCMenuTradeRepair "trade/repair" / gamble /
-//       NPCMenuHire "hire" / NPCIdentify1 "Identify Items" / lowercasecancel "cancel", 대사 <이름>IntroGossip1 · <이름>Intro<클래스>Gossip1 · <이름>GossipN,
+//       NPCMenuHire "hire" / NPCIdentify1 "Identify Items" / lowercasecancel "cancel", 막 이동 WarrivMenu1b "go east" · WarrivMenu1c "go west" ·
+//       MeshifMenuEast "sail east" · MeshifMenuWest "sail west", 대사 <이름>IntroGossip1 · <이름>Intro<클래스>Gossip1 · <이름>GossipN,
 //       고용 목록 ItemDesc1s "Your Gold: %d     Hire which Mercenary?" / ItemDesc1t, strhirespecial<N> (hiredesc.txt 행)
 // 글자: 원작 font16 (src/ui/text.ts — DC6 글꼴 + Pal.PL2 글자 색). 원작 font16 은 소문자도 작은 대문자 모양이다.
 // 근사(원작 미확인): 반투명 검은 상자 크기·위치·줄 간격, 항목 색(금색, 마우스 = 흰색), 'resurrect' 문구 (string.tbl 에 없어 영어 "Resurrect"),
@@ -22,7 +23,13 @@ export function pickGossip(str: Str, prefix: string, cls: string, intro: boolean
   const has = (k: string) => str(k) !== k;
   const ab = ({ Amazon: 'Ama', Sorceress: 'Sor', Necromancer: 'Nec', Paladin: 'Pal', Barbarian: 'Bar' } as Record<string, string>)[cls] ?? '';
   if (intro) {
-    for (const k of [`${prefix}Intro${ab}Gossip1`, `${prefix}Act1Intro${ab}Gossip1`, `${prefix}IntroGossip1`, `${prefix}Act1IntroGossip1`]) if (has(k)) return stripSpeed(str(k));
+    // 막 소개 대사 (막에 처음 온 날): HratliActIntroGossip1 · TyraelActIntroGossip1 · CainAct3IntroGossip1 · MeshifAct3IntroBarGossip1 …
+    const base = prefix.replace(/Act\d$/, '');
+    const keys = [
+      `${prefix}Intro${ab}Gossip1`, `${prefix}Act1Intro${ab}Gossip1`, `${prefix}ActIntro${ab}Gossip1`, `${base}ActIntro${ab}Gossip1`,
+      `${prefix}IntroGossip1`, `${prefix}Act1IntroGossip1`, `${prefix}ActIntroGossip1`, `${base}ActIntroGossip1`,
+    ];
+    for (const k of keys) if (has(k)) return stripSpeed(str(k));
   }
   const list: string[] = [];
   for (let i = 1; i <= 12; i++) if (has(`${prefix}Gossip${i}`)) list.push(`${prefix}Gossip${i}`);
@@ -143,6 +150,14 @@ export class TalkBox {
 
 const TALK_LINES = 8;
 
+/**
+ * 고용 목록의 용병 종류 문자열 (hiredesc.txt 행 → string.tbl/patchstring.tbl 키).
+ * 근사(원작 미확인 — D2Client 표는 D2MOO 에 없다): 1 farw "Fire Arrow" · 2 carw "Cold Arrow" (strhirespecial1·2),
+ *   3 comb "Combat" · 4 def "Defensive" · 5 off "Offensive" (PalMercEXST4X · PalMercExST1X · PalMercEXST3X),
+ *   6 fire "Fire" · 7 cold "Cold" · 8 ltng "Lightning" (strhirespecial7·6·5) — strhirespecial3·4 ("Jab Attack"·"Poison Resistant")는 쓰지 않는 옛 문구
+ */
+export const HIRE_DESC_STRING: readonly string[] = ['', 'strhirespecial1', 'strhirespecial2', 'PalMercEXST4X', 'PalMercExST1X', 'PalMercEXST3X', 'strhirespecial7', 'strhirespecial6', 'strhirespecial5'];
+
 /** 용병 고용 목록 */
 export class HirePanel {
   private rows: { index: number; y: number }[] = [];
@@ -164,7 +179,7 @@ export class HirePanel {
       drawText(ctx, str(c.name), x + 16, ry + 2, { color: col });
       drawText(ctx, `${str('strchrlvl')} ${c.init.level}`, x + 170, ry + 2, { color: col });
       drawText(ctx, `${str('cost')}${c.init.gold}`, x + 270, ry + 2, { color: col });
-      drawText(ctx, `${str(`strhirespecial${c.init.hireDesc}`)} - Life ${c.init.hp}  Def ${c.init.defense}  Dmg ${c.init.minDamage}-${c.init.maxDamage}`, x + 16, ry + 20, { font: 'font8', color: 'tan' });
+      drawText(ctx, `${str(HIRE_DESC_STRING[c.init.hireDesc] ?? `strhirespecial${c.init.hireDesc}`)} - Life ${c.init.hp}  Def ${c.init.defense}  Dmg ${c.init.minDamage}-${c.init.maxDamage}`, x + 16, ry + 20, { font: 'font8', color: 'tan' });
       this.rows.push({ index: c.index, y: ry });
     });
   }

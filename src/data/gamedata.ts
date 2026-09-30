@@ -11,6 +11,7 @@ import { ItemGen } from '../engine/itemgen';
 import { ObjectDb } from '../engine/objects';
 import { UniqueDb } from '../engine/uniques';
 import { HirelingDb } from '../engine/hireling';
+import { CubeDb } from '../engine/cube';
 import { parseGamble } from '../engine/shop';
 import { parseStateOverlays } from '../engine/states';
 import type { GameData } from '../engine/game';
@@ -42,6 +43,8 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
     objects: new ObjectDb({ objects: tables.table('Objects'), objGroup: tables.table('ObjGroup'), shrines: tables.table('shrines'), levels: tables.table('Levels') }),
     hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc')),
+    // 호라드릭 큐브 조합 (cubemain.txt — 유니크·세트 이름 입력은 uniqueitems / setitems index)
+    cube: new CubeDb(tables.table('CubeMain'), items, treasure.gen.uniques.map((u) => u.name), treasure.gen.setItems.map((u) => u.name)),
     gamble: parseGamble(items, tables.table('gamble')),
     stateOverlays: parseStateOverlays(tables.table('States'), tables.table('Overlay')),
     uniques: new UniqueDb(monsters, {

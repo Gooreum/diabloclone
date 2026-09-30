@@ -246,7 +246,11 @@ test('Act 3·4: 퀘스트 창 탭 III·IV, 메피스토 → 지옥문 → Act 4,
   await goLevel(page, 'durance3', 342);
   await page.waitForTimeout(1500);
   await page.locator('#game').screenshot({ path: 'test-results/quest-a3-hellgate.png' });
-  await operate(page, 342);
+  // 실제 조작처럼 명령으로 (게임 틱 안에서 처리 → Act 4 파일을 아직 읽는 중이면 브라우저가 읽고 다시 보낸다)
+  await page.evaluate(() => {
+    const g = window.__game!.game;
+    g.enqueue({ type: 'interact', unitId: g.objects.find((x) => x.type.id === 342)!.id });
+  });
   await page.waitForFunction(() => window.__game!.game.levelId === 'pandemonium', undefined, { timeout: 200_000 });
   await page.waitForFunction(() => window.__game!.game.npcs.length > 0, undefined, { timeout: 20_000 });
   expect(await page.evaluate(() => window.__game!.game.progression)).toBe(3);

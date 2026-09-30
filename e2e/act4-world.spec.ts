@@ -48,9 +48,10 @@ test('Act 4: 요새·초원·절망의 평원·저주받은 도시·불꽃의 �
     expect(where.found, key).toBe(true);
     if (typeof target === 'number') expect(where.dist, key).toBeLessThan(20);
     await page.waitForTimeout(900);
-    const stats = await page.evaluate(() => {
-      const c = document.getElementById('game') as HTMLCanvasElement;
-      const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
+    const stats = await page.evaluate(async () => {
+      // 월드(WebGL)와 UI 를 합성한 화면
+      const c = await window.__game!.capture!();
+      const d = c.data;
       let lit = 0, red = 0;
       for (let i = 0; i < d.length; i += 4) {
         const r = d[i] ?? 0, gg = d[i + 1] ?? 0, b = d[i + 2] ?? 0;

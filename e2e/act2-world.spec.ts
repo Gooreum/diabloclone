@@ -60,12 +60,13 @@ test('Act 2: 루트 골레인·사막 야외·하수도·비전의 성역·탈 �
     expect(where.found, key).toBe(true);
     if (target !== 'open') expect(where.dist, key).toBeLessThan(30);
     await page.waitForTimeout(900);
-    const lit = await page.evaluate(() => {
-      const c = document.getElementById('game') as HTMLCanvasElement;
-      const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
+    const lit = await page.evaluate(async () => {
+      // 월드(WebGL)와 UI 를 합성한 화면
+      const img = await window.__game!.capture!();
+      const d = img.data;
       let n = 0;
       for (let i = 0; i < d.length; i += 4) if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) n++;
-      return n / (c.width * c.height);
+      return n / (img.width * img.height);
     });
     const shot = key.startsWith('taltomb') ? 'taltomb' : key;
     await page.locator('#game').screenshot({ path: `test-results/act2-${shot}.png` });

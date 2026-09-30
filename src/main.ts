@@ -953,9 +953,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         for (const mode of ['NU', 'WL', 'RN', 'A1', 'A2', 'GH']) units.warm({ root: 'CHARS', token, mode, wclass, equip }, s.player.dir);
       }
       const cpItems = game.corpse?.items;
-      const corpseLook = cpItems
-        ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: ((cpItems.rarm ? data.items.base(cpItems.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase() }
-        : undefined;
+      // 출처: 원작 d2char.mpq — 캐릭터 시체(DD)·죽기(DT) COF 는 맨손(HTH)만 있다 (xxDDHTH.cof). 무기 종류로 찾으면 그림이 없다
+      const corpseLook = cpItems ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: 'HTH' } : undefined;
       // 가리킨 유닛 (지난 프레임 클릭 상자 — 패널·메뉴 위면 없음). 원작: 가리킨 유닛·오브젝트를 밝게
       const mm = input.mouse;
       const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || !!cubePanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);

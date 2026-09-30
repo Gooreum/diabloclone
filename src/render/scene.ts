@@ -192,9 +192,11 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
-  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip }, pm.dir);
+  // 원작 캐릭터 죽기(DT)·시체(DD) COF 는 맨손(HTH)만 있다
+  const wclass = mode === 'DT' || mode === 'DD' ? 'HTH' : d.playerWclass;
+  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass, equip: d.playerEquip }, pm.dir);
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
-  const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
+  const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${wclass}`, pm.modeTick, looping);
   out.push({
     depth: pm.x + pm.y,
     draw: (sink, cm) => {

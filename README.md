@@ -7,7 +7,7 @@
 > ⚠️ **이 저장소에는 원작 게임 파일이 들어 있지 않습니다.**
 > 실행하려면 본인 소유의 정품 **Diablo II (클래식) 1.14d** 설치 파일이 필요합니다. 자세한 내용은 [실행 방법](#실행-방법)을 보세요.
 
-현재 범위는 **Act 1 전체**입니다. Act 2~4와 악몽·지옥 난이도는 별도 브랜치에서 작업 중입니다.
+현재 범위는 **클래식 Act 1~4 전체와 노멀·악몽·지옥 난이도**입니다. 로그 야영지에서 시작해 디아블로를 쓰러뜨릴 때까지 할 수 있습니다.
 
 | 로그 야영지 | 전투 (바바리안 Whirlwind) |
 |---|---|
@@ -32,23 +32,26 @@
   - 그 밖에 팔레트·PL2 색표, `string.tbl`, 엑셀 표(`*.txt`), AnimData, WAV
 - 원작 팔레트, 색 바꿈 표(유니크 RandTransforms·변종 palshift), 원작 글꼴과 글자색을 씁니다.
 
-### 게임플레이 (Act 1)
+### 게임플레이 (Act 1~4)
 - **캐릭터 5종**(아마존·소서리스·네크로맨서·팔라딘·바바리안)과 **클래스별 스킬 30개 전부**
   - 시너지, 스킬 공식, 시퀀스 애니메이션(Jab, Whirlwind 등)을 포함합니다.
 - **월드 생성 (DRLG):** D2MOO 재구성 코드를 옮겨, 원작과 같은 방식으로 야외·미로 던전·프리셋 맵을 무작위로 만듭니다.
+  - 로그 야영지, 루트 골레인과 사막·하수도·탈 라샤 무덤, 쿠라스트 정글·트라빈칼·증오의 억류지, 판데모니움 요새·카오스 생추어리
 - **몬스터**
   - 원작 AI
   - 챔피언·유니크 무리와 접사
-  - 슈퍼 유니크: Bishibosh, Blood Raven, Andariel 등
+  - 슈퍼 유니크와 막 보스: Blood Raven, Radament, 소환사, 의회, Izual 등, Andariel·Duriel·Mephisto·Diablo
 - **아이템**
   - 트레저 클래스 드롭, 접두·접미사, 매직·레어·유니크·세트
   - 내구도, 소켓
   - 감정, 수리, 상점, 도박
-- **마을 NPC:** 대화, 상점, 고용(용병), Charsi 인챈트, Cain 감정
-- **퀘스트 6개:** Den of Evil, Sisters' Burial Grounds, Tools of the Trade, The Search for Cain, The Forgotten Tower, Sisters to the Slaughter
-- **이동:** 웨이포인트, 마을 포털, 자동지도(전체·미니, 시체 위치 표시)
+- **마을 NPC:** 네 마을의 대화, 상점, 막별 용병 고용, Charsi 인챈트, Cain 감정, Warriv·Meshif 막 이동
+- **호라드릭 큐브:** 원작 cubemain 조합 (보석 합치기, 재료 조합 등)
+- **퀘스트 21개:** Act 1 6개(Den of Evil ~ Sisters to the Slaughter), Act 2 6개(Radament's Lair ~ The Seven Tombs), Act 3 6개(The Golden Bird ~ The Guardian), Act 4 3개(The Fallen Angel ~ Terror's End)
+- **난이도:** 노멀에서 디아블로를 잡으면 악몽, 악몽을 끝내면 지옥이 열립니다. 몬스터 수치, 저항 페널티, 칭호가 원작 표를 따릅니다.
+- **이동:** 웨이포인트(막 I~IV 탭), 마을 포털, 자동지도(전체·미니, 시체 위치 표시)
 - **원작 UI:** 조작판, 벨트, 인벤토리, 창고, 스킬 트리, 캐릭터 창, 게임 메뉴, 단축키 설정
-- **사운드:** 원작 음악, 효과음, NPC 음성 (오디오 해석은 Web Worker에서)
+- **사운드:** 막별 원작 음악, 효과음, NPC 인사·잡담·퀘스트 음성 (오디오 해석은 Web Worker에서)
 - **저장:** 브라우저 IndexedDB에 캐릭터를 저장하고 불러옵니다. 시체와 장비 회수도 됩니다.
 
 ### 성능
@@ -164,22 +167,23 @@ scripts/        데이터 검사·분석 도구
 ## 테스트
 
 ```bash
-npm test                                  # vitest 단위 테스트 (534개)
+npm test                                  # vitest 단위 테스트 (712개)
 npx tsc --noEmit                          # 타입 검사
-npx playwright test --workers=1           # 브라우저 e2e (44개, game-data 필요)
+npx playwright test --workers=1           # 브라우저 e2e (56개, game-data 필요)
 RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 녹화
 ```
 - 원작 파일이 필요한 테스트는 `game-data/`가 없으면 자동으로 건너뜁니다.
 - e2e는 캐릭터 생성 → 마을 → 필드 → 전투 → 줍기 → 저장 → 새로고침 → 불러오기까지 실제 흐름을 검사합니다.
   - 던전 생성·렌더링, 퀘스트, 상점·용병, 웨이포인트·포털, WebGL 복구, 성능도 포함합니다.
+  - `e2e/full-game.spec.ts`는 한 캐릭터로 Act 1~4 보스를 거쳐 디아블로 처치, 저장, 악몽 시작까지 한 번에 검사합니다.
 
 ---
 
 ## 로드맵
 - [x] Act 1 전체 (월드·몬스터·NPC·퀘스트 6개·UI·사운드·전 스킬)
 - [x] WebGL2 렌더러 + Worker 해석 + 레벨 미리 불러오기
-- [ ] Act 2~4 (루트 골레인 ~ 판데모니움 요새, 두리엘·메피스토·디아블로) — 작업 중
-- [ ] 악몽·지옥 난이도
+- [x] Act 2~4 (루트 골레인 ~ 판데모니움 요새, 두리엘·메피스토·디아블로)
+- [x] 악몽·지옥 난이도
 - [ ] 조명·그림자 렌더링
 - [ ] 확장팩(Lord of Destruction)
 

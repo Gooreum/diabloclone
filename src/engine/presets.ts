@@ -349,13 +349,17 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
   // Hell 까지 끝냄: 세 난이도 모든 웨이포인트·퀘스트 보상
   const waypoints = [...new Set([...data.objects!.levels.values()].filter((l) => l.act <= 3 && l.waypoint < 255).map((l) => l.waypoint))].sort((a, b) => a - b);
   const words = Array.from({ length: QUEST_WORDS }, (_, q) => (q <= LAST_QUEST_WORD ? 1 << QFLAG.REWARDGRANTED : 0));
+  // 장비 포함 최대치로 가득 찬 채 시작
+  const d = computeDerived(ch, cs, equipment, data.items, gen);
+  ch.life = Math.floor(d.maxLife);
+  ch.mana = Math.floor(d.maxMana);
+  ch.stamina = Math.floor(d.maxStamina);
   const save = makeSave(spec.name, ch, 0, {
     inventory, equipment, belt, stash: [], cube: [], stashGold: 0, corpse: {}, merc: null, quests: [],
     act: 0, difficulty: 2, difficultyUnlocked: 2, actByDiff: [0, 0, 0], progression: PROGRESSION_HELL_DONE,
     waypointsByDiff: [waypoints, waypoints, waypoints], questFlagsByDiff: [words, words, words],
   }, 0);
 
-  const d = computeDerived(ch, cs, equipment, data.items, gen);
   const summary: PresetSummary = {
     id: spec.id, name: spec.name, cls: spec.cls, build: spec.build,
     stats: { str: ch.str, dex: ch.dex, vit: ch.vit, ene: ch.ene, invested: { str: ch.str - cs.str, dex: ch.dex - cs.dex, vit: ch.vit - cs.vit, ene: ch.ene - cs.ene } },

@@ -15,7 +15,7 @@ import { ENGINE_FPS } from './engine/index';
 import { classStats, createCharacter, expTable, type ClassName } from './engine/player';
 import { QUALITY, type ItemInstance } from './engine/treasure';
 import { Rng } from './engine/rng';
-import { makeSave, mergeDifficulty, startActFor, summarize, type CharacterSave } from './engine/save';
+import { makeSave, mergeDifficulty, parseSave, startActFor, summarize, type CharacterSave } from './engine/save';
 import { heroTitle, type Difficulty } from './engine/difficulty';
 import { questNameKey } from './engine/quests/messages-acts';
 import { characterOwner } from './engine/skills/rules';
@@ -284,12 +284,15 @@ async function boot(): Promise<void> {
     if (inMenu) sound.setMusic('music_options');
   }).catch(() => undefined);
   if (import.meta.env.DEV) window.__audio = sound;
+  // dev 전용 프리셋 캐릭터 (src/presets, scripts/gen-presets.ts): ?preset=<직업> 은 메뉴를 건너뛰어 Hell 로 바로, ?preset=all 은 캐릭터 목록에 5개
+  let presetStart = import.meta.env.DEV ? await installPresets(new URLSearchParams(location.search).get('preset')) : null;
   for (;;) {
     window.__menuReady = true;
     inMenu = true;
     // 표를 읽기 전에 부르면 이름만 남고 재생되지 않으므로 준비된 뒤에만
     if (soundReady) sound.setMusic('music_options');
-    const choice = await menu.run(listHeroes);
+    const choice = presetStart ? ({ kind: 'load', name: presetStart, difficulty: 2 } as const) : await menu.run(listHeroes);
+    presetStart = null;
     inMenu = false;
     window.__menuReady = false;
     menu.hide();
@@ -304,6 +307,26 @@ async function boot(): Promise<void> {
     const game = await loading.around(ctx, () => play(shared, choice.name, cls, save, difficulty));
     await game;
   }
+}
+
+/** dev 전용: 프리셋 세이브를 캐릭터 저장소에 넣는다 (같은 이름은 덮어씀). 바로 시작할 캐릭터 이름 (all·없는 직업이면 null) */
+async function installPresets(id: string | null): Promise<string | null> {
+  if (!id) return null;
+  // 배포판에는 프리셋 파일을 넣지 않는다 (DEV 가 false 면 이 목록은 빈 객체로 지워진다)
+  const files: Record<string, () => Promise<unknown>> = import.meta.env.DEV ? import.meta.glob('./presets/*.json', { import: 'default' }) : {};
+  const keys = id === 'all' ? Object.keys(files) : [`./presets/${id}.json`];
+  let name: string | null = null;
+  for (const k of keys) {
+    const load = files[k];
+    if (!load) {
+      console.warn(`[preset] 없는 프리셋: ${id} (amazon, sorceress, necromancer, paladin, barbarian, all)`);
+      continue;
+    }
+    const s = parseSave(JSON.stringify(await load()));
+    await HeroStore.save({ ...s, savedAt: Date.now() });
+    name = s.name;
+  }
+  return id === 'all' ? null : name;
 }
 
 /** 한 판 진행. Save and Exit 하면 resolve */

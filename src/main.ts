@@ -21,6 +21,7 @@ import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
 import { GlSink, glStats } from './render/gl/glsink';
 import { buildLightMap, type LightMap } from './render/lightmap';
+import { Rain } from './render/weather';
 import { FULL_LIGHT, LightTables, PLAYER_LIGHT, ambientOf, lightSources } from './engine/lighting';
 import { parsePl2Light } from './formats/pl2';
 import { type Camera } from './render/iso';
@@ -83,6 +84,8 @@ declare global {
         store: StorePanel; npcMenu: NpcMenu; hire: HirePanel; talk: TalkBox; mercBar: MercBar; inventory: InventoryPanel;
         /** e2e: 퀘스트 로그 패널 (Q) */
         quest: QuestPanel;
+        /** e2e: 비 (levels.txt Rain) */
+        rain: Rain;
         /** e2e: 원작 DC6 컨트롤 패널·캐릭터(C)·스킬 트리(T)·보관함·게임 메뉴 */
         hud: ControlPanel; charPanel: CharPanel; skillTree: SkillTree; stash: StashPanel; gameMenu: Panels; art: UiArt;
         /** e2e (Phase 6): 호라드릭 큐브 창 */
@@ -303,6 +306,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 조명: 원작 표 (levels IsInside · monstats2 Light/Shadow · missiles Light · objects Lit)
   const lightTables = new LightTables({ levels: tables.table('Levels'), monStats: tables.table('MonStats'), monStats2: tables.table('MonStats2'), missiles: tables.table('Missiles'), objects: tables.table('Objects') });
   const shadowOf = (typeId: string) => lightTables.monsterShadow(typeId);
+  // 비: levels.txt Rain = 1 인 레벨에서 가끔 (weather.ts)
+  const rainLevels = new Set(tables.table('Levels').filter((r) => r.Rain === '1').map((r) => Number(r.Id)));
+  const rain = new Rain(seed ^ 0x5eed);
   let lightMap: LightMap | undefined;
   // 출처: PlrSave2.cpp — 시작 막 = 고른 난이도의 nTown (actByDiff)
   const diffAct = startActFor(save, difficulty);
@@ -813,7 +819,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         game, ready: true, input, save: saveAndExit,
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
-          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel,
+          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel, rain,
           hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel,
           gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
         },
@@ -973,6 +979,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       );
       // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
       const worldPx = captureWaiters.length ? readWorld() : null;
+      // 비 (월드 위, UI 아래) + 빗소리
+      const raining = rain.active(rainLevels.has(game.levelDef(game.levelId)?.levelNo ?? 0), now);
+      if (raining) rain.draw(ctx, now, WIDTH, 553);
+      sound.setWeather(raining ? 'scene_rain' : null);
       // 바닥 아이템 이름표: Alt(Show Items) = 모두, 아니면 가리킨 아이템만 (원작)
       labels = [];
       for (const b of input.pickBoxes) {

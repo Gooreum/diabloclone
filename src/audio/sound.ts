@@ -124,6 +124,7 @@ export class SoundSystem {
   private readonly lastPlayed = new Map<string, number>();
   private music: { name: string; voice: Voice | null } | null = null;
   private ambience: { name: string; voice: Voice | null } | null = null;
+  private weather: { name: string; voice: Voice | null } | null = null;
   private speech: Voice | null = null;
   private speechToken = 0;
   private roll = 1;
@@ -378,6 +379,23 @@ export class SoundSystem {
     });
   }
 
+  /** 날씨 소리 (비 scene_rain 반복) — 배경음과 따로 */
+  setWeather(name: string | null): void {
+    if ((this.weather?.name ?? null) === name) return;
+    if (this.weather) {
+      this.weather.voice?.stop(1);
+      this.record('ambient', this.weather.name, '', 'stopped');
+    }
+    this.weather = name ? { name, voice: null } : null;
+    if (!name) return;
+    const slot = this.weather;
+    void this.play(name, { channel: 'ambient' }).then((v) => {
+      if (!v) return;
+      if (this.weather !== slot) v.stop(0);
+      else if (slot) slot.voice = v;
+    });
+  }
+
   /** 대사: 한 번에 하나 (새 대사가 이전 대사를 끊는다) */
   speak(names: string[]): void {
     const name = this.firstKnown(names);
@@ -400,6 +418,7 @@ export class SoundSystem {
   stopAll(): void {
     this.setMusic(null);
     this.setAmbience(null);
+    this.setWeather(null);
     this.stopSpeech();
   }
 

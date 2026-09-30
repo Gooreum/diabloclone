@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { newHero, uniqueName } from './helpers';
+import { newHero, uniqueName, walkToBloodMoor } from './helpers';
 
 test.skip(!existsSync('game-data/d2data.mpq') || !existsSync('game-data/d2sfx.mpq'), '원작 game-data 필요');
 test.setTimeout(240_000);
@@ -46,5 +46,29 @@ test('낮·밤: 정오로 시작, 밤이면 마을이 어두워지고 밤 배경
   expect(night).toBeLessThan(day * 0.75);
   expect(night).toBeGreaterThan(day * 0.2);
   await page.locator('#game').screenshot({ path: 'test-results/daynight-night.png' });
+  expect(errors).toEqual([]);
+});
+
+test('비: Blood Moor(levels Rain) 에서 비가 오면 빗줄기와 빗소리(scene_rain), 비 안 오는 굴에서는 없다', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await newHero(page, uniqueName('Rain'), 'sorceress');
+  await page.mouse.click(400, 300);
+  await page.waitForFunction(() => window.__audio?.unlocked === true, undefined, { timeout: 30_000 });
+  await walkToBloodMoor(page);
+  await page.waitForTimeout(800);
+  const before = await lum(page);
+  await page.evaluate(() => window.__game!.ui!.rain.force(true, performance.now()));
+  await page.waitForFunction(() => (window.__audio?.log ?? []).some((e) => e.channel === 'ambient' && e.name === 'scene_rain' && e.state === 'playing'), undefined, { timeout: 30_000 });
+  await page.waitForTimeout(500);
+  await page.locator('#game').screenshot({ path: 'test-results/daynight-rain.png' });
+  // 빗줄기(파란 회색 선) 가 화면에 있다: 비 켜기 전과 픽셀이 달라진다
+  const after = await lum(page);
+  expect(Math.abs(after - before)).toBeGreaterThan(0.5);
+  expect(await page.evaluate(() => window.__game!.ui!.rain.active(true, performance.now()))).toBe(true);
+  // Den of Evil (Rain 0): 비가 멈춘다
+  await page.evaluate(() => window.__game!.game.changeLevel('denofevil', 1, 1));
+  await page.waitForFunction(() => window.__game!.game.levelId === 'denofevil');
+  await page.waitForFunction(() => (window.__audio?.log ?? []).some((e) => e.name === 'scene_rain' && e.state === 'stopped'), undefined, { timeout: 10_000 });
   expect(errors).toEqual([]);
 });

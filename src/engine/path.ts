@@ -77,6 +77,40 @@ export function nearestWalkable(map: WalkMap, p: Pt, radius = 10): Pt | null {
   return null;
 }
 
+/**
+ * from 둘레(걸을 수 있는 가장 가까운 칸)에서 걸어서 이어진 칸 중 to 에 가장 가까운 칸 (4방향 BFS, from 에서 radius 안).
+ * to 가 이어져 있으면 to 칸 그대로. from 둘레에 걸을 칸이 없으면 null.
+ */
+export function reachableNear(map: WalkMap, from: Pt, to: Pt, radius = 90): Pt | null {
+  const s = nearestWalkable(map, from, 6);
+  if (!s) return null;
+  const tx = Math.floor(to.x), ty = Math.floor(to.y);
+  const x0 = s.x - radius, y0 = s.y - radius, w = radius * 2 + 1;
+  const seen = new Uint8Array(w * w);
+  const q: number[] = [s.x - x0 + (s.y - y0) * w];
+  seen[q[0]!] = 1;
+  let best = s, bd = Math.hypot(s.x - tx, s.y - ty);
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h]!;
+    const x = (i % w) + x0, y = Math.floor(i / w) + y0;
+    const d = Math.hypot(x - tx, y - ty);
+    if (d < bd) {
+      bd = d;
+      best = { x, y };
+      if (d === 0) break;
+    }
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < x0 || ny < y0 || nx >= x0 + w || ny >= y0 + w) continue;
+      const k = nx - x0 + (ny - y0) * w;
+      if (seen[k] || !map.walkable(nx, ny)) continue;
+      seen[k] = 1;
+      q.push(k);
+    }
+  }
+  return best;
+}
+
 /** (우선순위, 값) 최소 힙 */
 class MinHeap {
   private readonly pri: number[] = [];

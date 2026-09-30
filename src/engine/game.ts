@@ -4,7 +4,7 @@ import type { Command } from './command';
 import { footprintsOverlap, type CollisionMap } from './collision';
 import { dir64, SUBTILES_PER_YARD, type Pt } from './geom';
 import { ENGINE_FPS } from './index';
-import { findPath, nearestWalkable, type WalkMap } from './path';
+import { findPath, nearestWalkable, reachableNear, type WalkMap } from './path';
 import { Rng } from './rng';
 import type { AnimData } from '../formats/animdata';
 import { actionFrame } from '../formats/animdata';
@@ -1177,14 +1177,15 @@ export class Game {
    * 슈퍼유니크. 출처: D2GAME_SpawnSuperUnique_6FC6F690 — AutoPos 면 방 안 무작위 지점, 한 게임에 한 번 (Stacks 0),
    * UNIQUE|SUPERUNIQUE, 수식어 = SuperUniques Mod1~3 (Thief 제외), 미니언 MinGrp~MaxGrp, Countess 는 특수 AI, 퀘스트 수식어 22
    */
-  spawnSuperUnique(idx: number, x: number, y: number, path?: Pt[]): MonsterUnit | null {
+  /** exact = 자리를 준 쪽이 정했다 (봉인 보스 — 원작 A4Q2 는 보스 자리 오브젝트 131 에 만든다): AutoPos 방 무작위 배치를 쓰지 않는다 */
+  spawnSuperUnique(idx: number, x: number, y: number, path?: Pt[], exact = false): MonsterUnit | null {
     const data = this.data;
     const su = data?.uniques?.superUnique(idx);
     if (!data || !su || !data.monsters.types.has(su.cls)) return null;
     if (!su.stacks && this.bossFlags.has(su.idx)) return null;
     const t = data.monsters.get(su.cls);
     let pos: Pt | null = { x: x + 0.5, y: y + 0.5 };
-    if (su.autoPos) {
+    if (su.autoPos && !exact) {
       const room = this.roomAt(x, y);
       pos = (room && this.roomSpot(room, t)) || this.spawnSpot(x, y, 5, t);
     } else if (!this.map.walkable(x, y)) pos = this.spawnSpot(x, y, 5, t);
@@ -5783,7 +5784,11 @@ export class Game {
   private runChaos(actions: ChaosAction[], sx: number, sy: number): void {
     for (const a of actions) {
       if (a.kind === 'spawnBoss') {
-        const b = this.spawnSuperUnique(a.superUnique, sx + a.dx, sy + a.dy);
+        // 근사(원작 미확인): 원작 오프셋 자리가 봉인에서 걸어 갈 수 없는 곳이면 (우리 맵 배치 차이로 고립 지역에 떨어짐),
+        //   봉인(플레이어)과 이어진 칸 중 그 자리에 가장 가까운 칸. 이어져 있으면 원작 자리 그대로
+        //   출발은 봉인을 연 플레이어 자리 (걸어서 온 곳이라 길과 이어져 있다)
+        const at = reachableNear(this.map, this.player, { x: sx + a.dx, y: sy + a.dy }, 120) ?? { x: sx + a.dx, y: sy + a.dy };
+        const b = this.spawnSuperUnique(a.superUnique, at.x, at.y, undefined, true);
         if (b) {
           b.sealBoss = true;
           this.events.push({ type: 'sealBossSpawned', monsterId: b.id, superUnique: a.superUnique, x: b.x, y: b.y });

@@ -84,6 +84,11 @@ test('Act 2~4 몬스터 무리와 보스가 원작 그래픽·막 팔레트로 �
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await newHero(page, uniqueName('Mons'));
+  // 디버그: Act 4 몬스터 곁에서 죽지 않게 (죽으면 봉인을 조작할 수 없다 — Game.operateObject 는 죽은 동안 무시)
+  await page.evaluate(() => {
+    const c = window.__game!.game.character!;
+    c.maxLife = c.life = 1e6;
+  });
 
   // ---- Act 2: 바위 황무지 — Sand Raider · Dung Soldier · Huntress · Mummy · Carrion Bird ----
   await toAct(page, 1);

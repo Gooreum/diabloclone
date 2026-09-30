@@ -242,7 +242,7 @@ export class ItemGen {
    * 품질을 굴리지 않고 정해서 붙인다 (개발용 프리셋 캐릭터). 유니크·세트 행 또는 매직/레어 접사 행을 지정하고, 가변 옵션은 최대값.
    * 요구 레벨은 굴림과 같은 규칙 (유니크·세트 lvl req, 접사 levelreq 중 큰 값). 감정된 상태로 만든다.
    */
-  makeFixed(item: ItemInstance, base: ItemBase, spec: { uniqueIdx?: number; setIdx?: number; prefixes?: number[]; suffixes?: number[]; rareName?: [number, number] }): void {
+  makeFixed(item: ItemInstance, base: ItemBase, spec: { uniqueIdx?: number; setIdx?: number; superiorIdx?: number; prefixes?: number[]; suffixes?: number[]; rareName?: [number, number] }): void {
     const max = new MaxRng();
     item.stats = [];
     item.prefixes = [...(spec.prefixes ?? [])];
@@ -262,6 +262,12 @@ export class ItemGen {
       item.setIdx = s.idx;
       item.levelReq = Math.max(item.levelReq, s.lvlReq);
       this.assignMods(item, base, s.mods, max);
+    } else if (spec.superiorIdx !== undefined) {
+      const q = this.qualityItems[spec.superiorIdx];
+      if (!q) throw new Error(`qualityitems row not found: ${spec.superiorIdx}`);
+      item.quality = QUALITY.SUPERIOR;
+      item.superiorIdx = spec.superiorIdx;
+      this.assignMods(item, base, q.mods, max, true);
     } else {
       item.quality = spec.rareName ? QUALITY.RARE : QUALITY.MAGIC;
       if (spec.rareName) item.rareName = spec.rareName;
@@ -270,6 +276,17 @@ export class ItemGen {
     }
     item.identified = true;
     this.finishStats(item, base);
+  }
+
+  /** 이 베이스에 붙을 수 있는 상급 행 (굴림과 같은 규칙: 겹치는·투척·내구 없는 아이템은 앞 4행만). 출처: rollSuperior */
+  superiorRows(base: ItemBase): { idx: number; mods: Mod[] }[] {
+    const count = this.stackOrThrow(base) || base.noDurability ? Math.min(this.qualityItems.length, 4) : this.qualityItems.length;
+    return this.qualityItems.slice(0, count).map((q, idx) => ({ idx, mods: q.mods, ok: this.canBeSuperior(q, base) })).filter((r) => r.ok).map(({ idx, mods }) => ({ idx, mods }));
+  }
+
+  /** 레어 접사로 붙을 수 있는가 (굴림 후보와 같은 규칙: alvl 범위 · 아이템 타입 · 클래식 · 이미 붙은 접사와 group 겹침 없음) */
+  rareAffixAllowed(a: MagicAffix, base: ItemBase, item: ItemInstance, alvl: number): boolean {
+    return this.affixAllowed(a, base, item, alvl, true);
   }
 
   // ---------------------------------------------------------------- 매직

@@ -52,11 +52,11 @@ describe.skipIf(!hasGameData)('아이템 +스킬 → 유효 스킬 레벨', () =
     expect(skillBonusOf(b, data.skills!.byId.get(id('Terror'))!, 'sor')).toEqual({ total: 4, single: 0 });
   });
 
-  it('소서리스 프리셋: Blizzard 20 → 26, Nova 1 → 9, Fire Bolt 1 → 8 (Magefist), 마나 소모·피해도 26레벨 값', () => {
+  it('소서리스 프리셋 (스킬 모두 20): Blizzard 26, Nova 28, Fire Bolt 27 (Magefist 불 +1), 마나 소모·피해도 26레벨 값', () => {
     const g = makeGame(preset('sorceress'));
     expect(g.effectiveSkillLevel(id('Blizzard'))).toBe(26);
-    expect(g.effectiveSkillLevel(id('Nova'))).toBe(9);
-    expect(g.effectiveSkillLevel(id('Fire Bolt'))).toBe(8);
+    expect(g.effectiveSkillLevel(id('Nova'))).toBe(28);
+    expect(g.effectiveSkillLevel(id('Fire Bolt'))).toBe(27);
     expect(g.skillOwner().skillLevel(id('Blizzard'))).toBe(26);
     const calc = data.skillCalc!, bz = data.skills!.byId.get(id('Blizzard'))!;
     expect(calc.manaCost256(bz, 26)).toBeGreaterThan(calc.manaCost256(bz, 20));
@@ -74,8 +74,8 @@ describe.skipIf(!hasGameData)('아이템 +스킬 → 유효 스킬 레벨', () =
     expect(makeGame(preset('sorceress'), unid).effectiveSkillLevel(id('Blizzard'))).toBe(24);
   });
 
-  it('네크로맨서 프리셋: Terror 1 + 모든 4 + 네크로 2 + 개별 3 = 10', () => {
-    expect(makeGame(preset('necromancer')).effectiveSkillLevel(id('Terror'))).toBe(10);
+  it('네크로맨서 프리셋: Terror 20 + 모든 4 + 네크로 2 + 개별 3 = 29', () => {
+    expect(makeGame(preset('necromancer')).effectiveSkillLevel(id('Terror'))).toBe(29);
   });
 
   it('바바리안 프리셋: Whirlwind 20 + Tarnhelm 1 + SoJ 1 = 22', () => {
@@ -101,13 +101,13 @@ describe.skipIf(!hasGameData)('아이템 +스킬 → 유효 스킬 레벨', () =
     expect(g.effectiveSkillLevel(id('Terror'))).toBe(0);
   });
 
-  it('패시브도 유효 레벨: Cold Mastery 5 → 11 로 passive_cold_pierce 가 커진다', () => {
+  it('패시브도 유효 레벨: Cold Mastery 20 → 26 으로 passive_cold_pierce 가 커진다', () => {
     const s = preset('sorceress');
     const g = makeGame(s);
     const calc = data.skillCalc!, db = data.skills!;
     const hard = passiveStat(passiveStats(s.character, db, calc), 'passive_cold_pierce');
     const eff = passiveStat(passiveStats(s.character, db, calc, -1, g.skillOwner()), 'passive_cold_pierce');
-    expect(g.effectiveSkillLevel(id('Cold Mastery'))).toBe(11);
+    expect(g.effectiveSkillLevel(id('Cold Mastery'))).toBe(26);
     expect(eff).toBeGreaterThan(hard);
   });
 });

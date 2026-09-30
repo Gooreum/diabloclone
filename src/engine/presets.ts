@@ -38,13 +38,11 @@ export interface PresetSpec {
   build: string;
   /** 20까지 올리는 스킬 4개 (skills.txt skill 이름) */
   core: string[];
-  /** 남은 4포인트 */
+  /** 보너스 스킬 (요약 설명용 — 스킬은 모두 20) */
   bonus: string;
   /** 오른쪽 마우스 스킬 */
   right: string;
   gear: Partial<Record<BodyLoc, Gear>>;
-  /** 팔라딘: 민첩을 방패 최대 블록 75% 까지 */
-  block75?: boolean;
   /** 사양과 다르게 정한 것 (데이터·원작 규칙 때문에) */
   notes: string[];
 }
@@ -89,7 +87,6 @@ export const PRESETS: PresetSpec[] = [
       glov: { unique: 'Magefist' }, belt: { rare: { type: 'belt', opts: ['res', 'life'] } }, feet: { rare: { type: 'boot', opts: ['frw', 'res'] } },
       rrin: { unique: 'The Stone of Jordan' }, lrin: { unique: 'The Stone of Jordan' }, neck: { unique: 'The Eye of Etlich' },
     },
-    block75: true,
     notes: ['레어 셉터 유지 — 클래식 유니크 셉터(Rusthandle +1, Stormeye, Knell Striker)는 +2 레어보다 못하다', '셉터 시전속도는 최대 10% (of the Apprentice): of the Magus 는 셉터 제외(etype scep), 옛 행은 frequency 0 이라 나오지 않는다'],
   },
   {
@@ -113,6 +110,8 @@ const OPT_CODES: Record<Exclude<Opt, 'skills'>, string[]> = {
 const MAX_PREFIX = 3, MAX_SUFFIX = 3;
 /** 99레벨 경험치 = experience.txt 레벨 98 행 (그 레벨 → 99 에 필요한 누적 경험치) */
 export const PRESET_LEVEL = 99;
+/** 개발용 강화 (원작 포인트 제한 밖, 사용자 요청): 힘·민첩·활력·에너지 모두 이 값, 클래스 스킬 30개 모두 최대 레벨 */
+export const PRESET_STAT = 1000;
 /** 세 난이도 퀘스트 보상 */
 const QUEST_STAT = 5 * 3, QUEST_SKILL = (1 + 1 + 2) * 3, QUEST_LIFE = 20 * 3;
 /** 클래식 퀘스트 워드: Act 1~4 퀘스트와 막 완료 (quests/messages-acts.ts QW: 0 … A4COMPLETED 28) */
@@ -253,14 +252,6 @@ export function minStatsFor(ch: Character, cs: ClassStats, eq: Record<string, It
   return { str, dex };
 }
 
-/** 방패 블록 75% 에 필요한 최소 기본 민첩 (출처: combat.ts blockChance — 원작 공식) */
-export function dexForMaxBlock(ch: Character, cs: ClassStats, eq: Record<string, ItemInstance>, data: GameData, gen: ItemGen): number {
-  const d = computeDerived(ch, cs, eq, data.items, gen);
-  const bonus = d.dex - ch.dex;
-  for (let dex = cs.dex; dex < 2000; dex++) if (blockChance(d.block, cs.blockFactor, dex + bonus, PRESET_LEVEL) >= 75) return dex;
-  throw new Error('75% block unreachable');
-}
-
 /** 클래스 스킬 30개 (skills.txt charclass) */
 export function classSkills(data: GameData, cls: ClassName): SkillRecord[] {
   return [...data.skills!.byId.values()].filter((s) => s.charclass === CLASS_CODE[cls]);
@@ -284,8 +275,12 @@ function allocateSkills(ch: Character, data: GameData, spec: PresetSpec): void {
     if (!s) throw new Error(`[프리셋] ${spec.cls}: 스킬 없음 ${n}`);
     return s;
   };
-  for (const n of spec.core) while ((ch.skills[byName(n).id] ?? 0) < (byName(n).maxLvl || 20)) learn(byName(n));
-  while (ch.skillPoints > 0) learn(byName(spec.bonus));
+  // 개발용 강화: 30개 모두 최대 레벨 (부족한 포인트는 더해 주고 끝나면 0)
+  byName(spec.bonus);
+  for (const n of spec.core) byName(n);
+  ch.skillPoints += list.reduce((a, s) => a + (s.maxLvl || 20) - (ch.skills[s.id] ?? 0), 0);
+  for (const s of list) while ((ch.skills[s.id] ?? 0) < (s.maxLvl || 20)) learn(s);
+  ch.skillPoints = 0;
 }
 
 const QUALITY_NAME: Record<number, string> = { 1: 'Inferior', 2: 'Normal', 3: 'Superior', 4: 'Magic', 5: 'Set', 6: 'Rare', 7: 'Unique' };
@@ -321,15 +316,14 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
     for (const u of r.unmet) unmet.push(`${slot}: ${u}`);
   }
 
-  // 스탯: 힘·민첩 = 요구치 최소 (팔라딘 민첩 = 블록 75%), 나머지 활력, 에너지 0
+  // 스탯: 개발용 강화 — 네 스탯 모두 PRESET_STAT (spendStat 으로 생명·마나·스태미나도 원작 계수대로)
   const need = minStatsFor(ch, cs, equipment, data, gen);
-  const dexNeed = spec.block75 ? Math.max(need.dex, dexForMaxBlock(ch, cs, equipment, data, gen)) : need.dex;
-  const spend = (stat: 'str' | 'dex' | 'vit', target: number) => {
-    while (ch[stat] < target) if (!spendStat(ch, cs, stat)) throw new Error(`[프리셋] ${spec.cls}: 스탯 포인트 부족 (${stat} ${ch[stat]} → ${target})`);
+  if (need.str > PRESET_STAT || need.dex > PRESET_STAT) throw new Error(`[프리셋] ${spec.cls}: 장비 요구치 ${need.str}/${need.dex} > ${PRESET_STAT}`);
+  ch.statPoints = 4 * PRESET_STAT - (ch.str + ch.dex + ch.vit + ch.ene);
+  const spend = (stat: 'str' | 'dex' | 'vit' | 'ene') => {
+    while (ch[stat] < PRESET_STAT) if (!spendStat(ch, cs, stat)) throw new Error(`[프리셋] ${spec.cls}: 스탯 포인트 부족 (${stat} ${ch[stat]})`);
   };
-  spend('str', need.str);
-  spend('dex', dexNeed);
-  while (ch.statPoints > 0) spendStat(ch, cs, 'vit');
+  for (const st of ['str', 'dex', 'vit', 'ene'] as const) spend(st);
 
   allocateSkills(ch, data, spec);
   const right = classSkills(data, spec.cls).find((s) => s.name === spec.right);

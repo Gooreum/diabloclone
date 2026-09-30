@@ -11,12 +11,12 @@ import { computeDerived } from '../../src/engine/charstats';
 import { blockChance } from '../../src/engine/combat';
 import { CLASS_CODE } from '../../src/engine/skills/db';
 import { parseSave, type CharacterSave } from '../../src/engine/save';
-import { PRESETS, PRESET_LEVEL, buildPreset, classSkills } from '../../src/engine/presets';
+import { PRESETS, PRESET_LEVEL, PRESET_STAT, buildPreset, classSkills } from '../../src/engine/presets';
 import { QFLAG } from '../../src/engine/quests/record';
 import { QUALITY } from '../../src/engine/treasure';
 import { gameChain, hasGameData } from '../support/gamedata';
 
-// 개발용 99레벨 프리셋 검증: 포인트 합계, 스킬 요구 레벨·선행, 장비 요구치, 클래식 전용, 블록 75%, 소지품, 생성기 재현.
+// 개발용 99레벨 프리셋 검증 (강화판: 네 스탯 1000, 스킬 30개 모두 20 — 원작 포인트 제한 밖, 사용자 요청): 스킬 요구 레벨·선행, 장비 요구치, 클래식 전용, 블록 75%, 소지품, 생성기 재현.
 // 실패 메시지는 "[프리셋] <id>: <항목>" 으로 어느 직업·항목인지 보인다.
 describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래식)', () => {
   let data: GameData, gen: ItemGen, tables: GameTables;
@@ -32,30 +32,28 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
   for (const p of PRESETS) {
     const tag = `[프리셋] ${p.id}`;
 
-    it(`${p.id}: 레벨 99 · 경험치 = experience.txt 레벨 98 · 투자 스탯 505 · 에너지 기본값 · 생명 = 원작 공식 + 퀘스트 60`, () => {
+    it(`${p.id}: 레벨 99 · 경험치 = experience.txt 레벨 98 · 네 스탯 1000 · 생명 = 원작 공식 + 퀘스트 60`, () => {
       const s = saves.get(p.id)!;
       const ch = s.character;
       const cs = classStats(tables.table('charstats'), p.cls);
       expect(ch.cls, `${tag}: 직업`).toBe(p.cls);
       expect(ch.level, `${tag}: 레벨`).toBe(PRESET_LEVEL);
       expect(ch.experience, `${tag}: 경험치`).toBe(expTable(tables.table('experience'), p.cls).threshold(PRESET_LEVEL - 1));
-      expect(ch.str + ch.dex + ch.vit + ch.ene - (cs.str + cs.dex + cs.vit + cs.ene), `${tag}: 투자 스탯 합`).toBe(505);
-      expect(ch.ene, `${tag}: 에너지 추가 없음`).toBe(cs.ene);
+      expect([ch.str, ch.dex, ch.vit, ch.ene], `${tag}: 네 스탯`).toEqual([PRESET_STAT, PRESET_STAT, PRESET_STAT, PRESET_STAT]);
       expect(ch.statPoints, `${tag}: 남은 스탯 포인트`).toBe(0);
       const life = cs.vit + cs.hpadd + (98 * cs.lifePerLevel) / 4 + ((ch.vit - cs.vit) * cs.lifePerVit) / 4 + 60;
       expect(ch.maxLife, `${tag}: 기본 최대 생명`).toBeCloseTo(life, 6);
     });
 
-    it(`${p.id}: 스킬 110 — 30개 모두 1 이상, 핵심 4개 20, 보너스 5, 요구 레벨·선행 스킬 충족`, () => {
+    it(`${p.id}: 스킬 30개 모두 20 (합 600), 요구 레벨·선행 스킬 충족`, () => {
       const ch = saves.get(p.id)!.character;
       const list = classSkills(data, p.cls);
       expect(list.length, `${tag}: 클래스 스킬 수`).toBe(30);
-      expect(Object.values(ch.skills).reduce((a, b) => a + b, 0), `${tag}: 스킬 합`).toBe(110);
+      expect(Object.values(ch.skills).reduce((a, b) => a + b, 0), `${tag}: 스킬 합`).toBe(600);
       expect(ch.skillPoints, `${tag}: 남은 스킬 포인트`).toBe(0);
       for (const s of list) {
         const pts = ch.skills[s.id] ?? 0;
-        const want = p.core.includes(s.name) ? 20 : s.name === p.bonus ? 5 : 1;
-        expect(pts, `${tag}: ${s.name} 포인트`).toBe(want);
+        expect(pts, `${tag}: ${s.name} 포인트`).toBe(s.maxLvl || 20);
         expect(pts, `${tag}: ${s.name} 최대 ${s.maxLvl}`).toBeLessThanOrEqual(s.maxLvl || 20);
         expect(s.reqLevel, `${tag}: ${s.name} 요구 레벨`).toBeLessThanOrEqual(ch.level);
         for (const r of s.reqSkills) expect(ch.skills[data.skills!.byNameOf(r)!.id] ?? 0, `${tag}: ${s.name} 선행 ${r}`).toBeGreaterThan(0);
@@ -119,12 +117,11 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
     });
   }
 
-  it('팔라딘: 막기 75% 가 되는 최소 민첩 (1 줄이면 75% 미만)', () => {
+  it('팔라딘: 민첩 1000 으로 막기 75% (원작 상한)', () => {
     const s = saves.get('paladin')!;
     const cs = classStats(tables.table('charstats'), 'Paladin');
     const d = computeDerived(s.character, cs, s.equipment, data.items, gen);
     expect(blockChance(d.block, cs.blockFactor, d.dex, 99)).toBe(75);
-    expect(blockChance(d.block, cs.blockFactor, d.dex - 1, 99)).toBeLessThan(75);
   });
 
   it('지정 유니크는 가변 옵션 최대값: The Ward 저항 50, Eye of Etlich 생명 흡수 7, Steeldriver 대미지 250%', () => {

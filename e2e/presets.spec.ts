@@ -44,7 +44,7 @@ test('?preset 없이 들어가면 원래 메뉴, 캐릭터 목록에 프리셋 5
   expect(await page.evaluate(() => window.__game?.ready ?? false)).toBe(false);
   await page.click('#btn-single');
   for (const n of PRESET_NAMES) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
-  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.installed'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
+  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.v2'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
 });
 
 test('지운 프리셋은 다시 열어도 생기지 않고, 새 캐릭터는 프리셋보다 위', async ({ page }) => {
@@ -102,3 +102,44 @@ for (const [id, cls, slots] of [['amazon', 'Amazon', 10], ['necromancer', 'Necro
     expect(errors).toEqual([]);
   });
 }
+
+test('옛 버전(v1) 프리셋이 들어 있던 브라우저: 새 버전을 열면 스킬 20·스탯 1000 으로 교체', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  // 옛 상태 만들기: v2 기록을 지우고 v1 기록만, Preset-Necro 를 옛 값(스탯 25·스킬 1)으로
+  await page.evaluate(async () => {
+    localStorage.removeItem('d2clone.presets.v2');
+    localStorage.setItem('d2clone.presets.installed', JSON.stringify(['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb']));
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const req = indexedDB.open('diabloclone', 1);
+      req.onsuccess = () => resolve(req.result);
+    });
+    const text = await new Promise<string>((resolve) => {
+      const g = db.transaction('heroes', 'readonly').objectStore('heroes').get('Preset-Necro');
+      g.onsuccess = () => resolve(g.result as string);
+    });
+    const s = JSON.parse(text) as { character: { str: number; skills: Record<string, number> } };
+    s.character.str = 25;
+    for (const k of Object.keys(s.character.skills)) s.character.skills[k] = 1;
+    await new Promise<void>((resolve) => {
+      const t = db.transaction('heroes', 'readwrite');
+      t.objectStore('heroes').put(JSON.stringify(s), 'Preset-Necro');
+      t.oncomplete = () => resolve();
+    });
+  });
+  await page.goto('/?preset=none');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  const ch = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const req = indexedDB.open('diabloclone', 1);
+      req.onsuccess = () => resolve(req.result);
+    });
+    const text = await new Promise<string>((resolve) => {
+      const g = db.transaction('heroes', 'readonly').objectStore('heroes').get('Preset-Necro');
+      g.onsuccess = () => resolve(g.result as string);
+    });
+    return (JSON.parse(text) as { character: { str: number; ene: number; skills: Record<string, number> } }).character;
+  });
+  expect([ch.str, ch.ene]).toEqual([1000, 1000]);
+  expect(Object.values(ch.skills).every((v) => v === 20)).toBe(true);
+});

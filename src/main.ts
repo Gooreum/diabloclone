@@ -313,9 +313,10 @@ async function boot(): Promise<void> {
 
 // 프리셋 세이브는 배포판에도 들어간다: 아이템 코드·수치뿐 (원작 그림·소리·MPQ 없음)
 const PRESET_FILES: Record<string, () => Promise<unknown>> = import.meta.glob('./presets/*.json', { import: 'default' });
-const PRESETS_KEY = 'd2clone.presets.installed';
+// 프리셋 내용이 바뀌면 키 버전을 올린다 (v2: 스킬 모두 20·스탯 1000) — 새 버전을 처음 열면 같은 이름 캐릭터를 한 번 덮어쓴다
+const PRESETS_KEY = 'd2clone.presets.v2';
 
-/** 아직 넣은 적 없는 프리셋을 캐릭터 목록 맨 아래에 (지우거나 플레이한 프리셋은 다시 덮지 않는다) */
+/** 이 버전에서 아직 넣은 적 없는 프리셋을 캐릭터 목록 맨 아래에 (그 뒤로 지우거나 플레이한 프리셋은 다시 덮지 않는다) */
 async function addMissingPresets(): Promise<void> {
   let done: string[] | null;
   try {
@@ -326,7 +327,7 @@ async function addMissingPresets(): Promise<void> {
   const have = new Set((await HeroStore.list()).map((h) => h.name));
   for (const load of Object.values(PRESET_FILES)) {
     const s = parseSave(JSON.stringify(await load()));
-    if (have.has(s.name) || done?.includes(s.name)) continue;
+    if (done ? done.includes(s.name) : have.has(s.name)) continue;
     await HeroStore.save({ ...s, savedAt: 1 });
     done?.push(s.name);
   }

@@ -47,9 +47,15 @@ test('Act 3: 부두·정글 3 개·쿠라스트·트라빈칼·사원·억류지
       // 월드(WebGL)와 UI 를 합성한 화면
       const img = await window.__game!.capture!();
       const d = img.data;
-      let n = 0;
-      for (let i = 0; i < d.length; i += 4) if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) n++;
-      return n / (img.width * img.height);
+      // 실내 레벨은 빛 반경 밖이 어둡다 (원작 조명) — 플레이어 둘레 가운데 영역만 잰다
+      let n = 0, t = 0;
+      for (let y = 150; y < 450; y++)
+        for (let x = 250; x < 550; x++) {
+          const i = (y * img.width + x) * 4;
+          t++;
+          if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) n++;
+        }
+      return n / t;
     });
     await page.locator('#game').screenshot({ path: `test-results/act3-${key}.png` });
     expect(await page.evaluate(() => window.__game!.game.levelId)).toBe(key);

@@ -16,6 +16,10 @@ export interface DrawOpts {
   blend?: number;
   /** 가리킨 유닛 밝게 */
   bright?: boolean;
+  /** 빛을 재는 화면 점 (유닛·오브젝트·벽 = 발밑). 없으면 픽셀마다 (바닥) */
+  lightAt?: { x: number; y: number };
+  /** 그림자로 그린다: 발밑 화면 점 기준으로 눕혀 검정 반투명 (2D 대체 경로는 그리지 않는다) */
+  shadow?: { x: number; y: number };
 }
 
 export interface SpriteSink {
@@ -59,6 +63,8 @@ export class Canvas2dSink implements SpriteSink {
   }
 
   draw(img: IndexedImage, x: number, y: number, o?: DrawOpts): void {
+    // 근사: 2D 대체 경로는 조명·그림자 없이 원래 밝기로 그린다
+    if (o?.shadow) return;
     const sh = o?.shift;
     const c = this.cache.get(sh ? `${img.id}:${sh.key}` : img.id, () =>
       this.make(sh ? img.pixels.map((p) => (p ? sh.map[p] ?? p : 0)) : img.pixels, img.w, img.h, this.pal),

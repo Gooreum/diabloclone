@@ -1686,6 +1686,11 @@ export class Game {
   /**
    * 파생 스탯 (기본 + 장착). 장착·레벨·스탯 포인트가 바뀌면 다시 계산.
    */
+  /** 아이템 빛 반경 보너스 (ItemStatCost item_lightradius — 장착 아이템 합) */
+  lightRadiusBonus(): number {
+    return this.derived()?.stat('item_lightradius') ?? 0;
+  }
+
   derived(): Derived | null {
     const c = this.character, cs = this.classStats, data = this.data;
     if (!c || !cs || !data) return null;

@@ -244,11 +244,24 @@ export class UnitGfx {
    * 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환.
    * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 1.6배 밝기로 근사)
    */
-  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
+  /**
+   * 합성 그리기. 밝기는 발밑 (x, y) 한 점에서 잰다 (원작: 유닛 전체가 한 밝기).
+   * shadow = 먼저 불투명 레이어를 발밑 기준으로 눕힌 그림자로 그린다 (monstats2 Shadow).
+   */
+  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false, shadow = false): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
     const order = cof.priority[d]?.[f] ?? cof.layers.map((l) => l.type);
+    const feet = { x, y };
+    if (shadow) for (const type of order) {
+      const lg = comp.layers.get(type);
+      const layer = cof.layers.find((l) => l.type === type);
+      if (!lg || layer?.transparent) continue;
+      const dir = layerDir(lg, d);
+      const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
+      if (dir && fr) sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shadow: feet });
+    }
     let l0 = Infinity, t0 = Infinity, r0 = -Infinity, b0 = -Infinity;
     for (const type of order) {
       const lg = comp.layers.get(type);
@@ -259,7 +272,7 @@ export class UnitGfx {
       if (!dir || !fr) continue;
       // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
       const blend = layer?.transparent ? layer.drawEffect : -1;
-      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright });
+      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright, lightAt: feet });
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);
       r0 = Math.max(r0, x + dir.box.left + dir.box.width);
@@ -297,7 +310,7 @@ export class ItemGfx {
     }
     if (!hit || hit === 'loading') return null;
     // 출처: Phrozen Keep DC6 문서 — offsetY 는 프레임 아래쪽 기준
-    sink.draw(hit.image, x + hit.ox, y + hit.oy - hit.h);
+    sink.draw(hit.image, x + hit.ox, y + hit.oy - hit.h, { lightAt: { x, y } });
     return { w: hit.w, h: hit.h, x: x + hit.ox, y: y + hit.oy - hit.h };
   }
 }
@@ -335,6 +348,6 @@ export class MissileGfx {
     const fr = dir.frames[f];
     if (!fr) return;
     // missiles.txt / overlay.txt Trans ≠ 0: 빛 더하기 (검은 바탕이 비친다). 근사(원작 미확인): 원작 DrawMode 종류별 혼합 대신 가산 하나
-    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { blend: blend ? 3 : -1 });
+    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { blend: blend ? 3 : -1, lightAt: { x, y } });
   }
 }

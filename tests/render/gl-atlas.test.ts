@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ShelfAtlas, ShiftRows, type Slot } from '../../src/render/gl/atlas';
-import { FLOATS_PER_VERTEX, QuadBatch } from '../../src/render/gl/batch';
+import { FLOATS_PER_VERTEX, NO_ANCHOR, QuadBatch, SHADOW_BLEND } from '../../src/render/gl/batch';
 
 const overlap = (a: Slot, b: Slot) => a.page === b.page && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
@@ -89,9 +89,9 @@ describe('QuadBatch', () => {
     b.push(2, -1, 100, 50, 20, 10, 300, 400, 7, 1.6);
     b.flush();
     const v = Array.from(data!).map((x) => Math.round(x * 10) / 10);
-    expect(v.slice(0, FLOATS_PER_VERTEX)).toEqual([100, 50, 300, 400, 7, 1.6]);
+    expect(v.slice(0, FLOATS_PER_VERTEX)).toEqual([100, 50, 300, 400, 7, 1.6, NO_ANCHOR, NO_ANCHOR]);
     // 오른쪽 아래 꼭짓점 (5번째 정점)
-    expect(v.slice(4 * FLOATS_PER_VERTEX, 5 * FLOATS_PER_VERTEX)).toEqual([120, 60, 320, 410, 7, 1.6]);
+    expect(v.slice(4 * FLOATS_PER_VERTEX, 5 * FLOATS_PER_VERTEX)).toEqual([120, 60, 320, 410, 7, 1.6, NO_ANCHOR, NO_ANCHOR]);
   });
 
   it('많은 사각형도 버퍼를 늘려 모두 담는다', () => {
@@ -103,6 +103,19 @@ describe('QuadBatch', () => {
   });
 
   it('혼합 번호 정리: 5·6 = 더하기(3), 범위 밖 = 불투명', () => {
-    expect([undefined, -1, 0, 2, 3, 4, 5, 6, 7].map((x) => QuadBatch.normBlend(x))).toEqual([-1, -1, 0, 2, 3, 4, 3, 3, -1]);
+    expect([undefined, -1, 0, 2, 3, 4, 5, 6, 8].map((x) => QuadBatch.normBlend(x))).toEqual([-1, -1, 0, 2, 3, 4, 3, 3, -1]);
+    expect(QuadBatch.normBlend(SHADOW_BLEND)).toBe(SHADOW_BLEND);
+  });
+  it('빛 기준점이 모든 정점에 들어가고, 그림자는 발밑 기준으로 납작하게(½) 눕고 위쪽이 왼쪽으로 기운다', () => {
+    let data = new Float32Array();
+    const b = new QuadBatch((_p, _b, d) => (data = d.slice()));
+    // 발밑 (110, 100), 그림 40 높이 (60~100)
+    b.push(0, SHADOW_BLEND, 100, 60, 20, 40, 0, 0, 0, 1, { x: 110, y: 100 }, { x: 110, y: 100 });
+    b.flush();
+    const v = (i: number) => Array.from(data.slice(i * FLOATS_PER_VERTEX, (i + 1) * FLOATS_PER_VERTEX));
+    // 좌상 (100,60): 위로 40 → y 80, x 100 − 20 = 80
+    expect(v(0)).toEqual([80, 80, 0, 0, 0, 1, 110, 100]);
+    // 좌하 (100,100): 발밑 줄은 그대로
+    expect(v(2)).toEqual([100, 100, 0, 40, 0, 1, 110, 100]);
   });
 });

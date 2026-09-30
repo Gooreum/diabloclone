@@ -29,3 +29,13 @@ export function parsePl2Text(buf: Uint8Array): Pl2Text {
   }
   return { colors, shifts };
 }
+
+// 밝기 단계 표 (LightLevelVariations): 기본 팔레트(256 × 4 바이트) 바로 뒤 32줄 × 256 (팔레트 인덱스 바꾸기 표).
+// 0번 줄 = 가장 어둡게, 31번 줄 = 원래 색(항등). 원작 DirectDraw 조명이 이 표로 화면을 어둡게 칠한다.
+// 출처: OpenDiablo2 d2fileformats/d2pl2/pl2.go — BasePalette · LightLevelVariations[32]; 원작 ACT1 Pal.PL2 직접 확인 (31번 줄 = 항등)
+export const LIGHT_LEVELS = 32;
+
+export function parsePl2Light(buf: Uint8Array): Uint8Array {
+  if (buf.length < 1024 + LIGHT_LEVELS * 256) throw new Error(`pl2: too short (${buf.length})`);
+  return buf.slice(1024, 1024 + LIGHT_LEVELS * 256);
+}

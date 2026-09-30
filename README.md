@@ -63,6 +63,7 @@
 - **원작식 조명:** 실내 던전(levels.txt IsInside)은 빛 반경 밖이 어둡습니다.
   - 광원: 플레이어, 횃불(objects Lit), 마법(missiles Light), 빛나는 몬스터(monstats2 Light)
   - 원작 팔레트의 밝기 단계 표(Pal.PL2, 32단계)로 칠합니다. 유닛 발밑에는 그림자가 생깁니다.
+- **낮·밤과 비:** 야외는 원작 규칙(D2MOO D2Environment)대로 시간이 흘러 밤에 어두워지고, 밤 배경음으로 바뀝니다. Act 1·3 야외에는 비가 옵니다.
 - **Web Worker:** MPQ 압축 해제와 DCC 해석을 게임 스레드 밖에서 합니다. DCC는 **필요한 방향만** 해석합니다.
 - **레벨 미리 불러오기:** 던전에 들어갈 때 로딩 화면 동안 가까운 몬스터 그림을 준비합니다.
 - **측정 결과** (Apple M1, 몬스터 수십 마리 + 광역 스킬 20초, `e2e/perf.spec.ts`):
@@ -170,9 +171,9 @@ scripts/        데이터 검사·분석 도구
 ## 테스트
 
 ```bash
-npm test                                  # vitest 단위 테스트 (723개)
+npm test                                  # vitest 단위 테스트 (733개)
 npx tsc --noEmit                          # 타입 검사
-npx playwright test --workers=1           # 브라우저 e2e (57개, game-data 필요)
+npx playwright test --workers=1           # 브라우저 e2e (59개, game-data 필요)
 RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 녹화
 ```
 - 원작 파일이 필요한 테스트는 `game-data/`가 없으면 자동으로 건너뜁니다.
@@ -188,6 +189,7 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - [x] Act 2~4 (루트 골레인 ~ 판데모니움 요새, 두리엘·메피스토·디아블로)
 - [x] 악몽·지옥 난이도
 - [x] 조명·그림자 (실내 어둠, 플레이어·횃불·마법·몬스터 빛 반경, 원작 PL2 밝기 단계, 유닛 그림자)
+- [x] 야외 낮·밤 주기(원작 D2Environment 규칙, 밤 배경음, 오염된 태양 일식)와 비
 - [ ] 확장팩(Lord of Destruction)
 
 ---

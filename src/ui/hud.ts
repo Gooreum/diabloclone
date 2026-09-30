@@ -6,8 +6,9 @@
 //             조각2(128×55): 미니 패널 버튼 칸 x 18~33 y 16~39, 벨트 칸 경계 x 48·79·111 (조각3 x 13·44), 칸 안쪽 y 16~46
 // 출처(문자열): string.tbl panelhealth "Life: %d / %d", panelmana "Mana: %d / %d", panelstamina "Stamina: %d / %d", panelexp "Experience: %u / %u",
 //             minipanelchar/minipanelinv/minipaneltree/minipanelparty/minipanelautomap/minipanelmessage/minipanelquest/minipanelmenubtn, RunOn/RunOff
-// 근사(원작 미확인): 800 폭 배치 — 원작 클래식 파일에는 800ctrlpnl7 이 없어 640 조각(0·1·2·3·4)에 조각5(128, 오른쪽 경험치 끝)를 이어 붙이고
-//   남는 32픽셀은 조각5 가운데 테두리를 한 번 더 그려 채움. 조각5 왼쪽 빈 칸은 어둡게 채움.
+// 근사(원작 미확인): 800 폭 배치 — 원작 클래식 파일에는 800ctrlpnl7 이 없다 (d2data 는 ctrlpnl7.dc6 6조각뿐, 640 = 조각 0·1·2·3·4 + 스킬 버튼 둘).
+//   벨트 오른쪽에 남는 160픽셀은 원작 조각으로 만든 돌 판: 조각3 의 칸 없는 돌 줄(x 46~51, 금테 x 44·45 제외)을 이어 깔고 가운데에 조각2 의 조각 장식(x 5~47)을 둔다.
+//   (조각5 는 왼쪽이 투명한 창이라 쓰면 검은 칸이 생겼다)
 //   미니 패널 위치(패널 위 가운데), 레벨 업 버튼 위치, 경험치·스태미나 막대 색, 스킬 고르기 목록 배치(행당 10개, 버튼 위로 쌓음)
 // 벨트 펼치기(원작: 벨트를 누르거나 ~ 키 — 벨트 크기(belts.txt numboxes ÷ 4)만큼 줄이 패널 위로 펼쳐진다, 칸 번호 = 줄 × 4 + 열, 아래 줄이 0):
 //   근사(원작 미확인): 펼친 줄 간격 32, 어두운 바탕 + 금색 테두리 (원작 테두리 그림 미확인)
@@ -38,7 +39,7 @@ export function skillIconPath(charclass: string): string {
 
 // 800×600 배치 (위 머리말 참고)
 export const HUD = {
-  f0: { x: 0, y: 496 }, f1: { x: 165, y: 545 }, f2: { x: 293, y: 545 }, f3: { x: 421, y: 545 }, fill: { x: 475, y: 545, w: 32 }, f5: { x: 507, y: 545 }, f4: { x: 683, y: 496 },
+  f0: { x: 0, y: 496 }, f1: { x: 165, y: 545 }, f2: { x: 293, y: 545 }, f3: { x: 421, y: 545 }, plate: { x: 475, y: 545, w: 160 }, f4: { x: 683, y: 496 },
   lskill: { x: 117, y: 552 }, rskill: { x: 635, y: 552 },
   lifeGlobe: { x: 37, y: 499 }, manaGlobe: { x: 703, y: 499 },
   exp: { x: 176, y: 560, w: 117, h: 3 },
@@ -225,16 +226,8 @@ export class ControlPanel {
     a.draw(ctx, CTRL, 1, HUD.f1.x, HUD.f1.y);
     a.draw(ctx, CTRL, 2, HUD.f2.x, HUD.f2.y);
     a.draw(ctx, CTRL, 3, HUD.f3.x, HUD.f3.y);
-    const f5 = a.frame(CTRL, 5);
-    if (f5) {
-      // 조각5 왼쪽 빈 칸(투명) 안쪽을 어둡게, 모자란 32픽셀은 조각5 x 20~52 (빈 칸 윗·아랫 테두리) 를 한 번 더
-      ctx.fillStyle = '#050505';
-      ctx.fillRect(HUD.fill.x, HUD.f5.y + 8, HUD.fill.w + 80, 40);
-      ctx.drawImage(f5.img as CanvasImageSource, 20, 0, HUD.fill.w, f5.h, HUD.fill.x, HUD.fill.y, HUD.fill.w, f5.h);
-      ctx.drawImage(f5.img as CanvasImageSource, HUD.f5.x, HUD.f5.y);
-      // 조각5 빈 칸의 왼쪽 세로 테두리를 지워 채운 칸과 한 칸으로 잇는다
-      ctx.drawImage(f5.img as CanvasImageSource, 20, 0, 4, f5.h, HUD.f5.x, HUD.f5.y, 4, f5.h);
-    }
+    const f2 = a.frame(CTRL, 2), f3 = a.frame(CTRL, 3);
+    if (f2 && f3) drawPlate(ctx, f2.img as CanvasImageSource, f3.img as CanvasImageSource);
     a.draw(ctx, CTRL, 4, HUD.f4.x, HUD.f4.y);
     // 생명·마나 구체 (독에 걸리면 초록 구체 — hlthmana 프레임 2)
     const poisoned = p.states.includes('poison');
@@ -347,4 +340,22 @@ export class ControlPanel {
     ctx.fillRect(x, y, w, h);
     drawText(ctx, text, x + w / 2, y + 1, { align: 'center' });
   }
+}
+
+/** 벨트 오른쪽 돌 판 (위 머리말 근사 참고): 조각3 돌 줄을 좌우 번갈아 뒤집어 이어 깔아 반복 무늬를 줄이고, 가운데에 조각2 장식 */
+function drawPlate(ctx: CanvasRenderingContext2D, f2: CanvasImageSource, f3: CanvasImageSource): void {
+  const { x, y, w } = HUD.plate;
+  const SX = 46, SW = 6, H = 55;
+  for (let i = 0, dx = 0; dx < w; i++, dx += SW) {
+    const cw = Math.min(SW, w - dx);
+    if (i % 2) {
+      ctx.save();
+      ctx.translate(x + dx + cw, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(f3, SX, 0, cw, H, 0, 0, cw, H);
+      ctx.restore();
+    } else ctx.drawImage(f3, SX, 0, cw, H, x + dx, y, cw, H);
+  }
+  const OX = 5, OW = 43;
+  ctx.drawImage(f2, OX, 0, OW, H, x + Math.round((w - OW) / 2), y, OW, H);
 }

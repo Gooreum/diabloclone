@@ -957,11 +957,38 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     // 한 프레임에서 예외가 나도 루프가 멈추지 않게 한다 (예외 후 다음 프레임 예약이 빠져 화면이 검게 멈추던 문제).
     // 같은 오류는 한 번만 콘솔에 남긴다.
     const reported = new Set<string>();
+    // dev 전용 진단: 2초마다 게임 상태를 개발 서버 로그로 보낸다 (검은 화면 원인 추적용 — 프레임 수·최장 프레임·레벨·로딩 화면·오디오 목소리 수)
+    const ticksOf = () => (game as unknown as { tickCount: number }).tickCount;
+    let diagFrames = 0, diagMaxMs = 0, diagTick = ticksOf(), diagErrors = 0;
+    const diagTimer = import.meta.env.DEV
+      ? window.setInterval(() => {
+          if (!running) {
+            window.clearInterval(diagTimer);
+            return;
+          }
+          const s = game.snapshot();
+          const px = ctx.getImageData(400, 250, 1, 1).data;
+          const audio = (window as unknown as { __audio?: { voices?: unknown[]; unlocked?: boolean } }).__audio;
+          const state = {
+            frames: diagFrames, maxFrameMs: Math.round(diagMaxMs), ticks: ticksOf() - diagTick, errors: diagErrors,
+            level: game.levelId, loading: loading.active(performance.now()), vis: document.visibilityState, menu: panels.menuOpen,
+            player: { x: Math.round(s.player.x), y: Math.round(s.player.y), mode: s.player.mode, life: Math.round(s.player.life), dead: game.isDead },
+            monsters: s.monsters.length, missiles: s.missiles.length, voices: audio?.voices?.length ?? -1, unlocked: audio?.unlocked,
+            centerPixel: [px[0], px[1], px[2]], cam: [Math.round(cam.x), Math.round(cam.y)],
+          };
+          diagFrames = 0;
+          diagMaxMs = 0;
+          diagTick = ticksOf();
+          void fetch('/__clientlog', { method: 'POST', body: `[diag] ${JSON.stringify(state)}` }).catch(() => undefined);
+        }, 2000)
+      : 0;
     const frame = (now: number) => {
       if (!running) return;
+      const t0 = performance.now();
       try {
         frameBody(now);
       } catch (e) {
+        diagErrors++;
         const key = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
         if (!reported.has(key)) {
           reported.add(key);
@@ -969,6 +996,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
           reportClientError('frame', e);
         }
       }
+      diagFrames++;
+      diagMaxMs = Math.max(diagMaxMs, performance.now() - t0);
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);

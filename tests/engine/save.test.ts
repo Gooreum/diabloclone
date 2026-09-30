@@ -20,7 +20,7 @@ describe('저장/불러오기', () => {
     const back = parseSave(serializeSave(s));
     expect(back).toEqual(s);
     expect(back.inventory[0]).toMatchObject({ x: 3, y: 1 });
-    expect(summarize(back)).toEqual({ name: 'Conan', cls: 'Barbarian', level: 3, savedAt: 1000 });
+    expect(summarize(back)).toEqual({ name: 'Conan', cls: 'Barbarian', level: 3, savedAt: 1000, difficultyUnlocked: 0, title: '' });
   });
   it('저장 시점의 스냅샷이다 (원본 객체를 이후에 바꿔도 저장본은 그대로)', () => {
     const c = structuredClone(ch);

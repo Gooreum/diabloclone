@@ -9,6 +9,7 @@ export async function newHero(page: Page, name: string, cls = 'barbarian'): Prom
   await page.click(`#btn-${cls}`);
   await page.fill('#hero-name', name);
   await page.click('#btn-ok');
+  await chooseDifficulty(page);
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   await expect(page.locator('#menu')).toBeHidden();
   // 첫 게임 틱이 돌아 마을 NPC·몬스터가 놓일 때까지
@@ -43,9 +44,18 @@ export async function walkToBloodMoor(page: Page): Promise<void> {
 
 export const uniqueName = (prefix: string) => `${prefix}${Math.random().toString(36).replace(/[^a-z]/g, '').slice(0, 6)}`;
 
-/** 캐릭터 선택 화면에서 영웅 고르기 → OK (원작: 칸 클릭 = 선택, OK/두 번 클릭 = 시작) */
-export async function loadHero(page: Page, name: string): Promise<void> {
+/**
+ * 난이도 창이 떠 있으면 고른다 (원작 클래식: Nightmare 가 열린 캐릭터만 창이 뜬다 — 아니면 바로 Normal). 기본 Normal.
+ */
+export async function chooseDifficulty(page: Page, diff: 'normal' | 'nightmare' | 'hell' = 'normal'): Promise<void> {
+  const open = await page.evaluate(() => window.__menu?.difficultyOpen ?? false);
+  if (open) await page.click(`#btn-diff-${diff}`);
+}
+
+/** 캐릭터 선택 화면에서 영웅 고르기 → OK (원작: 칸 클릭 = 선택, OK/두 번 클릭 = 시작) → 난이도 창이면 diff (기본 Normal) */
+export async function loadHero(page: Page, name: string, diff: 'normal' | 'nightmare' | 'hell' = 'normal'): Promise<void> {
   await page.click('#btn-single');
   await page.click(`#hero-${name}`);
   await page.click('#btn-select-ok');
+  await chooseDifficulty(page, diff);
 }

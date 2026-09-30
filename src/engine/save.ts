@@ -5,11 +5,13 @@
 // 다막·난이도 (Phase 1): act·difficulty·difficultyUnlocked, 난이도별 waypointsByDiff·questFlagsByDiff.
 //   원작 .d2s 도 난이도마다 웨이포인트(D2WaypointDataStrc ×3)·퀘스트 기록(×3)을 따로 둔다.
 //   예전 저장(필드 없음)은 Normal·Act 1 로 읽는다. waypoints/questFlags 는 Normal 값의 사본으로 남긴다 (예전 코드 호환).
+// 난이도 (Phase 8): 난이도별 마지막 막 actByDiff (원작 .d2s 헤더 nTown[3] — 게임을 시작하면 그 난이도의 이 막 마을에서),
+//   칭호용 진행 값 progression (원작 .d2s 진행 바이트). 출처: D2MOO PlrSave2.cpp (nTown[pGame->nDifficulty] & 0x7F = 시작 막)
 import type { Character, ClassName } from './player';
 import type { ItemInstance } from './treasure';
 import type { Placed } from './inventory';
 import type { MercSave } from './hireling';
-import { toDifficulty, type Difficulty } from './difficulty';
+import { heroTitle, toDifficulty, type Difficulty } from './difficulty';
 
 /** 클래식 난이도 수 (Normal / Nightmare / Hell) */
 export const DIFFICULTY_COUNT = 3;
@@ -53,10 +55,26 @@ export interface CharacterSave {
   waypointsByDiff: number[][];
   /** 난이도별 퀘스트 기록 워드 (없는 난이도는 null) */
   questFlagsByDiff: (number[] | null)[];
+  /**
+   * 난이도별 마지막 막 [Normal, Nightmare, Hell] (원작 .d2s nTown[3]). 게임을 시작하면 고른 난이도의 이 막 마을에서.
+   * 예전 저장은 [마지막 난이도] 칸만 act, 나머지 0
+   */
+  actByDiff: number[];
+  /**
+   * 원작 .d2s 진행 값 (클래식: 막을 끝낼 때마다 +1, 4 = Normal 완료 … 12 = Hell 완료) — 칭호. 없으면 difficultyUnlocked × 4 로 본다.
+   * Phase 7 (퀘스트) 이 막 완료 때 올린다. 예전 저장은 없음
+   */
+  progression?: number;
   savedAt: number;
 }
 
-export interface HeroSummary { name: string; cls: ClassName; level: number; savedAt: number }
+export interface HeroSummary {
+  name: string; cls: ClassName; level: number; savedAt: number;
+  /** 열린 가장 높은 난이도 (캐릭터 선택 후 난이도 창을 띄울지) */
+  difficultyUnlocked: Difficulty;
+  /** 클래식 칭호 (Sir/Dame, Lord/Lady, Baron/Baroness — 없으면 '') */
+  title: string;
+}
 
 export interface SaveItems {
   inventory: Placed[];
@@ -76,6 +94,9 @@ export interface SaveItems {
   /** 난이도별 웨이포인트 (Normal 칸은 waypoints 가 있으면 그것. 현재 난이도 칸만 바꾸려면 mergeDifficulty 사용) */
   waypointsByDiff?: number[][];
   questFlagsByDiff?: (number[] | null)[];
+  /** 난이도별 마지막 막 (이번 게임 난이도 칸은 act 로 덮는다) */
+  actByDiff?: number[];
+  progression?: number;
 }
 
 /** 웨이포인트 목록 정리: 0 포함, 정수 0~254, 중복 없이 정렬 */
@@ -94,6 +115,26 @@ function cleanAct(v: unknown): number {
   return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 3 ? (v as number) : 0;
 }
 
+/** 난이도별 마지막 막 정리 (길이 3, 0~3). 배열이 아니면 [difficulty] 칸만 act (예전 저장) */
+function cleanActByDiff(v: unknown, act: number, difficulty: Difficulty): number[] {
+  const out = Array.from({ length: DIFFICULTY_COUNT }, (_, d) => cleanAct(Array.isArray(v) ? v[d] : 0));
+  if (!Array.isArray(v)) out[difficulty] = cleanAct(act);
+  return out;
+}
+
+/** 진행 값 정리 (정수 0~15, 아니면 없음) */
+function cleanProgression(v: unknown): number | undefined {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 15 ? (v as number) : undefined;
+}
+
+/**
+ * 게임을 시작할 막: 고른 난이도의 마지막 막 (그 난이도를 처음 하면 Act 1).
+ * 출처: PlrSave2.cpp — nAct = nTown[pGame->nDifficulty] & 0x7F (NUM_ACTS 이상이면 Act I)
+ */
+export function startActFor(save: Pick<CharacterSave, 'actByDiff'> | null, difficulty: Difficulty): number {
+  return cleanAct(save?.actByDiff?.[difficulty]);
+}
+
 /**
  * 난이도 하나의 웨이포인트·퀘스트 기록을 난이도별 배열에 넣는다 (저장할 때: 이번 게임 난이도 칸만 바뀐다).
  */
@@ -110,6 +151,11 @@ export function makeSave(name: string, character: Character, gold: number, items
   const byDiff = mergeDifficulty({ waypointsByDiff: items.waypointsByDiff ?? [], questFlagsByDiff: items.questFlagsByDiff ?? [] }, 0,
     items.waypoints ?? items.waypointsByDiff?.[0] ?? [], items.questFlags ?? items.questFlagsByDiff?.[0] ?? null);
   const normalQuest = byDiff.questFlagsByDiff[0];
+  const difficulty = toDifficulty(items.difficulty);
+  // 이번 게임 난이도 칸 = 지금 막 (원작 saveHeader.nTown[pGame->nDifficulty] = 현재 막 | 0x80)
+  const actByDiff = cleanActByDiff(items.actByDiff ?? [], 0, difficulty);
+  actByDiff[difficulty] = cleanAct(items.act);
+  const progression = cleanProgression(items.progression);
   return {
     version: SAVE_VERSION,
     name,
@@ -131,6 +177,8 @@ export function makeSave(name: string, character: Character, gold: number, items
     difficultyUnlocked: toDifficulty(Math.max(toDifficulty(items.difficultyUnlocked), toDifficulty(items.difficulty)) as Difficulty),
     waypointsByDiff: byDiff.waypointsByDiff,
     questFlagsByDiff: byDiff.questFlagsByDiff,
+    actByDiff,
+    ...(progression !== undefined ? { progression } : {}),
     savedAt: now,
   };
 }
@@ -209,10 +257,22 @@ export function parseSave(text: string): CharacterSave {
   const nq = merged.questFlagsByDiff[0];
   if (nq) s.questFlags = [...nq];
   else delete s.questFlags;
+  // 난이도별 마지막 막이 없던 저장: 마지막 난이도 칸만 act
+  s.actByDiff = cleanActByDiff(s.actByDiff, s.act, s.difficulty);
+  const prog = cleanProgression(s.progression);
+  if (prog !== undefined) s.progression = prog;
+  else delete s.progression;
   return s as CharacterSave;
 }
 
-export const summarize = (s: CharacterSave): HeroSummary => ({ name: s.name, cls: s.character.cls, level: s.character.level, savedAt: s.savedAt });
+/** 여성 클래스 (칭호 Dame/Lady/Baroness) */
+const FEMALE: readonly ClassName[] = ['Amazon', 'Sorceress'];
+
+export const summarize = (s: CharacterSave): HeroSummary => ({
+  name: s.name, cls: s.character.cls, level: s.character.level, savedAt: s.savedAt,
+  difficultyUnlocked: toDifficulty(s.difficultyUnlocked),
+  title: heroTitle(FEMALE.includes(s.character.cls), s.progression ?? toDifficulty(s.difficultyUnlocked) * 4),
+});
 
 /** 캐릭터 이름 규칙 근사(원작 세부 규칙 미확인): 2~15자, 영문자와 _ - 만, 첫 글자는 영문자 */
 export function validHeroName(name: string): boolean {

@@ -1,6 +1,6 @@
 // 난이도 규칙 (Normal / Nightmare / Hell): DifficultyLevels.txt 한 행을 엔진 값으로.
 // 출처: DifficultyLevels.txt (행 0 Normal, 1 Nightmare, 2 Hell), D2MOO D2Common DATATBLS_GetDifficultyLevelsTxtRecord (D2DifficultyLevelsTxt)
-// 이 파일은 Phase 1 에서 뼈대만 만들고, 몬스터 (N)/(H) 수치·TC 업그레이드 등은 Phase 8 에서 넓힌다.
+// Phase 8: 표 칸 이름 (N)/(H), 클래식 플레이어 저항 페널티, 난이도 칭호, 난이도 해금 규칙.
 import type { TxtRow } from '../formats/txt';
 
 export type Difficulty = 0 | 1 | 2;
@@ -9,8 +9,13 @@ export const DIFFICULTY_NAMES = ['Normal', 'Nightmare', 'Hell'] as const;
 
 export interface DifficultyRules {
   difficulty: Difficulty;
-  /** 플레이어 저항 페널티 (Normal 0 / Nightmare −40 / Hell −100). 출처: STATLIST 저항 계산 (Phase 8 에서 적용) */
+  /** DifficultyLevels.txt ResistPenalty (Normal 0 / Nightmare −40 / Hell −100) — 원작은 확장팩 게임에서만 이 칸을 쓴다 */
   resistPenalty: number;
+  /**
+   * 클래식 게임의 플레이어 원소 저항 페널티 (Normal 0 / Nightmare −20 / Hell −50) — 실제로 적용하는 값.
+   * 출처: D2MOO SUnitDmg.cpp (저항 계산): bExpansion 이면 DifficultyLevels ResistPenalty, 아니면 Nightmare −20 · Hell −50 고정
+   */
+  playerResistPenalty: number;
   /** 사망 경험치 페널티 % (Normal 0 / Nightmare 5 / Hell 10). 출처: PLAYER_ApplyDeathPenalty */
   deathExpPenalty: number;
   /** 몬스터 스킬 레벨 보너스 (Normal 0 / Nightmare 3 / Hell 7) */
@@ -67,6 +72,7 @@ export function difficultyRules(rows: readonly TxtRow[] | undefined, difficulty:
   return {
     difficulty,
     resistPenalty: num(row, 'ResistPenalty'),
+    playerResistPenalty: CLASSIC_RESIST_PENALTY[difficulty],
     deathExpPenalty: num(row, 'DeathExpPenalty'),
     monsterSkillBonus: num(row, 'MonsterSkillBonus'),
     monsterFreezeDivisor: num(row, 'MonsterFreezeDivisor', true),
@@ -86,6 +92,37 @@ export function difficultyRules(rows: readonly TxtRow[] | undefined, difficulty:
     gambleUltra: num(row, 'GambleUltra'),
     row,
   };
+}
+
+/** 출처: SUnitDmg.cpp — 클래식 저항 페널티 (표가 아닌 코드 상수) */
+export const CLASSIC_RESIST_PENALTY = [0, -20, -50] as const;
+
+/** 표 칸 이름의 난이도 판: Nightmare "(N)", Hell "(H)" (monstats Level(N), levels MonDen(H), MonLvl HP(N), SuperUniques TC(N) …) */
+export function diffColumn(col: string, difficulty: Difficulty): string {
+  return difficulty === 0 ? col : `${col}(${difficulty === 1 ? 'N' : 'H'})`;
+}
+
+/**
+ * 플레이어 원소 저항 (피해 계산에 쓰는 값): 장비·상태 합 + 클래식 난이도 페널티, 양수면 상한(75 + max저항, 최대 95), 아래로 −100.
+ * 출처: SUnitDmg.cpp 저항 계산 — 페널티를 더한 뒤 nResValue > 0 이면 clamp(−100, 최대), 아니면 max(−100)
+ */
+export function applyResistPenalty(raw: number, cap: number, penalty: number): number {
+  const v = raw + penalty;
+  return v > 0 ? Math.min(v, cap) : Math.max(v, -100);
+}
+
+/**
+ * 클래식 칭호 (캐릭터 선택·게임 안 이름 앞). progression = 원작 .d2s 진행 값 (클래식: 막 하나를 끝낼 때마다 +1, 4·8·12 에서 칭호).
+ * 출처: The Arreat Summit — Character Titles (클래식 소프트코어: Sir/Dame → Lord/Lady → Baron/Baroness,
+ *       하드코어: Count/Countess → Duke/Duchess → King/Queen)
+ * 근사(원작 미확인): 진행 값 대신 난이도 해금 단계만 있으면 (해금 난이도 × 4) 로 본다
+ */
+export function heroTitle(female: boolean, progression: number, hardcore = false): string {
+  const tier = Math.min(3, Math.trunc(progression / 4));
+  if (tier <= 0) return '';
+  const male = hardcore ? ['Count', 'Duke', 'King'] : ['Sir', 'Lord', 'Baron'];
+  const fem = hardcore ? ['Countess', 'Duchess', 'Queen'] : ['Dame', 'Lady', 'Baroness'];
+  return (female ? fem : male)[tier - 1] as string;
 }
 
 /** 저장 값 → 난이도 (범위 밖은 Normal) */

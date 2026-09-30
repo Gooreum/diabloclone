@@ -206,7 +206,8 @@ d('Act 2·3 용병 고용·오라·스킬·저장', () => {
     // Act 4 Tyrael
     const g4 = makeGame(3, { gold: 50000, merc: { ...g.mercSave()!, dead: true } });
     talkTo(g4, 'tyrael2');
-    expect(g4.snapshot().interaction!.options).toEqual(['talk', 'resurrect', 'cancel']);
+    // Phase 7: A4Q1 시작 대사 뒤 The Fallen Angel 항목(quest:25:671)이 talk 바로 뒤에 남는다
+    expect(g4.snapshot().interaction!.options).toEqual(['talk', 'quest:25:671', 'resurrect', 'cancel']);
     g4.enqueue({ type: 'npcMenu', option: 'resurrect' });
     g4.tick();
     expect(g4.mercUnit()?.type.id).toBe('act2hire');

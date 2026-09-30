@@ -7,6 +7,7 @@
 import type { TxtRow } from '../formats/txt';
 import type { MonsterDb, MonsterType } from './monster';
 import type { Rng } from './rng';
+import { diffColumn, type Difficulty } from './difficulty';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
@@ -37,12 +38,17 @@ export interface SuperUniqueDef {
   mods: number[];
   minGrp: number; maxGrp: number;
   autoPos: boolean; stacks: boolean;
+  /** 이 표 난이도의 Utrans / Utrans(N) / Utrans(H) */
   utrans: number;
+  /** 이 표 난이도의 TC / TC(N) / TC(H). 출처: MonsterMode.cpp sub_6FC631B0 — pSuperUniquesTxtRecord->dwTC[pGame->nDifficulty] */
   tc: string;
 }
 
 /** MonPreset.txt 한 행 (Act 1) → 종류. 출처: DATATBLS_MonPresetPlaceLinker (슈퍼유니크 2, monstats 1, monplace 0) */
 export type PresetKind = { kind: 'super'; idx: number } | { kind: 'monster'; id: string } | { kind: 'place'; place: number; code: string } | { kind: 'none' };
+
+/** UniqueDb 원본 표 */
+export interface UniqueTables { monUMod: TxtRow[]; superUniques: TxtRow[]; monPreset: TxtRow[]; monPlace: TxtRow[]; prefix: TxtRow[]; suffix: TxtRow[]; appellation: TxtRow[] }
 
 export class UniqueDb {
   readonly umods: UModDef[] = [];
@@ -55,9 +61,15 @@ export class UniqueDb {
   private readonly presets = new Map<number, string[]>();
   private readonly monPlace: string[];
   private readonly monsters: MonsterDb;
+  /** 이 표가 읽은 난이도 칸 */
+  readonly difficulty: Difficulty;
+  private readonly src: UniqueTables;
 
-  constructor(monsters: MonsterDb, t: { monUMod: TxtRow[]; superUniques: TxtRow[]; monPreset: TxtRow[]; monPlace: TxtRow[]; prefix: TxtRow[]; suffix: TxtRow[]; appellation: TxtRow[] }) {
+  constructor(monsters: MonsterDb, t: UniqueTables, difficulty: Difficulty = 0) {
     this.monsters = monsters;
+    this.difficulty = difficulty;
+    this.src = t;
+    const col = (r: TxtRow, key: string) => (difficulty === 0 ? r[key] : r[diffColumn(key, difficulty)]);
     for (const r of t.monUMod) {
       if (!r.uniquemod) continue;
       this.umods.push({
@@ -70,7 +82,7 @@ export class UniqueDb {
       this.superUniques.push({
         idx: r.hcIdx === undefined || r.hcIdx === '' ? i : n(r.hcIdx), key: r.Superunique, name: r.Name ?? r.Superunique, cls: r.Class ?? '',
         mods: [n(r.Mod1), n(r.Mod2), n(r.Mod3)], minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp), autoPos: n(r.AutoPos) === 1, stacks: n(r.Stacks) === 1,
-        utrans: n(r.Utrans), tc: r.TC ?? '',
+        utrans: n(col(r, 'Utrans')), tc: col(r, 'TC') ?? '',
       });
     });
     for (const r of t.monPreset) {
@@ -84,6 +96,11 @@ export class UniqueDb {
     this.prefixes = t.prefix.map((r) => r.Name ?? '').filter(Boolean);
     this.suffixes = t.suffix.map((r) => r.Name ?? '').filter(Boolean);
     this.appellations = t.appellation.map((r) => r.Name ?? '').filter(Boolean);
+  }
+
+  /** 난이도 칸 (SuperUniques TC(N)/Utrans(N) …) 을 읽은 표. monsters = 같은 난이도의 몬스터 표 */
+  forDifficulty(d: Difficulty, monsters: MonsterDb = this.monsters.forDifficulty(d)): UniqueDb {
+    return d === this.difficulty && monsters === this.monsters ? this : new UniqueDb(monsters, this.src, d);
   }
 
   /** MonUMod 행 constants (원작 MONSTERUNIQUE_GetMonUModTxtRecord(i)->dwConstants) */

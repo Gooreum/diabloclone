@@ -5,6 +5,7 @@
 //       sub_6FCC7FA0 (고용), D2GAME_NPC_BuildHirelingList_6FCC6FF0
 // 출처: D2MOO D2Game/src/UNIT/SUnitProxy.cpp — SUNITPROXY_InitializeNpcControl (NPC 표: 막·상인 여부), SUNITPROXY_UpdateVendorInventory (재고 초기화)
 // (https://github.com/ThePhrozenKeep/D2MOO)
+import { questNameKey } from './quests/messages-acts';
 import type { GameData, GameEvent } from './game';
 import type { ItemStore } from './itemstore';
 import type { ItemInstance } from './treasure';
@@ -82,6 +83,8 @@ export const NPC_DEFS: Record<string, NpcDef> = {
   act2guard2: { menu: ['talk', 'cancel'], act: 1, gossip: 'PalaceGuard' },
   warriv2: { menu: ['talk', 'cancel'], act: 1, gossip: 'WarrivAct2' },
   cain2: { menu: ['talk', 'identify', 'cancel'], act: 1, identify: true, gossip: 'CainAct2' },
+  // Phase 7: 두리엘 방의 Tyrael (MONSTER_TYRAEL1 — A2Q6 대사 302 TyraelGossip1 뒤 마을 포털)
+  tyrael1: { menu: ['talk', 'cancel'], act: 1, gossip: 'Tyrael' },
   // ---- Act 3 (Kurast Docks)
   alkor: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'alkor', act: 2, gamble: true, gossip: 'Alkor' },
   ormus: { menu: ['talk', 'trade', 'cancel'], vendor: 'ormus', act: 2, heal: true, gossip: 'Ormus' },
@@ -95,6 +98,8 @@ export const NPC_DEFS: Record<string, NpcDef> = {
   jamella: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'jamella', act: 3, gamble: true, heal: true, gossip: 'HellsAngel' },
   halbu: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'halbu', act: 3, repair: true, gossip: 'Halbu' },
   cain4: { menu: ['talk', 'identify', 'cancel'], act: 3, identify: true, gossip: 'CainAct4' },
+  // Phase 7: Izual 의 영혼 (MONSTER_IZUALGHOST — A4Q1 대사 675)
+  izualghost: { menu: ['talk', 'cancel'], act: 3, gossip: 'Izual' },
 };
 
 /**
@@ -109,7 +114,8 @@ export const NPC_MENU_STRING: Record<Exclude<NpcOption, QuestTopic>, string> = {
 
 /** 메뉴 항목의 string.tbl 키 */
 export function npcMenuKey(o: NpcOption): string {
-  if (o.startsWith('quest:')) return `qstsa1q${o.split(':')[1]}`;
+  // 퀘스트 번호 = 기록 워드 (Act 1 은 1~6, Act 2~4 는 9~14 · 17~22 · 25~27) → qstsa<막>q<번호>
+  if (o.startsWith('quest:')) return questNameKey(Number(o.split(':')[1]));
   return NPC_MENU_STRING[o as Exclude<NpcOption, QuestTopic>] ?? '';
 }
 

@@ -153,7 +153,8 @@ d('막별 상점·메뉴', () => {
     talkTo(g4, 'halbu');
     expect(g4.snapshot().interaction!.options).toEqual(['talk', 'tradeRepair', 'cancel']);
     talkTo(g4, 'tyrael2');
-    expect(g4.snapshot().interaction!.options).toEqual(['talk', 'cancel']);
+    // Phase 7: 첫 대화는 A4Q1 시작 대사(670)가 바로 나오고, 메뉴에 The Fallen Angel 항목(671, 기록 워드 25)이 남는다
+    expect(g4.snapshot().interaction!.options).toEqual(['talk', 'quest:25:671', 'cancel']);
   });
 
   // 출처: FillStoreInventory — 보통 난이도: 아이템 레벨 = min(플레이어 레벨 + 5, npcLevels[막]) (Act 2 20, Act 3 28, Act 4 36)

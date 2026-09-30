@@ -46,8 +46,8 @@ import { ACT_TOWN_KEYS, NPC_DEFS, NpcServices, QUESTFLAG_A2Q0, QUESTFLAG_A2Q4, Q
 import type { StoreItem } from './shop';
 import type { GambleTable } from './shop';
 import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from './quests/act1';
-import { QuestControl } from './quests/index';
-import { difficultyRules, type DifficultyRules } from './difficulty';
+import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index';
+import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { LEVEL } from './drlg/types';
 
@@ -137,6 +137,10 @@ export interface GameInit {
   quests?: string[];
   /** 퀘스트 기록 워드 (원작 D2QuestRecord, 퀘스트마다 16비트) */
   questFlags?: number[];
+  /** Phase 7: 저장의 열린 가장 높은 난이도 (디아블로를 죽이면 다음 난이도) */
+  difficultyUnlocked?: 0 | 1 | 2;
+  /** Phase 7: 저장의 진행 값 (원작 .d2s nProgression — 칭호) */
+  progression?: number;
 }
 
 /** 레벨 출구: 플레이어가 영역(서브타일)에 들어가면 다른 레벨의 지정 위치로 이동 */
@@ -457,6 +461,10 @@ export class Game {
   readonly quests: Act1Quests;
   /** 모든 막 퀘스트 (게임 사건은 여기로 알린다) */
   readonly questControl: QuestControl;
+  /** Phase 7: 열린 가장 높은 난이도 (저장 difficultyUnlocked — 디아블로를 죽이면 min(난이도 + 1, 2)) */
+  difficultyUnlocked: 0 | 1 | 2 = 0;
+  /** Phase 7: 진행 값 (원작 .d2s nProgression = max(nAct + 난이도 × 4) — 칭호) */
+  progression = 0;
   /** 용병 기록 (죽어도 남는다 — 부활 대상). unitId = 살아 있는 유닛 */
   merc: (MercSave & { unitId: number | null }) | null = null;
   /** 호라드릭 큐브 창이 열려 있음 (원작 SUNIT_SetInteractInfo(UNIT_ITEM, 큐브)) */
@@ -496,6 +504,8 @@ export class Game {
     this.gold = init.gold ?? 0;
     this.stashGold = init.stashGold ?? 0;
     this.difficulty = init.difficulty ?? 0;
+    this.difficultyUnlocked = Math.max(init.difficultyUnlocked ?? 0, this.difficulty) as 0 | 1 | 2;
+    this.progression = init.progression ?? 0;
     this.rules = difficultyRules(init.data?.difficultyRows, this.difficulty);
     const p = init.player;
     this.player = {
@@ -800,6 +810,12 @@ export class Game {
     for (const e of this.level.def.exits) {
       if (inside(e)) {
         const target = this.levels.get(e.to);
+        // 출처: QUESTS_LevelWarpCheck — 퀘스트가 닫은 출구 (Phase 7: 두리엘 방·증오의 억류지·하렘·하수도 계단)
+        if (this.questControl.exitBlocked(this.level.def.levelNo ?? 0, target?.def.levelNo ?? -1)) {
+          if (!this.exitHold) this.events.push({ type: 'exitBlocked', to: e.to });
+          this.exitHold = true;
+          return;
+        }
         const ty = e.dy !== undefined ? p.y + e.dy : e.toY;
         const tx = e.dx !== undefined ? p.x + e.dx : e.toX;
         const spot = target ? nearestWalkable(target.def.map, { x: tx, y: ty }, 12) : null;
@@ -857,6 +873,8 @@ export class Game {
     this.regen();
     // 출처: QUESTS_QuestUpdater (퀘스트 타이머)
     this.questControl.update();
+    // Phase 7: 이번 틱의 게임 사건 (보스 깨어남·큐브 퀘스트 아이템·봉인) 을 퀘스트에 알린다
+    this.questControl.gameEvents(this.events);
     this.tickCount++;
     return this.events;
   }
@@ -1445,7 +1463,11 @@ export class Game {
           this.events.push({ type: 'itemMoveFailed', itemId: cmd.itemId, reason: r.reason });
           return;
         }
-        if (cmd.to.kind === 'ground') this.dropItem(found.item, p.x, p.y);
+        if (cmd.to.kind === 'ground') {
+          this.dropItem(found.item, p.x, p.y);
+          // 출처: QUESTS_ItemDropped (Phase 7 퀘스트 아이템)
+          this.questControl.itemDropped(found.item.code);
+        }
         if (cmd.to.kind === 'socket') {
           // 박힌 보석은 대상 종류에 맞는 속성을 갖는다 (gems.txt)
           const target = this.store.find(cmd.to.itemId);
@@ -1669,7 +1691,7 @@ export class Game {
     if (!c || !cs || !data) return null;
     const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}`;
     if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
-      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen);
+      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty);
       this.derivedKey = key;
       this.statsDirty = false;
     }
@@ -2091,7 +2113,8 @@ export class Game {
       }
     } else if (b.pSpell === 9 || b.pSpell === 6) {
       if (!this.useStatePotion(b)) return;
-    } else {
+    } else if (!this.questControl.useItem(b.code)) {
+      // Phase 7: 퀘스트 아이템 (Book of Skill·Potion of Life) 은 퀘스트 모듈이 처리
       this.events.push({ type: 'itemUseUnsupported', itemId: id, code: found.item.code });
       return;
     }
@@ -3879,6 +3902,8 @@ export class Game {
     }
     // Phase 5: 대상이 될 수 없는 몬스터 (굴 속·물속·비행) 는 맞지 않는다
     if (m.hidden) return;
+    // Phase 8: 용병이 보스(monstats boss)에게 주는 피해 = DifficultyLevels HireableBossDamagePercent (50/35/25 %). 출처: SUnitDmg.cpp nDamagePercent
+    if (source === 'pet' && attackerId !== undefined && attackerId === this.merc?.unitId && m.type.boss) raw = scaleDamage(raw, this.rules.hireableBossDamagePercent);
     const d = applyMonsterResists(raw, source === 'player' ? this.piercedResists(m) : this.monsterResists(m));
     // Phase 5: 몬스터 Bone Armor (Abyss/Oblivion Knight) — 물리 피해 흡수 (출처: SKILLS_EventFunc22 absorbdamage)
     const bone = m.states.get('bonearmor');
@@ -4001,7 +4026,9 @@ export class Game {
       const su = m.superUnique !== undefined ? this.data?.uniques?.superUnique(m.superUnique)?.key : undefined;
       // 근사(원작 미확인): "같은 방이나 이웃 방" 대신 같은 레벨의 40 서브타일 안
       const near = this.level.monsters.includes(m) && Math.hypot(m.x - this.player.x, m.y - this.player.y) < 40;
-      this.questControl.monsterKilled({ levelNo, typeId: m.type.id, ...(su ? { superUnique: su } : {}), x: m.x, y: m.y, byPlayer: source !== 'other', playerNear: near });
+      this.questControl.monsterKilled({ levelNo, typeId: m.type.id, ...(su ? { superUnique: su } : {}), x: m.x, y: m.y, byPlayer: source !== 'other', playerNear: near,
+        // Phase 7: 유닛 번호·유니크(MONTYPEFLAG 2 SUPERUNIQUE | 8 UNIQUE)·비행 (옥 조각상·기드빈 보스)
+        id: m.id, boss: (m.flags & 10) !== 0, flying: m.type.flying });
     }
   }
 
@@ -6237,7 +6264,8 @@ export class Game {
     const maxSt = 'max' + st;
     const raw = (dv?.stat(st) ?? 0) + this.playerStat(st);
     const cap = 75 + (dv?.stat(maxSt) ?? 0) + this.playerStat(maxSt);
-    return Math.min(95, raw, cap);
+    // Phase 8: 클래식 난이도 저항 페널티 (마법 저항 제외 — 원작도 DAMAGERESIST·MAGICRESIST 는 빼지 않는다). 출처: SUnitDmg.cpp
+    return applyResistPenalty(raw, Math.min(95, cap), st === 'magicresist' ? 0 : this.rules.playerResistPenalty);
   }
 
   /**
@@ -6758,6 +6786,8 @@ export class Game {
       const wp = this.waypointNoOf(this.level.def.levelNo);
       if (wp !== 255) this.waypoints.activate(wp);
     }
+    // 출처: QUESTS_ActChange_HirelingChangeAct (Phase 7: A1COMPLETED·A2COMPLETED)
+    this.questControl.actChanged(from, to);
     this.events.push({ type: 'actChange', to: townKey, act: to, available: true });
     return true;
   }
@@ -7005,14 +7035,20 @@ export class Game {
 
   // ---------------------------------------------------------------- 퀘스트
 
-  /** 퀘스트 상태 기계가 게임에 요청하는 것 (QuestHost) */
-  private questHost(): QuestHost {
+  /** Phase 7: Act 2 오염된 태양 (ENVIRONMENT_TaintedSunBegin~End) — 렌더러가 Act 2 화면을 어둡게 */
+  get taintedSun(): boolean {
+    return this.act === 1 && this.questControl.taintedSun;
+  }
+
+  /** 퀘스트 상태 기계가 게임에 요청하는 것 (QuestHost + Phase 7 ActsQuestHost) */
+  private questHost(): ActsQuestHost {
     const g = this;
     const findCode = (code: string): ItemInstance | undefined => {
-      // 출처: ITEMS_FindQuestItem — 플레이어 인벤토리 목록 (인벤토리·창고·커서)
+      // 출처: ITEMS_FindQuestItem — 플레이어 인벤토리 목록 전체 (원작 pInventory 는 몸·벨트·인벤토리·큐브·창고·커서를 한 목록으로 가진다.
+      //   Phase 7: 큐브 속 호라드릭 지팡이, 손에 든 칼림의 의지·헬포지 망치도 찾는다)
       const st = g.store;
       if (st.cursor?.code === code) return st.cursor;
-      return [...st.inv.items, ...st.stash.items].map((p) => p.item).find((it) => it.code === code);
+      return st.allItems().find((it) => it.code === code);
     };
     return {
       get record() {
@@ -7089,6 +7125,83 @@ export class Game {
         g.createPortalPair(g.player.x, g.player.y, false);
       },
       emit: (ev) => g.events.push(ev),
+      ...g.actsQuestHost(),
+    };
+  }
+
+  /** Phase 7: Act 2~4 퀘스트가 더 요청하는 것 (quests/acts-base.ts ActsQuestHost) */
+  private actsQuestHost(): Omit<ActsQuestHost, keyof QuestHost> {
+    const g = this;
+    const levelOf = (levelNo: number): LevelState | undefined => [...g.levels.values()].find((l) => l.def.levelNo === levelNo);
+    return {
+      addStatPoints: (n) => {
+        if (g.character) g.character.statPoints += n;
+      },
+      addLife: (n) => {
+        const c = g.character;
+        if (!c) return;
+        c.maxLife += n;
+        c.life += n;
+        g.statsDirty = true;
+      },
+      // 출처: INVENTORY_GetLeftHandWeapon — 손에 든 무기
+      weaponCode: () => (g.store.equipment.rarm ?? g.store.equipment.larm)?.code,
+      findObject: (levelNo, classId) => levelOf(levelNo)?.objects.find((o) => o.type.id === classId),
+      createObject: (levelNo, classId, x, y, mode) => {
+        const lv = levelOf(levelNo);
+        if (!lv) return null;
+        const at = g.freeSpot(lv.def.map, x, y, 1, 8) ?? { x, y };
+        return g.createObject(lv, { classId, x: at.x, y: at.y, mode });
+      },
+      spawnMonster: (levelNo, typeId, x, y, opts) => {
+        const lv = levelOf(levelNo);
+        if (!lv || !g.data?.monsters.types.has(typeId)) return null;
+        const prev = g.level;
+        g.level = lv;
+        let id: number | null = null;
+        if (opts?.npc) id = g.spawnNpc(typeId, x, y)?.id ?? null;
+        else if (opts?.boss) id = g.spawnBoss(typeId, x, y, false)?.id ?? null;
+        else {
+          const spot = nearestWalkable(lv.def.map, { x, y }, 8);
+          if (spot) id = g.spawnMonster(typeId, spot.x + 0.5, spot.y + 0.5).id;
+        }
+        g.level = prev;
+        return id;
+      },
+      levelMonsters: (levelNo) => (levelOf(levelNo)?.monsters ?? []).filter((m) => m.mode !== 'DT' && m.mode !== 'DD' && !m.pet)
+        .map((m) => {
+          const su = m.superUnique !== undefined ? g.data?.uniques?.superUnique(m.superUnique)?.key : undefined;
+          return { id: m.id, typeId: m.type.id, x: m.x, y: m.y, ...(su ? { superUnique: su } : {}) };
+        }),
+      warpToLevel: (levelNo) => {
+        const lv = levelOf(levelNo);
+        if (!lv) return false;
+        g.populate(lv);
+        const at = lv.def.portalSpot ?? { x: lv.def.map.width / 2, y: lv.def.map.height / 2 };
+        const spot = nearestWalkable(lv.def.map, at, 40) ?? { x: Math.floor(at.x), y: Math.floor(at.y) };
+        g.changeLevel(lv.def.id, spot.x + 0.5, spot.y + 0.5);
+        g.events.push({ type: 'questWarp', to: lv.def.id });
+        return true;
+      },
+      travelAct: (act) => g.travelAct(act, true),
+      refreshTownNpcs: () => {
+        const town = g.levels.get(g.townKey() ?? '');
+        if (town) g.refreshTownQuestNpcs(town);
+      },
+      chaos: () => {
+        const c = g.chaos;
+        return { sealsOpened: c.sealActivated.filter(Boolean).length, diabloSpawned: c.diabloSpawned, diabloKilled: c.diabloKilled, cleared: c.sanctumCleared };
+      },
+      completeDifficulty: () => {
+        // 출처: 클래식 — 디아블로를 죽이면 다음 난이도 (Normal → Nightmare → Hell)
+        g.difficultyUnlocked = Math.max(g.difficultyUnlocked, Math.min(g.difficulty + 1, 2)) as 0 | 1 | 2;
+      },
+      progress: (nAct) => {
+        // 출처: CLIENTS_UpdateCharacterProgression — 클래식 막 4개
+        g.progression = Math.max(g.progression, nAct + g.difficulty * 4);
+      },
+      difficulty: () => g.difficulty,
+      act: () => g.act,
     };
   }
 
@@ -8154,8 +8267,8 @@ export class Game {
     }
     updateObjectCollision(o, level.def.map);
     level.objects.push(o);
-    // 퀘스트 오브젝트 InitFn (4 TowerTome, 6 CairnStone, 7 CainGibbet, 9 InifussTree, 13 InvisibleObject, 15 MalusStand, 47 CountessChest)
-    if ([4, 6, 7, 9, 13, 15, 47].includes(t.initFn)) {
+    // 퀘스트 오브젝트 InitFn (Act 1: 4 TowerTome … 47 CountessChest, Phase 7: Act 2~4 — quests/index.ts QUEST_INIT_FNS)
+    if (QUEST_INIT_FNS.has(t.initFn)) {
       const prev = this.level;
       this.level = level;
       this.questControl.initObject(o);
@@ -9087,6 +9200,12 @@ interface MeleeSpec {
 interface SummonOpts { exact?: boolean; hpBase?: number; level?: number }
 
 /** 저항 스탯 이름 → 몬스터 저항 칸 */
+/** 피해 칸(물리·원소·마법)을 pct % 로. 출처: SUnitDmg.cpp — nDamagePercent != 100 이면 양수 피해 칸마다 MONSTERUNIQUE_CalculatePercentage (길이 칸 제외) */
+function scaleDamage(d: DamagePacket, pct: number): DamagePacket {
+  const f = (v: number) => (v > 0 ? Math.trunc((v * pct) / 100) : v);
+  return { ...d, phys: f(d.phys), fire: f(d.fire), ltng: f(d.ltng), cold: f(d.cold), pois: f(d.pois), mag: f(d.mag) };
+}
+
 const RESIST_STAT: Record<string, string> = { fireresist: 'fi', lightresist: 'li', coldresist: 'co', poisonresist: 'po', magicresist: 'ma', damageresist: 'dm' };
 
 interface PlayerMissileOpts {

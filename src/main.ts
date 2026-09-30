@@ -1,6 +1,7 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
 import { AssetLoader } from './assets/loader';
 import { loadGameData } from './assets/gamedata-loader';
+import { withDifficulty } from './data/gamedata';
 import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
 import { actLevels, actPalettePath, actWorldPaths, buildActWorld, levelKey, WORLD_TABLES, type ActWorld, type WorldLevel } from './data/world';
@@ -11,7 +12,9 @@ import { ENGINE_FPS } from './engine/index';
 import { classStats, createCharacter, expTable, type ClassName } from './engine/player';
 import { QUALITY, type ItemInstance } from './engine/treasure';
 import { Rng } from './engine/rng';
-import { makeSave, mergeDifficulty, summarize, type CharacterSave } from './engine/save';
+import { makeSave, mergeDifficulty, startActFor, summarize, type CharacterSave } from './engine/save';
+import { heroTitle, type Difficulty } from './engine/difficulty';
+import { questNameKey } from './engine/quests/messages-acts';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
 import { type Camera } from './render/iso';
@@ -88,6 +91,8 @@ declare global {
     /** e2e: 원작 커서·메뉴 (캐릭터 선택 스크롤) */
     __cursor?: GameCursor;
     __menu?: Menu;
+    /** e2e: 캐릭터 저장소 (난이도 해금 등 저장 필드 조작) */
+    __heroStore?: typeof HeroStore;
   }
 }
 
@@ -173,6 +178,7 @@ async function boot(): Promise<void> {
   if (import.meta.env.DEV) {
     window.__cursor = cursor;
     window.__menu = menu;
+    window.__heroStore = HeroStore;
   }
   // 캐릭터 선택 칸 영웅 그림: 저장된 장비로 게임 속 COF 합성 (서 있기 NU, 앞(아래)을 봄 = 64방향 0)
   const figGfx = new UnitGfx(assets, gamePal);
@@ -217,17 +223,22 @@ async function boot(): Promise<void> {
     menu.hide();
     const save = choice.kind === 'load' ? await HeroStore.load(choice.name) : null;
     const cls: ClassName = save?.character.cls ?? (choice.kind === 'new' ? choice.cls : 'Barbarian');
-    // 저장된 막 마을에서 시작 (그 막 월드가 아직 없으면 Act 1). 그 막 파일은 로딩 전에 미리 읽는다
-    if (save && actAvailable(save.act)) await prefetchAct(shared, save.act);
+    // Phase 8: 고른 난이도 (난이도 창 — 새 캐릭터·해금 전은 Normal). 해금보다 높은 값은 받지 않는다
+    const difficulty = (choice.kind === 'load' ? Math.min(choice.difficulty ?? 0, save?.difficultyUnlocked ?? 0) : 0) as Difficulty;
+    // 그 난이도의 마지막 막 마을에서 시작 (그 막 월드가 아직 없으면 Act 1). 그 막 파일은 로딩 전에 미리 읽는다
+    const startAct = startActFor(save, difficulty);
+    if (save && actAvailable(startAct)) await prefetchAct(shared, startAct);
     // 원작: 게임을 시작하면 로딩 화면 (월드 만들기 동안)
-    const game = await loading.around(ctx, () => play(shared, choice.name, cls, save));
+    const game = await loading.around(ctx, () => play(shared, choice.name, cls, save, difficulty));
     await game;
   }
 }
 
 /** 한 판 진행. Save and Exit 하면 resolve */
-function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null): Promise<void> {
-  const { data, tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor } = sh;
+function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null, difficulty: Difficulty = 0): Promise<void> {
+  // 난이도 판 표 (monstats (N)/(H), SuperUniques TC(N), levels MonLvl2/3·상자 TC) — 월드 만들기와 Game 이 같이 쓴다
+  const data = withDifficulty(sh.data, difficulty);
+  const { tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   const renderers: Record<string, WorldRenderer> = {};
   // HUD 레벨 이름: levels.txt LevelName → 원작 문자열
@@ -255,7 +266,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     views.set(act, v);
     return v;
   };
-  const startAct = save && actAvailable(save.act) && sh.prefetched.has(save.act) ? save.act : 0;
+  // 출처: PlrSave2.cpp — 시작 막 = 고른 난이도의 nTown (actByDiff)
+  const diffAct = startActFor(save, difficulty);
+  const startAct = save && actAvailable(diffAct) && sh.prefetched.has(diffAct) ? diffAct : 0;
   const world = actView(startAct).world;
   const cs = classStats(tables.table('charstats'), cls);
   const table = expTable(tables.table('experience'), cls);
@@ -285,8 +298,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       }
     }
   }
-  // 난이도별 기록 (Phase 8 에서 난이도 선택 화면이 생기기 전까지는 저장된 난이도 = Normal)
-  const difficulty = save?.difficulty ?? 0;
+  // 난이도별 기록: 고른 난이도의 웨이포인트·퀘스트 기록 (원작 .d2s 난이도별 블록)
   const questFlags = save?.questFlagsByDiff[difficulty] ?? null;
   const game = new Game({
     map: world.byKey.get(world.townId)!.def.map, levels: world.levels.map((l) => l.def), act: startAct, difficulty,
@@ -730,7 +742,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const byDiff = mergeDifficulty(save, game.difficulty, game.waypoints.list(), game.questRecord.toJSON());
       await HeroStore.save(makeSave(name, game.character!, game.gold, { inventory: st.inv.items, stash: st.stash.items, cube: st.cube.items, belt: st.belt, equipment: game.equipment,
         stashGold: game.stashGold, merc: game.mercSave(), corpse: game.corpse ? (Object.fromEntries(Object.entries(game.corpse.items).filter(([, v]) => v)) as Record<string, ItemInstance>) : {},
-        act: game.act, difficulty: game.difficulty, difficultyUnlocked: save?.difficultyUnlocked ?? 0, ...byDiff,
+        // Phase 7: 디아블로를 죽이면 다음 난이도 (game.difficultyUnlocked), 진행 값 (칭호)
+        act: game.act, difficulty: game.difficulty, difficultyUnlocked: Math.max(save?.difficultyUnlocked ?? 0, game.difficultyUnlocked) as Difficulty, ...byDiff,
+        // 난이도별 마지막 막 (이번 난이도 칸은 makeSave 가 act 로), 칭호 진행 값
+        actByDiff: save?.actByDiff, ...(save?.progression !== undefined || game.progression ? { progression: Math.max(save?.progression ?? 0, game.progression) } : {}),
       }));
       running = false;
       detachSound();
@@ -831,8 +846,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               // 출처: string.tbl qstsa1q14 "Monsters remaining: " + 수, qstsa1q140 "One monster left."
               messageLog.push(ev.key === 'qstsa1q14' ? `${str('qstsa1q14')}${Number(ev.count)}` : str(String(ev.key)), performance.now(), 'gold');
             } else if (ev.type === 'questCompleted') {
-              // 근사(원작 미확인): 원작은 완료 소리와 퀘스트 단추 깜빡임 — 여기서는 화면 메시지
-              messageLog.push(`${str(`qstsa1q${Number(ev.quest)}`)} — ${str('qstsComplete')}`, performance.now(), 'gold');
+              // 근사(원작 미확인): 원작은 완료 소리와 퀘스트 단추 깜빡임 — 여기서는 화면 메시지 (퀘스트 번호 = 기록 워드)
+              messageLog.push(`${str(questNameKey(Number(ev.quest)))} — ${str('qstsComplete')}`, performance.now(), 'gold');
+            } else if (ev.type === 'gameCompleted') {
+              // Phase 7: 클래식 엔딩 (원작 엔딩 영상 대신 문구 — string.tbl Killdiablo1~3 + 칭호). 근사(원작 미확인): 표시 방식
+              const title = heroTitle(cls === 'Amazon' || cls === 'Sorceress', Math.max(save?.progression ?? 0, game.progression));
+              messageLog.push(str('Killdiablo1'), performance.now(), 'gold');
+              messageLog.push(str('KillDiablo2'), performance.now(), 'gold');
+              if (title) messageLog.push(`${str('KillDiablo3')} ${title} ${name}`, performance.now(), 'gold');
+            } else if (ev.type === 'exitBlocked') {
+              // Phase 7: 퀘스트가 닫은 출구 (원작 QUESTS_LevelWarpCheck — 막힌 소리). 근사: 메시지 없이 소리만 (Phase 9)
             } else if (ev.type === 'imbueOpened') {
               openLeft(null);
               openRight('inv');
@@ -871,6 +894,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         cam,
         buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow }, input.pickBoxes),
       );
+      // Phase 7: 오염된 태양 (A2Q3 — 원작 ENVIRONMENT_TaintedSunBegin: Act 2 바깥이 일식으로 어두워짐).
+      // 근사(원작 미확인): 원작 조명 곡선 대신 야외 화면 위에 반투명 어둠 한 겹
+      if (game.taintedSun && /Wilderness|Town|Desert/i.test(worldByKey.get(game.levelId)?.automapName ?? '')) {
+        ctx.fillStyle = 'rgba(4, 2, 10, 0.62)';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      }
       // 바닥 아이템 이름표: Alt(Show Items) = 모두, 아니면 가리킨 아이템만 (원작)
       labels = [];
       for (const b of input.pickBoxes) {

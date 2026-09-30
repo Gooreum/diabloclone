@@ -15,6 +15,7 @@ import { Rng } from './engine/rng';
 import { makeSave, summarize, type CharacterSave } from './engine/save';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
+import { Canvas2dSink, type SpriteSink } from './render/sink';
 import { type Camera } from './render/iso';
 import { ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
 import { buildScene } from './render/scene';
@@ -154,7 +155,8 @@ async function boot(): Promise<void> {
     window.__menu = menu;
   }
   // 캐릭터 선택 칸 영웅 그림: 저장된 장비로 게임 속 COF 합성 (서 있기 NU, 앞(아래)을 봄 = 64방향 0)
-  const figGfx = new UnitGfx(assets, gamePal);
+  const figGfx = new UnitGfx(assets);
+  const figSink = new Canvas2dSink(ctx, gamePal);
   const looks = new Map<string, { token: string; wclass: string; equip: Record<string, string> }>();
   menu.heroFigure = (c, name, x, y, now) => {
     const lk = looks.get(name);
@@ -163,7 +165,7 @@ async function boot(): Promise<void> {
     if (!comp) return false;
     const r = anim.get(`${lk.token}NU${lk.wclass}`);
     const frame = r ? Math.floor(((now / 40) * r.speed) / 256) : 0;
-    figGfx.draw(c, comp, 0, frame, x, y);
+    figGfx.draw(figSink.target(c), comp, 0, frame, x, y);
     return true;
   };
   const listHeroes = async () => {
@@ -212,13 +214,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // HUD 레벨 이름: levels.txt LevelName → 원작 문자열
   const levelNames: Record<string, string> = {};
   for (const l of world.levels) {
-    renderers[l.key] = new WorldRenderer(l.preset, pal);
+    renderers[l.key] = new WorldRenderer(l.preset);
     levelNames[l.key] = l.name;
   }
   const townMap = world.byKey.get('town')!.def.map;
-  const units = new UnitGfx(assets, pal);
-  const itemGfx = new ItemGfx(assets, pal);
-  const missileGfx = new MissileGfx(assets, pal);
+  const units = new UnitGfx(assets);
+  const itemGfx = new ItemGfx(assets);
+  const missileGfx = new MissileGfx(assets);
+  // 월드 그리기 출구 (팔레트 번호 그림 → 화면)
+  const worldSink: SpriteSink = new Canvas2dSink(ctx, pal);
   const cs = classStats(tables.table('charstats'), cls);
   const table = expTable(tables.table('experience'), cls);
   const token = CLASS_TOKEN[cls];
@@ -750,7 +754,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
       hoverNow = overUi || !mm ? null : input.hoverAt(mm.x, mm.y);
       (renderers[game.levelId] as WorldRenderer).render(
-        ctx,
+        worldSink,
         cam,
         buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow }, input.pickBoxes),
       );

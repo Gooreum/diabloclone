@@ -5,8 +5,10 @@
 import { parseCof, type Cof } from '../formats/cof';
 import { parseDcc, type Dcc } from '../formats/dcc';
 import { parseDc6 } from '../formats/dc6';
-import type { Palette } from '../formats/palette';
-import { indexedToCanvas, newSpriteId, spriteCache, type Drawable } from './sprites';
+import type { ColorShift, IndexedImage, SpriteSink } from './sink';
+import { newSpriteId } from './sprites';
+
+export type { ColorShift } from './sink';
 
 export interface AsyncAssets {
   load(path: string): Promise<Uint8Array | null>;
@@ -37,10 +39,7 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
 }
 
 interface LayerGfx { dcc: Dcc; id: number }
-export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array; transKey?: string }
-
-/** 팔레트 색 바꿈 표 (256 바이트: 원래 색 번호 → 바뀐 색 번호) */
-export interface ColorShift { key: string; map: Uint8Array }
+export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; shift?: ColorShift }
 
 export interface CompositeSpec {
   /** 'CHARS', 'MONSTERS' 또는 'OBJECTS' */
@@ -58,13 +57,11 @@ const specKey = (s: CompositeSpec) => `${s.root}/${s.token}/${s.mode}/${s.wclass
 
 export class UnitGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
   private readonly cache = new Map<string, Composite | null | Promise<void>>();
   private readonly shiftFiles = new Map<string, Uint8Array | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
   private shiftFile(path: string): Uint8Array | null | undefined {
@@ -148,7 +145,6 @@ export class UnitGfx {
     if (!cofBytes) return null;
     const cof = parseCof(cofBytes);
     const layers = new Map<number, LayerGfx>();
-    const trans = s.shift?.map;
     await Promise.all(
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
@@ -157,14 +153,14 @@ export class UnitGfx {
         if (b) layers.set(l.type, { dcc: parseDcc(b), id: newSpriteId() });
       }),
     );
-    return trans ? { cof, layers, trans, transKey: s.shift?.key } : { cof, layers };
+    return s.shift ? { cof, layers, shift: s.shift } : { cof, layers };
   }
 
   /**
    * 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환.
-   * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 캔버스 brightness(1.6) 필터로 근사)
+   * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 1.6배 밝기로 근사)
    */
-  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
+  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
@@ -177,20 +173,9 @@ export class UnitGfx {
       const dir = lg.dcc.directions[d];
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
-      const tr = comp.trans;
-      const c = spriteCache.get(`u${lg.id}:${d}:${f}:${comp.transKey ?? ''}`, () =>
-        indexedToCanvas(tr ? fr.pixels.map((p) => (p ? tr[p] ?? p : 0)) : fr.pixels, dir.box.width, dir.box.height, this.pal),
-      );
-      // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사
+      // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
       const blend = layer?.transparent ? layer.drawEffect : -1;
-      if (blend >= 0 || bright) {
-        ctx.save();
-        if (bright) ctx.filter = 'brightness(1.6)';
-        if (blend >= 0 && blend <= 2) ctx.globalAlpha = [0.75, 0.5, 0.25][blend] as number;
-        else if (blend >= 0) ctx.globalCompositeOperation = blend === 4 ? 'multiply' : 'lighter';
-      }
-      ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
-      if (blend >= 0 || bright) ctx.restore();
+      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright });
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);
       r0 = Math.max(r0, x + dir.box.left + dir.box.width);
@@ -203,15 +188,14 @@ export class UnitGfx {
 /** 바닥 아이템: flippy DC6 의 마지막 프레임 (떨어진 뒤 정지 모습) */
 export class ItemGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
-  private readonly cache = new Map<string, { canvas: Drawable; w: number; h: number; ox: number; oy: number } | null | 'loading'>();
+  private readonly id = newSpriteId();
+  private readonly cache = new Map<string, { image: IndexedImage; w: number; h: number; ox: number; oy: number } | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
-  draw(ctx: CanvasRenderingContext2D, flippyFile: string, x: number, y: number): { w: number; h: number; x: number; y: number } | null {
+  draw(sink: SpriteSink, flippyFile: string, x: number, y: number): { w: number; h: number; x: number; y: number } | null {
     const hit = this.cache.get(flippyFile);
     if (hit === undefined) {
       this.cache.set(flippyFile, 'loading');
@@ -222,14 +206,14 @@ export class ItemGfx {
           const dc6 = parseDc6(b);
           const fr = dc6.frames[dc6.frames.length - 1];
           if (!fr) return void this.cache.set(flippyFile, null);
-          this.cache.set(flippyFile, { canvas: indexedToCanvas(fr.pixels, fr.width, fr.height, this.pal), w: fr.width, h: fr.height, ox: fr.offsetX, oy: fr.offsetY });
+          this.cache.set(flippyFile, { image: { id: `i${this.id}:${flippyFile}`, w: fr.width, h: fr.height, pixels: fr.pixels }, w: fr.width, h: fr.height, ox: fr.offsetX, oy: fr.offsetY });
         })
         .catch(() => this.cache.set(flippyFile, null));
       return null;
     }
     if (!hit || hit === 'loading') return null;
     // 출처: Phrozen Keep DC6 문서 — offsetY 는 프레임 아래쪽 기준
-    ctx.drawImage(hit.canvas as CanvasImageSource, x + hit.ox, y + hit.oy - hit.h);
+    sink.draw(hit.image, x + hit.ox, y + hit.oy - hit.h);
     return { w: hit.w, h: hit.h, x: x + hit.ox, y: y + hit.oy - hit.h };
   }
 }
@@ -241,15 +225,13 @@ export class ItemGfx {
  */
 export class MissileGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
   private readonly cache = new Map<string, LayerGfx | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
-  draw(ctx: CanvasRenderingContext2D, celFile: string, dir64: number, frame: number, x: number, y: number): void {
+  draw(sink: SpriteSink, celFile: string, dir64: number, frame: number, x: number, y: number): void {
     const key = celFile.toLowerCase();
     const hit = this.cache.get(key);
     if (hit === undefined) {
@@ -268,7 +250,6 @@ export class MissileGfx {
     const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
     const fr = dir.frames[f];
     if (!fr) return;
-    const c = spriteCache.get(`m${hit.id}:${d}:${f}`, () => indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal));
-    ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
+    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top);
   }
 }

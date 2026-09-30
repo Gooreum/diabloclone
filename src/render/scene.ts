@@ -57,9 +57,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!base?.flippyFile) continue;
     out.push({
       depth: it.x + it.y - 0.5,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, it.x, it.y);
-        const size = d.items.draw(ctx, base.flippyFile, p.x, p.y);
+        const size = d.items.draw(sink, base.flippyFile, p.x, p.y);
         if (size) picks.push({ kind: 'item', id: it.id, x: size.x - 4, y: size.y - 4, w: size.w + 8, h: size.h + 8 });
       },
     });
@@ -76,12 +76,12 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const raw = (t.start[o.mode] ?? 0) + Math.floor((o.modeTick * (t.frameDelta[o.mode] ?? 256)) / 256);
     out.push({
       depth: o.x + o.y - (t.drawUnder ? 4 : 0),
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, o.x, o.y);
         if (!comp) return;
         const fpd = comp.cof.framesPerDirection;
         const frame = t.cycleAnim[o.mode] ? raw % fpd : Math.min(raw, fpd - 1);
-        const box = d.units.draw(ctx, comp, 0, frame, p.x, p.y, !!o.selectable && d.hover?.kind === 'object' && d.hover.id === o.id);
+        const box = d.units.draw(sink, comp, 0, frame, p.x, p.y, !!o.selectable && d.hover?.kind === 'object' && d.hover.id === o.id);
         if (!o.selectable) return;
         // 선택 상자: objects.txt Left/Top/Width/Height (있으면), 없으면 그림 영역
         if (t.width > 0 && t.height > 0) picks.push({ kind: 'object', id: o.id, x: p.x + t.left, y: p.y + t.top, w: t.width, h: t.height });
@@ -113,10 +113,10 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
       depth: m.x + m.y,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y, lit);
+        if (comp) d.units.draw(sink, comp, m.dir, frame, p.x, p.y, lit);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
@@ -135,9 +135,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!d.missiles || !ms.celFile || ms.celFile === 'null' || !onScreen(ms.x, ms.y)) continue;
     out.push({
       depth: ms.x + ms.y + 0.25,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, ms.x, ms.y);
-        d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y);
+        d.missiles?.draw(sink, ms.celFile, ms.dir, ms.frame, p.x, p.y);
       },
     });
   }
@@ -149,9 +149,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const cc = d.units.get({ root: 'CHARS', token: d.playerToken, mode: 'DD', wclass: look.wclass, equip: look.equip });
     out.push({
       depth: cp.x + cp.y - 0.25,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, cp.x, cp.y);
-        if (cc) d.units.draw(ctx, cc, cp.dir, 0, p.x, p.y, d.hover?.kind === 'body');
+        if (cc) d.units.draw(sink, cc, cp.dir, 0, p.x, p.y, d.hover?.kind === 'body');
         picks.push({ kind: 'body', id: 0, x: p.x - 30, y: p.y - 24, w: 60, h: 30 });
       },
     });
@@ -166,9 +166,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
   out.push({
     depth: pm.x + pm.y,
-    draw: (ctx, cm) => {
+    draw: (sink, cm) => {
       const p = toCanvas(cm, pm.x, pm.y);
-      if (comp) d.units.draw(ctx, comp, pm.dir, frame, p.x, p.y);
+      if (comp) d.units.draw(sink, comp, pm.dir, frame, p.x, p.y);
     },
   });
   return out;

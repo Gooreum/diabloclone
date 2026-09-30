@@ -64,3 +64,42 @@ test('레벨이 바뀌면 음악이 바뀐다 (Blood Moor = wild.wav)', async ({
   const log = await page.evaluate(audioLog);
   expect(log.some((e) => e.channel === 'music' && e.name === 'music_town_1' && e.state === 'stopped')).toBe(true);
 });
+
+test('Act 2: 루트 골레인 음악(town2.wav)과 Atma 인사·잡담이 Act 2 대사로 나온다', async ({ page }) => {
+  await newHero(page, uniqueName('Snd'), 'sorceress');
+  await page.mouse.click(400, 300);
+  await page.waitForFunction(() => window.__audio?.unlocked === true, undefined, { timeout: 30_000 });
+  // 디버그: A1Q6 보상 받음 → Act 2 로 이동
+  await page.evaluate(() => {
+    const g = window.__game!.game;
+    g.questRecord.set(6, 0);
+    g.enqueue({ type: 'travelAct', act: 1 });
+  });
+  await page.waitForFunction(() => window.__game!.game.levelId === 'lutgholein' && window.__game!.game.npcs.length > 0, undefined, { timeout: 150_000 });
+  await page.waitForFunction(
+    () => (window.__audio?.log ?? []).some((e) => e.channel === 'music' && e.name === 'music_town_2' && e.state === 'playing'),
+    undefined,
+    { timeout: 90_000 },
+  );
+  const music = await page.evaluate(() => (window.__audio?.log ?? []).find((e) => e.name === 'music_town_2' && e.state === 'playing'));
+  expect(music?.path.toLowerCase()).toBe('data\\global\\music\\act2\\town2.wav');
+
+  // Atma 옆으로 옮겨 말 걸기 → 인사, 이어서 talk → 잡담 (atma_act2_*)
+  await page.evaluate(() => {
+    const g = window.__game!.game;
+    const n = g.npcs.find((x) => x.type.id === 'atma')!;
+    for (const [dx, dy] of [[2, 0], [0, 2], [-2, 0], [0, -2], [2, 2], [-2, -2]] as const)
+      if (g.map.walkable(Math.floor(n.x + dx), Math.floor(n.y + dy))) {
+        g.changeLevel(g.levelId, n.x + dx, n.y + dy);
+        break;
+      }
+    g.enqueue({ type: 'interact', unitId: n.id });
+  });
+  await page.waitForFunction(() => window.__game!.game.snapshot().interaction?.typeId === 'atma', undefined, { timeout: 15_000 });
+  await page.waitForFunction(() => (window.__audio?.log ?? []).some((e) => e.channel === 'speech' && /^atma_greeting/.test(e.name)), undefined, { timeout: 30_000 });
+  await page.evaluate(() => window.__game!.game.enqueue({ type: 'npcMenu', option: 'talk' }));
+  await page.waitForFunction(() => (window.__audio?.log ?? []).some((e) => e.channel === 'speech' && /^atma_act2_(intro|gossip)/.test(e.name)), undefined, { timeout: 30_000 });
+  const speech = await page.evaluate(() => (window.__audio?.log ?? []).filter((e) => e.channel === 'speech').map((e) => [e.name, e.path.toLowerCase()]));
+  expect(speech.some(([n, p]) => /^atma_act2_/.test(n!) && /\\act2\\atma\\/.test(p!))).toBe(true);
+  expect(speech.some(([n]) => /_act1_/.test(n!))).toBe(false);
+});

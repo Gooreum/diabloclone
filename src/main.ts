@@ -157,6 +157,15 @@ async function mpqSource(host: HTMLElement): Promise<{ base: string; fetch: Rang
   return { base: 'local/', fetch: blobRange(await ensureLocalMpqs(host)), local: true };
 }
 
+/** 800×600 무대를 창 크기에 맞춰 키운다 (비율 유지, 가운데). 게임 안 좌표는 그대로 800×600 — 입력은 화면 크기에서 환산 */
+function fitStage(stage: HTMLElement): void {
+  const s = Math.min(innerWidth / WIDTH, innerHeight / HEIGHT);
+  Object.assign(stage.style, {
+    position: 'absolute', transformOrigin: '0 0', transform: `scale(${s})`,
+    left: `${Math.round((innerWidth - WIDTH * s) / 2)}px`, top: `${Math.round((innerHeight - HEIGHT * s) / 2)}px`,
+  });
+}
+
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const src = await mpqSource(host);
@@ -188,6 +197,16 @@ async function boot(): Promise<void> {
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
   stage.append(worldCanvas, canvas);
   host.replaceChildren(stage);
+  fitStage(stage);
+  addEventListener('resize', () => fitStage(stage));
+  document.addEventListener('fullscreenchange', () => fitStage(stage));
+  // 원작처럼 Alt+Enter 로 전체 화면 켜고 끄기
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.altKey) return;
+    e.preventDefault();
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  }, true);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   ctx.fillStyle = '#c7b377';
   ctx.font = '16px serif';

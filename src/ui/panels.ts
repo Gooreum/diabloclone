@@ -139,7 +139,7 @@ export class Panels {
           else if (it.bar && this.volume) {
             // 막대 위 클릭 위치 = 음량 (원작: 해골을 끌거나 막대를 누른다)
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            this.volume.set(it.bar, Math.max(0, Math.min(1, (e.clientX - r.left - 3 - 14) / (BAR_ROW.w - 6 - 28))));
+            this.volume.set(it.bar, Math.max(0, Math.min(1, ((e.clientX - r.left) * (BAR_ROW.w / r.width) - 3 - 14) / (BAR_ROW.w - 6 - 28))));
           }
         }, { id: it.id }, it.label);
         el.addEventListener('mouseenter', () => this.screen === scr && (this.selected = i));

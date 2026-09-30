@@ -105,7 +105,8 @@ export class Menu {
     this.layer.root.append(this.nameInput);
     this.layer.root.addEventListener('mousemove', (e) => {
       const r = this.stage.getBoundingClientRect();
-      this.mouse = { x: e.clientX - r.left, y: e.clientY - r.top };
+      // 무대가 창 크기로 확대돼 있어도 800×600 좌표로
+      this.mouse = { x: ((e.clientX - r.left) * 800) / r.width, y: ((e.clientY - r.top) * 600) / r.height };
     });
     this.layer.root.addEventListener('wheel', (e) => {
       if (this.screen !== 'select' || this.confirmDelete) return;

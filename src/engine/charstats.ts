@@ -3,6 +3,7 @@
 //       Maxroll — Damage Calculation: 무기 기본 피해 × (1 + 무기 자체 ED%) + 최소/최대 추가, 다른 아이템 ED% 는 힘 보너스와 같은 합산
 //       Maxroll — Defense: 아이템 방어 = 기본 × (1 + ED%) + 추가 방어, 캐릭터 방어 = 아이템 합 + 추가 방어 + 민첩/4
 //       The Arreat Summit — Resistances: 최대 75% (+ 최대 저항 증가), Normal 난이도 저항 감소 없음
+//       난이도 저항 페널티 (클래식 Nightmare −20 / Hell −50): D2MOO SUnitDmg.cpp
 //       itemstatcost.txt 스탯 이름
 import { isBroken } from './price';
 import type { ItemBase, ItemDb } from './items';
@@ -10,6 +11,7 @@ import type { Character, ClassStats } from './player';
 import type { ItemInstance } from './treasure';
 import { statOf, type ItemGen } from './itemgen';
 import { Rng } from './rng';
+import { applyResistPenalty } from './difficulty';
 
 /** 무기 자체에만 적용되는 스탯 (다른 아이템에 있으면 캐릭터 전체에 적용) */
 const WEAPON_LOCAL = new Set(['item_mindamage_percent', 'item_maxdamage_percent', 'mindamage', 'maxdamage']);
@@ -104,7 +106,11 @@ export function armorDefense(item: ItemInstance): number {
   return Math.trunc((item.defense * (100 + statOf(item, 'item_armor_percent'))) / 100) + statOf(item, 'armorclass');
 }
 
-export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null): Derived {
+/**
+ * @param resistPenalty 클래식 난이도 저항 페널티 (Normal 0 / Nightmare −20 / Hell −50, difficultyRules().playerResistPenalty) —
+ *   캐릭터 창 저항은 페널티를 뺀 값. 출처: SUnitDmg.cpp 저항 계산 (applyResistPenalty)
+ */
+export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0): Derived {
   const sums = new Map<string, number>();
   const add = (s: string, v: number) => sums.set(s, (sums.get(s) ?? 0) + v);
   const equipped = Object.values(equipment);
@@ -141,7 +147,8 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
   const lifeBase = ch.maxLife + ((vit - ch.vit) * cs.lifePerVit) / 4 + get('maxhp');
   const manaBase = ch.maxMana + ((ene - ch.ene) * cs.manaPerEne) / 4 + get('maxmana');
   const stamBase = ch.maxStamina + ((vit - ch.vit) * cs.staminaPerVit) / 4 + get('maxstamina');
-  const cap = (base: number, maxStat: string) => Math.min(base, 75 + get(maxStat));
+  // 출처: SUnitDmg.cpp — 페널티를 더한 뒤 양수면 min(75 + max저항, 95), 음수면 −100 아래로 안 내려감
+  const cap = (base: number, maxStat: string) => applyResistPenalty(base, Math.min(95, 75 + get(maxStat)), resistPenalty);
   return {
     str, dex, vit, ene,
     maxLife: Math.floor(lifeBase * (100 + get('item_maxhp_percent')) / 100),

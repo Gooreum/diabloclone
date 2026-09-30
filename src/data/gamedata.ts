@@ -11,9 +11,11 @@ import { ItemGen } from '../engine/itemgen';
 import { ObjectDb } from '../engine/objects';
 import { UniqueDb } from '../engine/uniques';
 import { HirelingDb } from '../engine/hireling';
+import { CubeDb } from '../engine/cube';
 import { parseGamble } from '../engine/shop';
 import { parseStateOverlays } from '../engine/states';
 import type { GameData } from '../engine/game';
+import type { Difficulty } from '../engine/difficulty';
 import { GameTables, type AssetSource } from './tables';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
@@ -42,11 +44,29 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
     difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
     objects: new ObjectDb({ objects: tables.table('Objects'), objGroup: tables.table('ObjGroup'), shrines: tables.table('shrines'), levels: tables.table('Levels') }),
     hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc')),
+    // 호라드릭 큐브 조합 (cubemain.txt — 유니크·세트 이름 입력은 uniqueitems / setitems index)
+    cube: new CubeDb(tables.table('CubeMain'), items, treasure.gen.uniques.map((u) => u.name), treasure.gen.setItems.map((u) => u.name)),
     gamble: parseGamble(items, tables.table('gamble')),
     stateOverlays: parseStateOverlays(tables.table('States'), tables.table('Overlay')),
     uniques: new UniqueDb(monsters, {
       monUMod: tables.table('MonUMod'), superUniques: tables.table('SuperUniques'), monPreset: tables.table('MonPreset'), monPlace: tables.table('MonPlace'),
       prefix: tables.table('UniquePrefix'), suffix: tables.table('UniqueSuffix'), appellation: tables.table('UniqueAppellation'),
     }),
+  };
+}
+
+/**
+ * 난이도 판 GameData: 몬스터 표(monstats (N)/(H)·MonLvl (N)/(H)), 슈퍼유니크 표(TC(N)·Utrans(N)), 오브젝트 레벨 표(MonLvl2/3·상자 TC) 만 바꾸고 나머지는 같은 객체.
+ * 월드 만들기(buildActWorld — levels.txt MonDen·nmon 목록)와 Game 이 같은 사본을 쓴다.
+ * 출처: 원작은 표 하나에 난이도 칸 배열을 들고 pGame->nDifficulty 로 고른다 — 여기서는 게임마다 그 난이도의 표 사본
+ */
+export function withDifficulty(data: GameData, difficulty: Difficulty): GameData {
+  if (difficulty === (data.monsters.difficulty ?? 0)) return data;
+  const monsters = data.monsters.forDifficulty(difficulty);
+  return {
+    ...data,
+    monsters,
+    ...(data.uniques ? { uniques: data.uniques.forDifficulty(difficulty, monsters) } : {}),
+    ...(data.objects ? { objects: data.objects.forDifficulty(difficulty) } : {}),
   };
 }

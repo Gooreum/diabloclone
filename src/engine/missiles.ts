@@ -43,6 +43,8 @@ export interface MissileDef {
   returnFire: boolean;
   /** 기존 몬스터 미사일 코드 호환 (= vel, srcDamage) */
   srcDamagePct: number;
+  /** 그리기 혼합 (missiles.txt Trans: 0 불투명, 그 밖 = 빛 더하기). 근사(원작 미확인): 원작 DrawMode 세부 대신 가산 혼합 하나 */
+  trans: number;
 }
 
 export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
@@ -71,6 +73,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       explosionMissile: r.ExplosionMissile ?? '', subMissile1: r.SubMissile1 ?? '', hitSubMissile1: r.HitSubMissile1 ?? '',
       eDmgSymPerCalc: parseCalc(r.EDmgSymPerCalc), sHitCalc: parseCalc(r.SHitCalc1), applyMastery: n(r.ApplyMastery) === 1, returnFire: n(r.ReturnFire) === 1,
       srcDamagePct: src < 0 ? 0 : src,
+      trans: n(r.Trans),
     });
   }
   return out;

@@ -9,9 +9,14 @@
 // 8명 넘으면 스크롤: 오른쪽 스크롤 막대 data\global\ui\PANEL\scrollbar.dc6 (10×10: 0 위, 1 아래, 2·3 눌림, 4 손잡이, 5 바탕 — 원작 그림 확인),
 //   출처(배치): OpenDiablo2 character_select.go 스크롤 막대 (586, 87, 높이 369), 한 번에 한 줄(2명)
 // 지우기 확인: CharSelect\PopUpOkCancel.dc6 (264×176, 단추 자리 y 133~164 — 원작 그림 측정) + FrontEnd\CancelButtonBlank.dc6 (96×32)
+// 난이도 창 (Phase 8): 원작 클래식 — 캐릭터를 고르고 OK 했을 때 Nightmare 가 열린 캐릭터면 난이도 창 (Normal / Nightmare / Hell, 열리지 않은 난이도는 못 누름),
+//   아니면 바로 Normal. 그림 FrontEnd\PopUp_340x224.dc6 (256 + 84 × 224 두 조각, 아래 128×32 단추 자리 x 108 y 182 — 원작 그림 측정) + WideButtonBlank
+//   근사(원작 미확인): 창 가운데 배치, 난이도 단추 y (창 위 33 부터 40 간격), 문구 NORMAL/NIGHTMARE/HELL/CANCEL (D2Launch 내장 문자열), 잠긴 단추는 어둡게
+// 칭호 (Phase 8): 저장의 진행 값 → Sir/Dame·Lord/Lady·Baron/Baroness 를 이름 위 줄에 (근사(원작 미확인): 줄 위치)
 // 근사(원작 미확인): 단추 문구·클래스 설명·지우기 확인 문구는 원작 D2Launch 내장 문자열(string.tbl 에 없음)을 기억에 따라 영어로, 애니메이션 속도 초당 25프레임,
 //   영웅 그림 위치(칸 왼쪽 45, 아래 82), 확인 창 가운데 배치, Battle.net·Other Multiplayer 는 동작 없음
 import type { HeroSummary } from '../engine/save';
+import type { Difficulty } from '../engine/difficulty';
 import { validHeroName } from '../engine/save';
 import { CLASSIC_CLASSES, type ClassName } from '../engine/player';
 import { UI, type UiArt } from './art';
@@ -19,7 +24,7 @@ import { HotLayer, type HRect } from './hotspot';
 import { HeroStore } from './storage';
 import { drawText } from './text';
 
-export type MenuResult = { kind: 'new'; name: string; cls: ClassName } | { kind: 'load'; name: string };
+export type MenuResult = { kind: 'new'; name: string; cls: ClassName } | { kind: 'load'; name: string; difficulty: Difficulty };
 
 const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;
@@ -28,6 +33,12 @@ const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
 const SCROLL = `${UI}PANEL\\scrollbar.dc6`, POPUP = `${CS}PopUpOkCancel.dc6`, SMALL = `${FE}CancelButtonBlank.dc6`;
 const SB = { x: 586, y: 87, h: 369 } as const;
 const POP = { x: 268, y: 212, w: 264, h: 176 } as const;
+const DIFF_POPUP = `${FE}PopUp_340x224.dc6`;
+/** 난이도 창 (800×600 가운데), 아래 단추 자리 (그림 안 x 108 y 182, 128×32) */
+const DPOP = { x: 230, y: 188, w: 340, h: 224 } as const;
+const DPOP_CANCEL = { x: DPOP.x + 108, y: DPOP.y + 182, w: 128, h: 32 } as const;
+const DIFF_LABELS = ['Normal', 'Nightmare', 'Hell'] as const;
+const diffRect = (d: number): HRect => ({ x: DPOP.x + 34, y: DPOP.y + 33 + d * 40, w: 272, h: 35 });
 /** 캐릭터 선택 칸의 영웅 그림 (main: 저장된 장비로 COF 합성). 그렸으면 true */
 export type HeroFigure = (ctx: CanvasRenderingContext2D, name: string, x: number, y: number, now: number) => boolean;
 
@@ -59,6 +70,8 @@ export class Menu {
   /** 스크롤 (줄 단위, 한 줄 = 2명) */
   private scroll = 0;
   private confirmDelete = false;
+  /** 난이도 창이 떠 있는 영웅 (없으면 null) */
+  private diffHero: HeroSummary | null = null;
   /** 영웅 그림 (없으면 클래스 서 있기 그림으로 근사) */
   heroFigure: HeroFigure | null = null;
   /** 맨 위에 덧그리기 (원작 커서) */
@@ -98,7 +111,7 @@ export class Menu {
       if (this.screen !== 'select' || this.confirmDelete) return;
       this.scrollBy(e.deltaY > 0 ? 1 : -1);
     });
-    void sky.preload([SCROLL, POPUP, SMALL, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
+    void sky.preload([SCROLL, POPUP, SMALL, DIFF_POPUP, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
     void fechar.preload([`${FE}CharacterCreate.dc6`, `${FE}fire.dc6`, `${FE}textbox.dc6`, ...CLASSIC_CLASSES.flatMap((c) => [heroFile(c, 'NU1'), heroFile(c, 'NU2'), heroFile(c, 'FW'), heroFile(c, 'NU3'), heroFile(c, 'BW')])]);
   }
 
@@ -138,6 +151,7 @@ export class Menu {
   private go(screen: Screen): void {
     this.screen = screen;
     this.err = '';
+    this.diffHero = null;
     this.layer.only(new Set(['__none']));
     this.nameInput.style.display = 'none';
     if (screen === 'title') {
@@ -155,7 +169,7 @@ export class Menu {
       this.btn('selexit', { x: 33, y: 537, w: 128, h: 35 }, () => this.go('title'), 'btn-select-exit', 'Exit');
       this.btn('selok', { x: 627, y: 537, w: 128, h: 35 }, () => {
         const h = this.heroes[this.selectedHero];
-        if (h) this.finish({ kind: 'load', name: h.name });
+        if (h) this.startHero(h);
       }, 'btn-select-ok', 'OK');
     } else {
       this.cls = null;
@@ -194,7 +208,10 @@ export class Menu {
       const el = this.layer.button(k, this.heroRect(i - first), (e) => {
         const idx = this.heroes.findIndex((x) => x.name === h.name);
         this.selectedHero = idx;
-        if (e.detail >= 2) this.finish({ kind: 'load', name: h.name });
+        if (e.detail >= 2 && !this.diffHero) {
+          const cur = this.heroes[idx];
+          if (cur) this.startHero(cur);
+        }
       }, { id: `hero-${h.name}` }, h.name);
       if (!vis) el.style.display = 'none';
     });
@@ -212,6 +229,43 @@ export class Menu {
   /** e2e: 스크롤 줄 */
   get scrollRow(): number {
     return this.scroll;
+  }
+
+  /** 영웅으로 게임 시작: Nightmare 가 열렸으면 난이도 창, 아니면 바로 Normal (원작 클래식 싱글플레이) */
+  private startHero(h: HeroSummary): void {
+    if (this.diffHero) return;
+    if (!h.difficultyUnlocked) {
+      this.finish({ kind: 'load', name: h.name, difficulty: 0 });
+      return;
+    }
+    this.diffHero = h;
+    const keys = new Set<string>(['diffcancel']);
+    DIFF_LABELS.forEach((label, d) => {
+      keys.add(`diff${d}`);
+      this.btn(`diff${d}`, diffRect(d), () => this.pickDifficulty(d as Difficulty), `btn-diff-${label.toLowerCase()}`, label);
+      const el = document.getElementById(`btn-diff-${label.toLowerCase()}`);
+      if (el) (el as HTMLButtonElement).disabled = d > h.difficultyUnlocked;
+    });
+    this.btn('diffcancel', DPOP_CANCEL, () => this.closeDifficulty(), 'btn-diff-cancel', 'Cancel');
+    // 창이 떠 있는 동안 다른 단추는 막는다
+    this.layer.only(keys);
+  }
+
+  private pickDifficulty(d: Difficulty): void {
+    const h = this.diffHero;
+    if (!h || d > h.difficultyUnlocked) return;
+    this.diffHero = null;
+    this.finish({ kind: 'load', name: h.name, difficulty: d });
+  }
+
+  private closeDifficulty(): void {
+    this.diffHero = null;
+    this.go('select');
+  }
+
+  /** e2e: 난이도 창이 떠 있는가 */
+  get difficultyOpen(): boolean {
+    return !!this.diffHero;
   }
 
   /** 지우기 확인 창 (원작: 정말 지울지 묻는다) */
@@ -314,6 +368,7 @@ export class Menu {
         if (i === this.selectedHero) a.drawTiles(ctx, `${CS}charselectbox.dc6`, 2, r.x, r.y, 0, 2);
         // 영웅 그림: 게임 속 모습 (없으면 근사: 클래스 프런트엔드 서 있기 그림을 줄여서)
         if (!this.heroFigure?.(ctx, h.name, r.x + 45, r.y + 82, now)) this.frontFigure(h.cls, r.x + 45, r.y + 82, fr);
+        if (h.title) drawText(ctx, h.title, r.x + 100, r.y + 4, { font: 'font16', color: 'gold' });
         drawText(ctx, h.name, r.x + 100, r.y + 20, { font: 'font16', color: 'gold' });
         drawText(ctx, `Level ${h.level} ${h.cls}`, r.x + 100, r.y + 40, { font: 'font16', color: 'white' });
       });
@@ -323,6 +378,7 @@ export class Menu {
       this.button(a, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');
       this.button(a, MED, { x: 627, y: 537, w: 128, h: 35 }, 'OK');
       if (this.confirmDelete) this.drawConfirm(ctx);
+      if (this.diffHero) this.drawDifficulty(ctx, this.diffHero);
     } else {
       const a = this.fechar;
       a.drawScreen(ctx, `${FE}CharacterCreate.dc6`);
@@ -377,6 +433,25 @@ export class Menu {
       a.draw(ctx, SMALL, 0, bx, POP.y + 133);
       drawText(ctx, label, bx + 48, POP.y + 142, { font: 'fontexocet10', align: 'center', color: 'black' });
     }
+  }
+
+  /** 난이도 창: PopUp_340x224 + 난이도 단추 3개 + 아래 단추 자리에 CANCEL */
+  private drawDifficulty(ctx: CanvasRenderingContext2D, h: HeroSummary): void {
+    const a = this.sky;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, 800, 600);
+    a.drawTiles(ctx, DIFF_POPUP, 2, DPOP.x, DPOP.y, 0, 2);
+    DIFF_LABELS.forEach((label, d) => {
+      const r = diffRect(d), locked = d > h.difficultyUnlocked;
+      a.drawTiles(ctx, WIDE, 2, r.x, r.y, 0, 2);
+      drawText(ctx, label.toUpperCase(), r.x + r.w / 2, r.y + 10, { font: 'fontexocet10', align: 'center', color: 'black' });
+      // 근사(원작 미확인): 잠긴 난이도 단추는 어둡게
+      if (locked) {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+      }
+    });
+    drawText(ctx, 'CANCEL', DPOP_CANCEL.x + DPOP_CANCEL.w / 2, DPOP_CANCEL.y + 9, { font: 'fontexocet10', align: 'center', color: 'black' });
   }
 
   private drawHero(c: ClassName, now: number): void {

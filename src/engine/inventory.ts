@@ -13,6 +13,8 @@ export type BodyLoc = (typeof BODY_LOCS)[number];
 
 export const INV_W = 10, INV_H = 4;
 export const STASH_W = 6, STASH_H = 4;
+/** 호라드릭 큐브 격자 (출처: inventory.txt "Transmogrify Box Page 1" gridX 3 × gridY 4) */
+export const CUBE_W = 3, CUBE_H = 4;
 /** belts.txt numboxes (행 순서 = armor.txt belt 값) */
 export const BELT_BOXES = [12, 8, 4, 16, 8, 12, 16];
 const DEFAULT_BELT = 2;

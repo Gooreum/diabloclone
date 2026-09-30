@@ -7,6 +7,7 @@
 import type { TxtRow } from '../formats/txt';
 import { COLLIDE_DOOR, COLLIDE_MASK_PLACEMENT, COLLIDE_OBJECT, type CollisionMap } from './collision';
 import { Rng } from './rng';
+import type { Difficulty } from './difficulty';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
@@ -50,8 +51,11 @@ export interface ShrineRec { code: number; name: string; arg0: number; arg1: num
 
 export interface ObjGroupRec { id: number; entries: { id: number; density: number; prob: number }[]; shrines: boolean; wells: boolean }
 
-/** levels.txt 에서 오브젝트가 쓰는 칸 */
-export interface LevelObjInfo { id: number; act: number; waypoint: number; monLvl: number; themes: number; objGrp: number[]; objPrb: number[] }
+/**
+ * levels.txt 에서 오브젝트가 쓰는 칸. monLvl = 이 표 난이도의 클래식 레벨 몬스터 레벨 (MonLvl1 / MonLvl2 / MonLvl3).
+ * 출처: DATATBLS_GetMonsterLevelInArea(nLevelId, nDifficulty, bExpansion) — 클래식은 wMonLvl[난이도]
+ */
+export interface LevelObjInfo { id: number; act: number; waypoint: number; monLvl: number; monLvlByDiff?: number[]; themes: number; objGrp: number[]; objPrb: number[] }
 
 const LAYERS = ['HD', 'TR', 'LG', 'RA', 'LA', 'RH', 'LH', 'SH', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'];
 
@@ -65,6 +69,15 @@ export class ObjectDb {
    * 출처: ObjRgn.cpp OBJRGN_AllocObjectControl (pShrineSubTypeIds)
    */
   readonly shrineClasses: number[][] = [[], [], [], [], [], [], [], []];
+  /** 이 표 난이도 (레벨 몬스터 레벨·상자 TC) */
+  readonly difficulty: Difficulty = 0;
+
+  /** 난이도 칸 (MonLvl2/3, 상자 "Act N (N) Chest") 을 쓰는 사본 — 오브젝트·신전 표는 같이 쓴다 */
+  forDifficulty(d: Difficulty): ObjectDb {
+    if (d === this.difficulty) return this;
+    const levels = new Map([...this.levels].map(([k, v]) => [k, { ...v, monLvl: v.monLvlByDiff?.[d] ?? v.monLvl }]));
+    return Object.assign(Object.create(ObjectDb.prototype) as ObjectDb, this, { difficulty: d, levels });
+  }
 
   constructor(t: { objects: TxtRow[]; objGroup: TxtRow[]; shrines: TxtRow[]; levels: TxtRow[] }) {
     for (const r of t.objects) {
@@ -100,7 +113,7 @@ export class ObjectDb {
       const id = n(r.Id);
       if (!r.Name || r.Name === 'Expansion') continue;
       this.levels.set(id, {
-        id, act: n(r.Act), waypoint: r.Waypoint === undefined || r.Waypoint === '' ? 255 : n(r.Waypoint), monLvl: n(r.MonLvl1), themes: n(r.Themes),
+        id, act: n(r.Act), waypoint: r.Waypoint === undefined || r.Waypoint === '' ? 255 : n(r.Waypoint), monLvl: n(r.MonLvl1), monLvlByDiff: [n(r.MonLvl1), n(r.MonLvl2), n(r.MonLvl3)], themes: n(r.Themes),
         objGrp: Array.from({ length: 8 }, (_, k) => n(r[`ObjGrp${k}`])), objPrb: Array.from({ length: 8 }, (_, k) => n(r[`ObjPrb${k}`])),
       });
     }
@@ -669,9 +682,11 @@ export function chestTcIndex(db: ObjectDb, levelNo: number): number {
   return 0;
 }
 
+/** 출처: DATATBLS_GetTreasureClassExRecordFromActAndDifficulty — pChestTreasureClasses[색인 + 3 × (막 + 5 × 난이도)] ("Act N (N) Chest A" …) */
 export function chestTcName(db: ObjectDb, levelNo: number): string {
   const act = (db.levels.get(levelNo)?.act ?? 0) + 1;
-  return `Act ${act} Chest ${'ABC'[chestTcIndex(db, levelNo)]}`;
+  const diff = ['', ' (N)', ' (H)'][db.difficulty ?? 0] ?? '';
+  return `Act ${act}${diff} Chest ${'ABC'[chestTcIndex(db, levelNo)]}`;
 }
 
 /** 원작 상자 조작: 떨어뜨릴 TC 굴림 횟수. 출처: OBJECTS_OperateFunction04_Chest — 잠김 2, 그 외 1 (25% 는 빈 상자, 스파크·잠김은 항상) */

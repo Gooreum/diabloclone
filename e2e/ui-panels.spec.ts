@@ -330,7 +330,15 @@ test('Phase 12 UI: 로딩·커서·금화 창·Alt 이름표·가리킨 유닛·
   expect(lit).toBe(true);
   await shot12(page, 'hover-highlight');
   // 커서: 보통 손 → 인벤토리 아이템 위 = 손 애니메이션 → 들면 아이템 그림
-  await hover(page, { x: 250, y: 300 });
+  // 아무 유닛·아이템 선택 상자에도 걸리지 않는 빈 땅 (마을 NPC 가 걸어 다니므로 자리를 고른다)
+  const empty = await page.evaluate(() => {
+    const boxes = window.__game!.input!.pickBoxes;
+    for (let y = 120; y <= 420; y += 30)
+      for (let x = 60; x <= 740; x += 40)
+        if (!boxes.some((b) => x >= b.x - 10 && y >= b.y - 10 && x < b.x + b.w + 10 && y < b.y + b.h + 10)) return { x, y };
+    return { x: 250, y: 300 };
+  });
+  await hover(page, empty);
   await page.waitForTimeout(200);
   expect(await page.evaluate(() => window.__game!.ui!.cursor.state)).toBe('hand');
   await page.keyboard.press('i');

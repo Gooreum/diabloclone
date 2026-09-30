@@ -5,6 +5,7 @@
 //       sub_6FCC7FA0 (고용), D2GAME_NPC_BuildHirelingList_6FCC6FF0
 // 출처: D2MOO D2Game/src/UNIT/SUnitProxy.cpp — SUNITPROXY_InitializeNpcControl (NPC 표: 막·상인 여부), SUNITPROXY_UpdateVendorInventory (재고 초기화)
 // (https://github.com/ThePhrozenKeep/D2MOO)
+import { questNameKey } from './quests/messages-acts';
 import type { GameData, GameEvent } from './game';
 import type { ItemStore } from './itemstore';
 import type { ItemInstance } from './treasure';
@@ -15,15 +16,21 @@ import { gambleCost, isBroken, isRepairable, needsRepair, transactionCost, type 
 import { buildHireList, hirelingInit, type HirelingInit, type MercEntry } from './hireling';
 
 /** NPC 메뉴 항목 */
-export type NpcOption = 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' | 'imbue' | 'goEast' | QuestTopic;
+export type NpcOption =
+  | 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' | 'imbue'
+  /** 막 이동: Warriv go east (Act 1 → 2) / go west (Act 2 → 1), Meshif sail east (Act 2 → 3) / sail west (Act 3 → 2) */
+  | 'goEast' | 'goWest' | 'sailEast' | 'sailWest'
+  | QuestTopic;
 /** 메뉴의 퀘스트 항목: quest:<퀘스트 번호>:<원작 문자열 번호> (원작 QUESTS_InitScrollTextChain nMenu 2 대사) */
 export type QuestTopic = `quest:${number}:${number}`;
 
 export interface NpcDef {
   /** 원작 메뉴 (위에서 아래) */
   menu: NpcOption[];
-  /** npc.txt 행 · weapons/armor/misc.txt 상인 컬럼 (소문자) */
+  /** weapons/armor/misc.txt 상인 컬럼 (소문자) — 원작 표 철자 그대로 (Hratli 는 'hralti') */
   vendor?: string;
+  /** npc.txt 행 (가격 배수). 없으면 vendor 와 같다 */
+  price?: string;
   /** 막 (0 = Act 1) */
   act: number;
   repair?: boolean;
@@ -31,41 +38,84 @@ export interface NpcDef {
   /** 말을 걸면 치료 (D2GAME_NPC_Heal) */
   heal?: boolean;
   hire?: boolean;
+  /** 죽은 용병 부활 (D2GAME_NPC_ResurrectMerc: KASHYA·GREIZ·ASHEARA·TYRAEL2) */
+  resurrect?: boolean;
   identify?: boolean;
   /** string.tbl 대사 키 접두사 (AkaraGossip1 …) */
   gossip: string;
 }
 
 /**
- * Act 1 NPC (monstats Id).
- * 출처: SUNITPROXY_InitializeNpcControl (AKARA·CHARSI·GHEED 상인), NPC_HandleDialogMessage (상점·도박), D2GAME_NPC_Repair (CHARSI),
- *       D2GAME_NPC_Heal (AKARA), D2GAME_NPC_ResurrectMerc / BuildHirelingList (KASHYA), D2GAME_NPC_IdentifyAllItems (CAIN2~6 — Act 1 마을은 CAIN5)
- * 근사(원작 미확인): 메뉴 순서·문구 선택은 D2Client 메뉴 표 대신 위 서버 함수가 받는 요청 종류로 구성
+ * 마을 NPC (monstats Id) — Act 1~4 (클래식).
+ * 출처: SUnitProxy.cpp SUNITPROXY_InitializeNpcControl (NPC 표: 막·상인 여부),
+ *       SUnitNpc.cpp NPC_HandleDialogMessage (1 상점: GHEED AKARA CHARSI DROGNAN FARA ELZIX LYSANDER ASHEARA HRATLI ALKOR ORMUS HALBU JAMELLA,
+ *       2 도박: GHEED ELZIX ALKOR JAMELLA, 3 고용 목록), D2GAME_NPC_Repair (CHARSI FARA HRATLI HALBU),
+ *       D2GAME_NPC_Heal (AKARA ATMA FARA ORMUS JAMELLA), D2GAME_NPC_ResurrectMerc (KASHYA GREIZ ASHEARA TYRAEL2),
+ *       D2GAME_NPC_BuildHirelingList (KASHYA GREIZ ASHEARA), D2GAME_NPC_IdentifyAllItems (CAIN2~6 — Act 1 마을은 CAIN5),
+ *       막 이동 (WARRIV1 → Lut Gholein, WARRIV2 → Rogue Encampment, MESHIF1 → Kurast Docks, MESHIF2 → Lut Gholein)
+ * 출처: misc.txt 등 상인 컬럼 — Hratli 는 원작 표 철자 "Hralti"
+ * 근사(원작 미확인): 메뉴 순서·문구 선택은 D2Client 메뉴 표 대신 위 서버 함수가 받는 요청 종류로 구성.
+ *   Halbu: 클래식 1.14d 데이터(npc.txt 행·Act 4 마을 DS1 프리셋·MonPreset)에 있고 D2MOO 배치 코드에 확장팩 검사가 없어 그대로 둔다 (대사 문자열 없음)
  */
 export const NPC_DEFS: Record<string, NpcDef> = {
+  // ---- Act 1 (Rogue Encampment)
   akara: { menu: ['talk', 'trade', 'cancel'], vendor: 'akara', act: 0, heal: true, gossip: 'Akara' },
   charsi: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'charsi', act: 0, repair: true, gossip: 'Charsi' },
   gheed: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'gheed', act: 0, gamble: true, gossip: 'Gheed' },
-  kashya: { menu: ['talk', 'hire', 'cancel'], act: 0, hire: true, gossip: 'Kashya' },
+  kashya: { menu: ['talk', 'hire', 'cancel'], act: 0, hire: true, resurrect: true, gossip: 'Kashya' },
   warriv1: { menu: ['talk', 'cancel'], act: 0, gossip: 'Warriv' },
   cain5: { menu: ['talk', 'identify', 'cancel'], act: 0, identify: true, gossip: 'Cain' },
   navi: { menu: ['talk', 'cancel'], act: 0, gossip: 'Navi' },
   // 트리스트럼 감옥에서 구한 Cain (MONSTER_CAIN1): 말만 건다
   cain1: { menu: ['talk', 'cancel'], act: 0, gossip: 'Cain' },
+  // ---- Act 2 (Lut Gholein)
+  atma: { menu: ['talk', 'cancel'], act: 1, heal: true, gossip: 'Atma' },
+  drognan: { menu: ['talk', 'trade', 'cancel'], vendor: 'drognan', act: 1, gossip: 'Drognan' },
+  fara: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'fara', act: 1, repair: true, heal: true, gossip: 'Fara' },
+  elzix: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'elzix', act: 1, gamble: true, gossip: 'Elzix' },
+  lysander: { menu: ['talk', 'trade', 'cancel'], vendor: 'lysander', act: 1, gossip: 'Lysander' },
+  // string.tbl 대사 키는 원작 철자 "Griez"
+  greiz: { menu: ['talk', 'hire', 'cancel'], act: 1, hire: true, resurrect: true, gossip: 'Griez' },
+  geglash: { menu: ['talk', 'cancel'], act: 1, gossip: 'Geglash' },
+  jerhyn: { menu: ['talk', 'cancel'], act: 1, gossip: 'Jerhyn' },
+  meshif1: { menu: ['talk', 'cancel'], act: 1, gossip: 'Meshif' },
+  // Kaelan (궁전 문지기). 근사(원작 미확인): 대사 접두사 PalaceGuard
+  act2guard2: { menu: ['talk', 'cancel'], act: 1, gossip: 'PalaceGuard' },
+  warriv2: { menu: ['talk', 'cancel'], act: 1, gossip: 'WarrivAct2' },
+  cain2: { menu: ['talk', 'identify', 'cancel'], act: 1, identify: true, gossip: 'CainAct2' },
+  // Phase 7: 두리엘 방의 Tyrael (MONSTER_TYRAEL1 — A2Q6 대사 302 TyraelGossip1 뒤 마을 포털)
+  tyrael1: { menu: ['talk', 'cancel'], act: 1, gossip: 'Tyrael' },
+  // ---- Act 3 (Kurast Docks)
+  alkor: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'alkor', act: 2, gamble: true, gossip: 'Alkor' },
+  ormus: { menu: ['talk', 'trade', 'cancel'], vendor: 'ormus', act: 2, heal: true, gossip: 'Ormus' },
+  hratli: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'hralti', price: 'hratli', act: 2, repair: true, gossip: 'Hratli' },
+  asheara: { menu: ['talk', 'trade', 'hire', 'cancel'], vendor: 'asheara', act: 2, hire: true, resurrect: true, gossip: 'Asheara' },
+  cain3: { menu: ['talk', 'identify', 'cancel'], act: 2, identify: true, gossip: 'CainAct3' },
+  natalya: { menu: ['talk', 'cancel'], act: 2, gossip: 'Natalya' },
+  meshif2: { menu: ['talk', 'cancel'], act: 2, gossip: 'MeshifAct3' },
+  // ---- Act 4 (Pandemonium Fortress)
+  tyrael2: { menu: ['talk', 'cancel'], act: 3, resurrect: true, gossip: 'TyraelAct4' },
+  jamella: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'jamella', act: 3, gamble: true, heal: true, gossip: 'HellsAngel' },
+  halbu: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'halbu', act: 3, repair: true, gossip: 'Halbu' },
+  cain4: { menu: ['talk', 'identify', 'cancel'], act: 3, identify: true, gossip: 'CainAct4' },
+  // Phase 7: Izual 의 영혼 (MONSTER_IZUALGHOST — A4Q1 대사 675)
+  izualghost: { menu: ['talk', 'cancel'], act: 3, gossip: 'Izual' },
 };
 
 /**
  * 메뉴 문자열 키 (string.tbl). 부활은 원작 표에 없음 → '' (UI 가 근사 문구).
- * imbue = Upgrade "imbue" (Charsi), goEast = WarrivMenu1b "go east", 퀘스트 항목은 퀘스트 이름 qstsa1q<번호>
+ * imbue = Upgrade "imbue" (Charsi), goEast = WarrivMenu1b "go east", goWest = WarrivMenu1c "go west",
+ * sailEast = MeshifMenuEast "sail east", sailWest = MeshifMenuWest "sail west", 퀘스트 항목은 퀘스트 이름 qstsa1q<번호>
  */
 export const NPC_MENU_STRING: Record<Exclude<NpcOption, QuestTopic>, string> = {
   talk: 'TalkMenu', trade: 'NPCMenuTrade', tradeRepair: 'NPCMenuTradeRepair', gamble: 'gamble', hire: 'NPCMenuHire', resurrect: '', identify: 'NPCIdentify1', cancel: 'lowercasecancel',
-  imbue: 'Upgrade', goEast: 'WarrivMenu1b',
+  imbue: 'Upgrade', goEast: 'WarrivMenu1b', goWest: 'WarrivMenu1c', sailEast: 'MeshifMenuEast', sailWest: 'MeshifMenuWest',
 };
 
 /** 메뉴 항목의 string.tbl 키 */
 export function npcMenuKey(o: NpcOption): string {
-  if (o.startsWith('quest:')) return `qstsa1q${o.split(':')[1]}`;
+  // 퀘스트 번호 = 기록 워드 (Act 1 은 1~6, Act 2~4 는 9~14 · 17~22 · 25~27) → qstsa<막>q<번호>
+  if (o.startsWith('quest:')) return questNameKey(Number(o.split(':')[1]));
   return NPC_MENU_STRING[o as Exclude<NpcOption, QuestTopic>] ?? '';
 }
 
@@ -137,8 +187,29 @@ export interface HireCandidate { index: number; name: string; init: HirelingInit
  * 마을 NPC 상태: 상인 재고, 도박 목록, 고용 목록, NPC 시드.
  * 출처: D2NpcControlStrc — pSeed (NPC 굴림 전용), 상인 기록마다 재고(bVendorInit), 플레이어별 도박 인벤토리, 고용 목록(pMercData)
  */
-/** 레벨업 때 재고를 새로 채우는 상인 (npcTrade.bLevelRefresh). 출처: SUNITPROXY_InitializeNpcControl — Act 1 은 Gheed·Charsi */
-export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed'];
+/**
+ * 레벨업 때 재고를 새로 채우는 상인 (npcTrade.bLevelRefresh).
+ * 출처: SUNITPROXY_InitializeNpcControl — Gheed·Charsi·Fara·Hratli·Asheara·Halbu·Jamella (Akara·Lysander·Drognan·Alkor·Ormus·Elzix 는 0)
+ */
+export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed', 'fara', 'hratli', 'asheara', 'halbu', 'jamella'];
+
+/** 막 마을 엔진 레벨 키 (data/world-level.ts LEVEL_KEYS: 1 Rogue Encampment, 40 Lut Gholein, 75 Kurast Docks, 103 Pandemonium Fortress) */
+export const ACT_TOWN_KEYS: readonly string[] = ['town', 'lutgholein', 'kurastdocks', 'pandemonium'];
+
+/** 퀘스트 기록 번호 (출처: D2MOO Quests.h QUESTSTATEFLAG_A2Q6 = 14 Duriel, QUESTSTATEFLAG_A3Q6 = 22 Mephisto, A2Q0 = 8, A3Q0 = 16) */
+export const QUESTFLAG_A2Q0 = 8;
+export const QUESTFLAG_A2Q4 = 12;
+export const QUESTFLAG_A2Q6 = 14;
+export const QUESTFLAG_A3Q0 = 16;
+export const QUESTFLAG_A3Q6 = 22;
+
+/** 막 이동 메뉴 → 도착 막 (0 부터). 출처: NPC_HandleDialogMessage — D2GAME_PlayerChangeAct(LEVEL_LUTGHOLEIN / ROGUEENCAMPMENT / KURASTDOCKTOWN) */
+export const TRAVEL: Partial<Record<NpcOption, { npc: string; to: number }>> = {
+  goEast: { npc: 'warriv1', to: 1 },
+  goWest: { npc: 'warriv2', to: 0 },
+  sailEast: { npc: 'meshif1', to: 2 },
+  sailWest: { npc: 'meshif2', to: 1 },
+};
 
 export class NpcServices {
   /** npc Id → 상점 재고 (원작 bVendorInit 인 동안 유지) */
@@ -164,7 +235,8 @@ export class NpcServices {
 
   priceCtx(h: TradeHost, npc: string): PriceCtx | null {
     const def = NPC_DEFS[npc];
-    const price = def?.vendor ? h.data.npcPrices?.get(def.vendor) : undefined;
+    const row = def?.price ?? def?.vendor;
+    const price = row ? h.data.npcPrices?.get(row) : undefined;
     if (!price) return null;
     return { items: h.data.items, gen: h.data.treasure.gen ?? null, npc: price, difficulty: h.difficulty, bookCharge: h.data.bookCharge, questDone: (f) => h.questDone(f) };
   }
@@ -319,7 +391,7 @@ export class NpcServices {
     const f = h.store.find(itemId);
     const items = h.data.items;
     const b = f ? items.base(f.item.code) : undefined;
-    if (!f || !b || f.where.kind === 'stash' || f.where.kind === 'equip') return false;
+    if (!f || !b || f.where.kind === 'stash' || f.where.kind === 'cube' || f.where.kind === 'equip') return false;
     if (b.quest) {
       h.emit({ type: 'sellFailed', reason: 'quest' });
       return false;

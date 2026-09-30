@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GameTables } from '../../src/data/tables';
 import {
-  ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound,
+  ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound, npcSoundName,
   objectOpenSound, questSpeechCandidates, resolveSoundPath, weaponSwingSound,
 } from '../../src/data/sounds';
 import { NPC_MESSAGES } from '../../src/engine/quests/messages';
@@ -42,8 +42,28 @@ describe('sounds.txt 규칙 (합성 표)', () => {
     expect(questSpeechCandidates('A1Q4TragedyOfTristramCain', 'cain5')).toEqual(['cain_act1_q4_tragedy']);
     expect(questSpeechCandidates('Nothing', 'akara')).toEqual([]);
   });
+  it('Act 2~4 퀘스트 대사 키 → 소리 이름', () => {
+    expect(questSpeechCandidates('A2Q1InitAtma', 'atma')).toEqual(['atma_act2_q1_init']);
+    expect(questSpeechCandidates('A2Q1AfterInitWarrivAct2', 'warriv2')).toEqual(['warriv_act2_q1_after']);
+    expect(questSpeechCandidates('A2Q4SuccessfulGriez', 'greiz')[0]).toBe('greiz_act2_q4_success');
+    expect(questSpeechCandidates('A2Q2EarlyReturnCapCain', 'cain2')).toEqual(['cain_act2_q2_early_cap']);
+    expect(questSpeechCandidates('A2Q2SuccessfulStaffCain', 'cain2')[0]).toBe('cain_act2_q2_success');
+    expect(questSpeechCandidates('A3Q2EarlyReturnBrainCain', 'cain3')).toEqual(['cain_act3_q2_earlybrain']);
+    expect(questSpeechCandidates('A3Q2SuccessfulCain', 'cain3')).toContain('cain_act3_q2_successful');
+    expect(questSpeechCandidates('A3Q5AfterInitMeshifAct3VA', 'meshif2')).toEqual(['meshif_act3_q5_after_va', 'meshif_act3_q5_after']);
+    expect(questSpeechCandidates('A3Q4Init2Natalya', 'natalya')).toEqual(['natalya_act3_q4_init']);
+    expect(questSpeechCandidates('A3Q4Init1CainAct3', 'cain3')).toEqual(['cain_act3_q4_init']);
+    expect(questSpeechCandidates('A4Q3InitHasStoneCain', 'cain4')).toEqual(['cain_act4_q3_init_has_stone']);
+    expect(questSpeechCandidates('A4Q3InitNoStoneCain', 'cain4')).toEqual(['cain_act4_q3_init_no_stone']);
+    expect(questSpeechCandidates('A3Q3RewardOrmus', 'ormus')).toEqual(['ormus_act3_q3_success_reward']);
+    expect(questSpeechCandidates('A2Q1Init', 'atma')).toEqual([]);
+  });
   it('NPC 인사·잡담 (pickGossip 과 같은 번호 규칙)', () => {
-    expect(npcGreetingSound('warriv1')).toBe('warriv_greeting_1');
+    expect(npcGreetingSound('warriv1')).toEqual(['warriv_greeting_1', 'warriv_greeting']);
+    expect(npcSoundName('izualghost')).toBe('izual');
+    expect(npcGreetingSound('izualghost')).toContain('izual_greeting');
+    expect(npcSoundName('meshif2')).toBe('meshif');
+    expect(npcSoundName('tyrael2')).toBe('tyrael');
     const has = (k: string) => ['AkaraGossip1', 'AkaraGossip2', 'AkaraGossip4'].includes(k);
     expect(npcGossipSound('akara', 'Akara', 'Barbarian', false, 2, has)).toEqual(['akara_act1_gossip_4']);
     expect(npcGossipSound('akara', 'Akara', 'Sorceress', true, 0, has)).toEqual(['akara_act1_intro_sor', 'akara_act1_intro']);
@@ -128,7 +148,7 @@ describe.skipIf(!hasSound)('원작 sounds.txt · SoundEnviron · MonSounds', () 
   });
 
   it('대사: NPC 인사·잡담·퀘스트 대사가 d2speech.mpq (data\\local\\sfx) 에 있다', () => {
-    expect(path(npcGreetingSound('akara'))).toBe('data\\local\\sfx\\act1\\akara\\aka_hello.wav');
+    expect(path(npcGreetingSound('akara')[0]!)).toBe('data\\local\\sfx\\act1\\akara\\aka_hello.wav');
     expect(path('akara_act1_gossip_1')).toBe('data\\local\\sfx\\act1\\akara\\aka_act1_gossip_01.wav');
     expect(path(questSpeechCandidates('A1Q1InitAkara', 'akara')[0] ?? '')).toBe('data\\local\\sfx\\act1\\akara\\aka_act1_q1_init.wav');
     // Act 1 퀘스트 대사 표의 모든 키가 소리로 이어진다 (후보 중 하나)

@@ -3,9 +3,9 @@
 //       레이어 DCC = <토큰>\<레이어>\<토큰><레이어><외형코드><모드><레이어 무기클래스>.dcc, 프레임별 레이어 순서 = COF priority
 // 출처: OpenDiablo2 d2dcc/dcc_dir_lookup.go Dir64ToDcc (64방향 → 파일 방향 인덱스)
 import { parseCof, type Cof } from '../formats/cof';
-import { parseDcc, type DccDirection } from '../formats/dcc';
+import { parseDcc, type Dcc, type DccDirection } from '../formats/dcc';
 import type { DccHandle } from '../assets/gfx-client';
-import { parseDc6 } from '../formats/dc6';
+import { parseDc6, type Dc6 } from '../formats/dc6';
 import type { ColorShift, IndexedImage, SpriteSink } from './sink';
 import { newSpriteId } from './sprites';
 
@@ -26,8 +26,7 @@ async function openDcc(a: AsyncAssets, path: string): Promise<DccHandle | null> 
   if (a.loadDcc) return a.loadDcc(path);
   const b = await loadOnce(a, path);
   if (!b) return null;
-  const dcc = parseDcc(b);
-  return { directions: dcc.directions.length, framesPerDirection: dcc.framesPerDirection, dir: async (d) => dcc.directions[d] ?? null };
+  return handleOf(parseDcc(b));
 }
 /** 해석한 유닛 그림(COF+DCC) 을 기억할 최대 개수 — 넘으면 오래 안 쓴 것부터 버린다 */
 const MAX_COMPOSITES = 1200;
@@ -49,6 +48,37 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
   if (numDirs === 32) return DIR32[d] ?? 0;
   return d % numDirs;
 }
+
+/**
+ * DC6 레이어를 DCC 모양으로 (방향마다 프레임들의 합집합 상자, 프레임 픽셀을 그 상자에 놓는다).
+ * 출처: Phrozen Keep DC6 문서 — offsetX = 왼쪽, offsetY = 프레임 아래쪽 기준 (위쪽 = offsetY − height)
+ */
+function dc6AsDcc(d: Dc6): Dcc {
+  const fpd = Math.max(1, d.framesPerDirection);
+  const directions = Array.from({ length: Math.max(1, d.directions) }, (_, di) => {
+    const frs = d.frames.slice(di * fpd, di * fpd + fpd);
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const f of frs) {
+      left = Math.min(left, f.offsetX);
+      top = Math.min(top, f.offsetY - f.height);
+      right = Math.max(right, f.offsetX + f.width);
+      bottom = Math.max(bottom, f.offsetY);
+    }
+    if (!Number.isFinite(left)) left = top = right = bottom = 0;
+    const box = { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+    const frames = frs.map((f) => {
+      const pixels = new Uint8Array(box.width * box.height);
+      const ox = f.offsetX - left, oy = f.offsetY - f.height - top;
+      for (let y = 0; y < f.height; y++) pixels.set(f.pixels.subarray(y * f.width, y * f.width + f.width), (y + oy) * box.width + ox);
+      return { box: { ...box }, pixels };
+    });
+    return { box, frames };
+  });
+  return { directions, framesPerDirection: fpd };
+}
+
+/** 이미 해석한 그림을 방향 단위 핸들로 */
+const handleOf = (dcc: Dcc): DccHandle => ({ directions: dcc.directions.length, framesPerDirection: dcc.framesPerDirection, dir: async (d) => dcc.directions[d] ?? null });
 
 /** DCC 레이어: 방향은 처음 그릴 때 해석한다 (undefined = 아직 안 함, 'loading' = 해석 중, null = 없음) */
 interface LayerGfx { h: DccHandle; dirs: (DccDirection | null | 'loading' | undefined)[]; id: number }
@@ -197,8 +227,14 @@ export class UnitGfx {
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
-        const h = await openDcc(this.assets, `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
+        const stem = `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}`;
+        const h = await openDcc(this.assets, `${stem}.dcc`);
         if (h) layers.set(l.type, { h, dirs: [], id: newSpriteId() });
+        else {
+          // 원작 몇몇 몬스터 레이어는 DC6 (Mephisto 전부, Diablo·Maggot Queen 죽음, Tyrael) — 같은 이름의 .dc6 (d2data.mpq 목록)
+          const b6 = await loadOnce(this.assets, `${stem}.dc6`);
+          if (b6) layers.set(l.type, { h: handleOf(dc6AsDcc(parseDc6(b6))), dirs: [], id: newSpriteId() });
+        }
       }),
     );
     return s.shift ? { cof, layers, shift: s.shift } : { cof, layers };
@@ -279,7 +315,7 @@ export class MissileGfx {
     this.assets = assets;
   }
 
-  draw(sink: SpriteSink, celFile: string, dir64: number, frame: number, x: number, y: number): void {
+  draw(sink: SpriteSink, celFile: string, dir64: number, frame: number, x: number, y: number, blend?: number): void {
     const key = celFile.toLowerCase();
     const hit = this.cache.get(key);
     if (hit === undefined) {
@@ -298,6 +334,7 @@ export class MissileGfx {
     const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
     const fr = dir.frames[f];
     if (!fr) return;
-    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top);
+    // missiles.txt / overlay.txt Trans ≠ 0: 빛 더하기 (검은 바탕이 비친다). 근사(원작 미확인): 원작 DrawMode 종류별 혼합 대신 가산 하나
+    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { blend: blend ? 3 : -1 });
   }
 }

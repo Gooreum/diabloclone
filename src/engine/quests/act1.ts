@@ -97,6 +97,8 @@ const SKILLS_GEMS = ['gsv', 'gsr', 'gsb', 'gsy', 'gsg', 'gsw', 'sku'];
  * 출처: Quests.cpp gpQuestInitTable — 1 Den(InitNo 4, Seq 2), 2 BloodRaven(4, 4), 3 Malus(5, 6), 4 Cain(6, 3), 5 Countess(4, 3), 6 Andariel(4, 37)
  */
 export class Act1Quests {
+  /** 막 번호 (quests/index.ts ActQuestModule) */
+  readonly act = 0;
   private readonly q: Record<number, QuestData> = {
     1: new QuestData(1, 4), 2: new QuestData(2, 4), 3: new QuestData(3, 5), 4: new QuestData(4, 6), 5: new QuestData(5, 4), 6: new QuestData(6, 4),
   };

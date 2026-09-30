@@ -57,6 +57,8 @@ export interface SkillRecord {
   minDam: number; minLevDam: number[]; maxDam: number; maxLevDam: number[]; dmgSymPerCalc: CalcNode | null;
   eType: string; eMin: number; eMinLev: number[]; eMax: number; eMaxLev: number[]; eDmgSymPerCalc: CalcNode | null;
   eLen: number; eLevLen: number[]; eLenSymPerCalc: CalcNode | null;
+  /** skills.txt aitype (1 = 스스로 거는 상태 스킬 — 상태가 있으면 AI 가 다시 쓰지 않는다: Frozen Armor) */
+  aiType: number;
 }
 
 function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => string): SkillRecord {
@@ -93,7 +95,7 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     hitShift: n(r.HitShift), srcDam: n(r.SrcDam),
     minDam: n(r.MinDam), minLevDam: lev('MinLevDam'), maxDam: n(r.MaxDam), maxLevDam: lev('MaxLevDam'), dmgSymPerCalc: calc(r.DmgSymPerCalc),
     eType: r.EType ?? '', eMin: n(r.EMin), eMinLev: lev('EMinLev'), eMax: n(r.EMax), eMaxLev: lev('EMaxLev'), eDmgSymPerCalc: calc(r.EDmgSymPerCalc),
-    eLen: n(r.ELen), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])), eLenSymPerCalc: calc(r.ELenSymPerCalc),
+    eLen: n(r.ELen), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])), eLenSymPerCalc: calc(r.ELenSymPerCalc), aiType: n(r.aitype),
   };
 }
 

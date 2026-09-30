@@ -83,8 +83,8 @@ export interface ItemBase {
 
 export interface VendorStock { min: number; max: number; magicMin: number; magicMax: number; magicLvl: number }
 
-/** weapons/armor/misc.txt 의 상인 컬럼 접두사 (Charsi Gheed Akara …) */
-export const VENDOR_COLUMNS = ['Charsi', 'Gheed', 'Akara', 'Fara', 'Lysander', 'Drognan', 'Hratli', 'Alkor', 'Ormus', 'Elzix', 'Asheara', 'Cain', 'Halbu', 'Jamella', 'Larzuk', 'Malah', 'Drehya'];
+/** weapons/armor/misc.txt 의 상인 컬럼 접두사 (Charsi Gheed Akara …). 원작 표 철자 그대로 — Hratli 는 "Hralti" */
+export const VENDOR_COLUMNS = ['Charsi', 'Gheed', 'Akara', 'Fara', 'Lysander', 'Drognan', 'Hralti', 'Alkor', 'Ormus', 'Elzix', 'Asheara', 'Cain', 'Halbu', 'Jamella', 'Larzuk', 'Malah', 'Drehya'];
 
 export interface ItemTypeDef {
   code: string; name: string; equiv: string[]; normal: boolean; magic: boolean; rare: boolean; treasureClass: boolean; throwable: boolean;

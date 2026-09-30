@@ -4,6 +4,8 @@ import type { NpcOption } from './npc';
 export type ItemLocation =
   | { kind: 'inventory'; x: number; y: number }
   | { kind: 'stash'; x: number; y: number }
+  /** 호라드릭 큐브 칸 (3×4) */
+  | { kind: 'cube'; x: number; y: number }
   | { kind: 'equip'; slot: string }
   | { kind: 'belt'; slot: number }
   | { kind: 'ground' }
@@ -19,7 +21,7 @@ export type Command =
   /** 오브젝트 조작 (걸어가서 연다: 상자·문·신전·우물·웨이포인트·포털) */
   | { type: 'interact'; unitId: number }
   /** 웨이포인트 목록에서 레벨 고르기 (열어 둔 웨이포인트에서 그 레벨 웨이포인트로 이동) */
-  | { type: 'waypoint'; level: string }
+  | { type: 'waypoint'; level: string | number }
   | { type: 'useBelt'; slot: number }
   | { type: 'moveItem'; itemId: number; to: ItemLocation }
   /** 인벤토리·벨트 아이템 사용 (물약 마시기, 두루마리 읽기 — 원작 우클릭) */
@@ -43,6 +45,12 @@ export type Command =
   | { type: 'hire'; index: number }
   /** NPC 대화·상점 닫기 */
   | { type: 'closeNpc' }
+  /** 호라드릭 큐브: 열기(인벤토리·보관함의 큐브 오른쪽 클릭과 같음) · 트랜스뮤트 단추 · 닫기 */
+  | { type: 'openCube' }
+  | { type: 'transmute' }
+  | { type: 'closeCube' }
+  /** 막 이동 다시 시도 (막 월드를 읽는 동안 미뤄 둔 Warriv·Meshif·포털 이동 — 조건은 엔진이 다시 본다) */
+  | { type: 'travelAct'; act: number }
   // ---- [UI Phase 12 Step 2] 골드 옮기기 (원작 금화 창: 보관함 넣기·빼기, 인벤토리에서 떨어뜨리기)
   | { type: 'goldTransfer'; to: 'stash' | 'inventory' | 'ground'; amount: number }
   // ---- [UI Phase 12 Step 2] 끝

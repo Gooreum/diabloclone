@@ -293,10 +293,24 @@ export function npcSoundName(typeId: string): string {
   const t = typeId.toLowerCase();
   if (t.startsWith('cain')) return 'cain';
   if (t.startsWith('warriv')) return 'warriv';
+  if (t === 'izualghost') return 'izual';
+  // 근사(원작 미확인): sounds.txt 에 jamella_young / jamella_old 둘 다 있다. 클래식 Act 4 Jamella 는 young 으로 둔다
+  if (t === 'jamella') return 'jamella_young';
   return t.replace(/\d+$/, '');
 }
 
+/** string.tbl 퀘스트 대사 키 끝의 NPC 이름 (긴 것 먼저) */
+const QUEST_NPC = /(CharsiMain|WarrivAct2|MeshifAct3|CainAct3|Akara|Kashya|Charsi|Gheed|Warriv|Cain|Atma|Greiz|Griez|Elzix|Drognan|Lysander|Meshif|Geglash|Jerhyn|Fara|Alkor|Ormus|Asheara|Hratli|Natalya|Tyrael|Izual)$/;
+
 const QUEST_STATE: [RegExp, string][] = [
+  // Act 2~4 특수 상태 (A2Q2 Cain 조각별, A3Q2 Cain 유물별, A3Q4 Init1~3, A4Q3 영혼석)
+  [/^EarlyReturn(Scroll|Cap|Stave|Cube)$/, 'early_$1'],
+  [/^EarlyReturn(Brain|Eye|Flail|Heart)$/, 'early$1'],
+  [/^SuccessfulStaff$/, 'success'],
+  [/^Reward$/, 'success_reward'],
+  [/^InitHasStone$/, 'init_has_stone'],
+  [/^InitNoStone$/, 'init_no_stone'],
+  [/^Init[123]$/, 'init'],
   [/^AfterInitScroll$/, 'after_scroll'],
   [/^AfterInit$/, 'after'],
   [/^EarlyReturnS$/, 'early_scroll'],
@@ -311,25 +325,40 @@ const QUEST_STATE: [RegExp, string][] = [
 ];
 
 /** 퀘스트 대사 string.tbl 키 → sounds.txt 대사 이름 후보 (앞쪽 우선).
- *  예: A1Q1InitAkara → akara_act1_q1_init, A1Q4SuccessfulScrollKashya → kashya_act1_q4_success_scroll
+ *  예: A1Q1InitAkara → akara_act1_q1_init, A1Q4SuccessfulScrollKashya → kashya_act1_q4_success_scroll,
+ *      A3Q5AfterInitMeshifAct3VA → meshif_act3_q5_after_va, A2Q2EarlyReturnCapCain → cain_act2_q2_early_cap
  *  근사(원작 미확인): 원작은 D2Client 대사 표(문자열 번호 ↔ 소리 번호). 여기서는 키 이름 규칙으로 맞춘다. */
 export function questSpeechCandidates(key: string, typeId: string): string[] {
-  const m = /^A(\d)Q(\d)(.*?)(Akara|Kashya|CharsiMain|Charsi|Gheed|Warriv|Cain)$/.exec(key);
+  const m = /^A(\d)Q(\d)(.*)$/.exec(key);
   if (!m) return [];
-  const [, act, q, state] = m as unknown as [string, string, string, string];
+  const [, act, q] = m as unknown as [string, string, string];
+  // Lam Esen·Khalim 을 끝내지 않은 상태의 대사 (…VA) → _va
+  let rest = m[3]!;
+  const va = rest.endsWith('VA');
+  if (va) rest = rest.slice(0, -2);
+  const who = QUEST_NPC.exec(rest);
+  if (!who) return [];
+  const state = rest.slice(0, who.index);
   const npc = npcSoundName(typeId);
   for (const [re, s] of QUEST_STATE) {
     if (!re.test(state)) continue;
-    const base = `${npc}_act${act}_q${q}_${s}`;
+    const name = state.replace(re, s).toLowerCase();
+    const base = `${npc}_act${act}_q${q}_${name}${va ? '_va' : ''}`;
+    const out = [base];
+    // VA 소리가 없으면 기본 상태로
+    if (va) out.push(`${npc}_act${act}_q${q}_${name}`);
     // 두루마리 변형이 없으면 기본 상태로 (예: gheed_act1_q4_after)
-    const plain = s.replace(/_scroll$/, '');
-    return plain !== s ? [base, `${npc}_act${act}_q${q}_${plain}`] : [base];
+    const plain = name.replace(/_scroll$/, '');
+    if (plain !== name && s.endsWith('_scroll')) out.push(`${npc}_act${act}_q${q}_${plain}`);
+    // A3Q2 Cain 완료는 sounds.txt 에 successful 로 적혀 있다
+    if (name === 'success') out.splice(1, 0, `${npc}_act${act}_q${q}_successful`);
+    return out;
   }
   return [];
 }
 
-/** NPC 인사 (말 걸기 시작). sounds.txt <npc>_greeting_1 묶음 */
-export const npcGreetingSound = (typeId: string): string => `${npcSoundName(typeId)}_greeting_1`;
+/** NPC 인사 (말 걸기 시작). sounds.txt <npc>_greeting_1 묶음 (Izual 은 izual_greeting 하나) */
+export const npcGreetingSound = (typeId: string): string[] => [`${npcSoundName(typeId)}_greeting_1`, `${npcSoundName(typeId)}_greeting`];
 
 /** 잡담/소개 대사. 순서 규칙은 ui/npcpanel.ts pickGossip 과 같다 (string.tbl <Npc>Gossip1..12 중 pick 번째 → 같은 번호의 소리).
  *  intro 면 클래스별 소개 (akara_act1_intro_sor 등) 가 있으면 그것, 없으면 act1_intro. */

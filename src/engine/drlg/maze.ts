@@ -19,7 +19,7 @@ import { allocRoomSeed, buildPresetRooms, type RoomBuild } from './rooms';
 import { LEVEL, LVLTYPE, PREST, type DrlgData, type LvlMazeRec } from './types';
 
 /** 방 가장자리 이웃 (원작 D2DrlgOrthStrc: 방 사이 = bInit 1, 레벨 사이 = bInit 0) */
-interface MazeOrth { room: MazeRoom | null; levelId: number; dir: number; init: boolean; box: Box }
+export interface MazeOrth { room: MazeRoom | null; levelId: number; dir: number; init: boolean; box: Box }
 
 /** 미로 방 (원작 D2DrlgRoomStrc + D2DrlgPresetRoomStrc 중 미로 단계에서 쓰는 필드) */
 export interface MazeRoom {
@@ -34,7 +34,7 @@ export interface MazeRoom {
   hasMap: boolean;
 }
 
-interface MazeLevel {
+export interface MazeLevel {
   id: number;
   levelType: number;
   maze: LvlMazeRec;
@@ -42,16 +42,18 @@ interface MazeLevel {
   /** 원작 pFirstRoomEx 목록 (0 = 머리) */
   rooms: MazeRoom[];
   pos: Box;
+  /** 막별 방 프리셋 선택 (없으면 Act 1 규칙 — DRLGMAZE_PickRoomPreset 의 다른 LvlType 분기는 막별 파일이 넣는다) */
+  pick?: (L: MazeLevel, r: MazeRoom, reset: boolean) => void;
 }
 
 /** 원작 D2MazeLevelIdStrc { nLevelPrestId1, nLevelPrestId2, nPickedFile, nDirection } */
-type MazeId = readonly [number, number, number, number];
+export type MazeId = readonly [number, number, number, number];
 
 /** 방향 비트 (DRLGMAZE_PickRoomPreset: 방향 0 서 → 1, 1 북 → 8, 2 동 → 2, 3 남 → 4) */
 const BIT_W = 1, BIT_E = 2, BIT_S = 4, BIT_N = 8;
 
 /** 이웃 방향 → 기준 Def 에 더할 값 (W/E/S/N 만 있는 특수 방 표: 원작 N, E, S, W 순서) */
-function nesw(base: number, special: number): MazeId[] {
+export function nesw(base: number, special: number): MazeId[] {
   // 특수 방 Def 는 W, E, S, N 순서로 연속 (LvlPrest.txt)
   return [
     [base + BIT_N, special + 3, -1, 3],
@@ -88,18 +90,18 @@ export function mazeBasePreset(levelType: number): number {
 // ---- 방 할당·목록 ----
 
 /** 출처: DRLGROOM_AllocRoomEx (레벨 시드 1 회 → 방 시드) + DRLGMAZE_SetRoomSize */
-function allocRoom(L: MazeLevel): MazeRoom {
+export function allocRoom(L: MazeLevel): MazeRoom {
   const { seed } = allocRoomSeed(L.seed);
   return { box: { x: 0, y: 0, w: L.maze.sizeX, h: L.maze.sizeY }, seed, orths: [], prest: 0, picked: 0, hasMap: false };
 }
 
 /** 출처: DRLGROOM_AddRoomExToLevel — 목록 머리에 삽입 */
-function addRoomToLevel(L: MazeLevel, r: MazeRoom): void {
+export function addRoomToLevel(L: MazeLevel, r: MazeRoom): void {
   L.rooms.unshift(r);
 }
 
 /** 출처: DRLGROOM_FreeRoomEx — 방 사이 이웃(bInit) 을 양쪽에서 지우고 목록에서 뺀다 */
-function freeRoom(L: MazeLevel, r: MazeRoom): void {
+export function freeRoom(L: MazeLevel, r: MazeRoom): void {
   for (const o of r.orths) {
     if (!o.init || !o.room) continue;
     const other = o.room.orths;
@@ -112,19 +114,19 @@ function freeRoom(L: MazeLevel, r: MazeRoom): void {
 }
 
 /** 출처: DRLGROOM_AllocDrlgOrthsForRooms — 양쪽에 없으면 머리에 추가 (반대 방향 = (dir − 2) & 3) */
-function allocOrths(r1: MazeRoom, r2: MazeRoom, dir: number): void {
+export function allocOrths(r1: MazeRoom, r2: MazeRoom, dir: number): void {
   if (!r1.orths.some((o) => o.room === r2)) r1.orths.unshift({ room: r2, levelId: 0, dir, init: true, box: r2.box });
   if (!r2.orths.some((o) => o.room === r1)) r2.orths.unshift({ room: r1, levelId: 0, dir: (dir - 2) & 3, init: true, box: r1.box });
 }
 
 /** 출처: DRLGMAZE_CheckRoomNotOverlaping */
-function roomNotOverlapping(L: MazeLevel, r: MazeRoom, ignored: MazeRoom | null, margin: number): boolean {
+export function roomNotOverlapping(L: MazeLevel, r: MazeRoom, ignored: MazeRoom | null, margin: number): boolean {
   for (const c of L.rooms) if (c !== r && c !== ignored && !notOverlapping(r.box, c.box, margin)) return false;
   return true;
 }
 
 /** 원작 방향별 이웃 위치 (DRLGMAZE_LinkMazeRooms / AddAdjacentMazeRoom / PlaceAdjacentPresetRoom 의 switch) */
-function placeNextTo(r: MazeRoom, parent: MazeRoom, dir: number): void {
+export function placeNextTo(r: MazeRoom, parent: MazeRoom, dir: number): void {
   const p = parent.box;
   const dx = [-1, 0, 1, 0, -1, 1, 1, -1][dir], dy = [0, -1, 0, 1, -1, -1, 1, 1][dir];
   if (dx === undefined || dy === undefined) return;
@@ -132,19 +134,23 @@ function placeNextTo(r: MazeRoom, parent: MazeRoom, dir: number): void {
   r.box.y = p.y + dy * p.h;
 }
 
-const overlapsOrth = (r: MazeRoom, orths: MazeOrth[]): boolean => orths.some((o) => !notOverlapping(r.box, o.box, 0));
+export const overlapsOrth = (r: MazeRoom, orths: MazeOrth[]): boolean => orths.some((o) => !notOverlapping(r.box, o.box, 0));
 
 // ---- 방 프리셋 ----
 
 /** 출처: DRLGMAZE_SetPickedFileAndPresetId */
-function setPickedFileAndPresetId(r: MazeRoom, prest: number, file: number, reset: boolean): void {
+export function setPickedFileAndPresetId(r: MazeRoom, prest: number, file: number, reset: boolean): void {
   r.picked = file;
   r.prest = prest;
   r.hasMap = !reset;
 }
 
 /** 출처: DRLGMAZE_PickRoomPreset (sSetChamberPreset) — 이웃 방향 비트 + 레벨 종류 기준 Def */
-function pickRoomPreset(L: MazeLevel, r: MazeRoom, reset: boolean): void {
+export function pickRoomPreset(L: MazeLevel, r: MazeRoom, reset: boolean): void {
+  if (L.pick) {
+    L.pick(L, r, reset);
+    return;
+  }
   let bits = 0;
   for (const o of r.orths) bits |= [BIT_W, BIT_N, BIT_E, BIT_S][o.dir] ?? 0;
   const prest = bits + mazeBasePreset(L.levelType);
@@ -152,7 +158,7 @@ function pickRoomPreset(L: MazeLevel, r: MazeRoom, reset: boolean): void {
 }
 
 /** 출처: DRLGMAZE_ReplaceRoomPreset */
-function replaceRoomPreset(L: MazeLevel, id1: number, id2: number, file: number, reset: boolean): MazeRoom | null {
+export function replaceRoomPreset(L: MazeLevel, id1: number, id2: number, file: number, reset: boolean): MazeRoom | null {
   for (const r of L.rooms) {
     if (!r.hasMap && r.prest === id1) {
       setPickedFileAndPresetId(r, id2, file, reset);
@@ -188,12 +194,12 @@ function mergeInto(L: MazeLevel, r: MazeRoom): void {
 }
 
 /** 출처: DRLGMAZE_MergeMazeRooms */
-function mergeMazeRooms(L: MazeLevel, r: MazeRoom): void {
+export function mergeMazeRooms(L: MazeLevel, r: MazeRoom): void {
   if (!r.hasMap) mergeInto(L, r);
 }
 
 /** 출처: DRLGMAZE_AddAdjacentMazeRoom */
-function addAdjacentMazeRoom(L: MazeLevel, parent: MazeRoom, dir: number, merge: boolean): MazeRoom | null {
+export function addAdjacentMazeRoom(L: MazeLevel, parent: MazeRoom, dir: number, merge: boolean): MazeRoom | null {
   const r = allocRoom(L);
   placeNextTo(r, parent, dir);
   if (overlapsOrth(r, parent.orths) || !roomNotOverlapping(L, r, parent, 0)) {
@@ -209,14 +215,14 @@ function addAdjacentMazeRoom(L: MazeLevel, parent: MazeRoom, dir: number, merge:
 }
 
 /** 출처: DRLGMAZE_LinkMazeRooms */
-function linkMazeRooms(L: MazeLevel, r1: MazeRoom, r2: MazeRoom, dir: number): boolean {
+export function linkMazeRooms(L: MazeLevel, r1: MazeRoom, r2: MazeRoom, dir: number): boolean {
   placeNextTo(r1, r2, dir);
   if (overlapsOrth(r1, r2.orths)) return false;
   return roomNotOverlapping(L, r1, r2, 0);
 }
 
 /** 출처: DRLGMAZE_InitBasicMazeLayout — 첫 방에서 북·서·남·동으로 이어 고리 */
-function initBasicMazeLayout(L: MazeLevel, n: number): void {
+export function initBasicMazeLayout(L: MazeLevel, n: number): void {
   const first = L.rooms[0] as MazeRoom;
   let cur: MazeRoom | null = first;
   const run = (count: number, dir: number) => {
@@ -247,12 +253,12 @@ function initBasicMazeLayout(L: MazeLevel, n: number): void {
 }
 
 /** 출처: DRLGMAZE_GetRandomRoomExFromLevel */
-function randomRoom(L: MazeLevel): MazeRoom {
+export function randomRoom(L: MazeLevel): MazeRoom {
   return L.rooms[L.seed.pick(L.rooms.length)] as MazeRoom;
 }
 
 /** 출처: DRLGMAZE_GenerateLevel 의 공통 루프 — 방 수가 LvlMaze Rooms 가 될 때까지 무작위 방 옆에 붙인다 */
-function growRooms(L: MazeLevel): void {
+export function growRooms(L: MazeLevel): void {
   // 원작: nStaffTombLevel/nBossTombLevel 배수는 Act 2 전용 (Act 1 은 0)
   const n = L.maze.rooms;
   let guard = 0;
@@ -265,7 +271,7 @@ function growRooms(L: MazeLevel): void {
 }
 
 /** 출처: DRLGMAZE_PlaceAdjacentPresetRoom */
-function placeAdjacentPresetRoom(L: MazeLevel, parent: MazeRoom, dir: number, merge: boolean): MazeRoom | null {
+export function placeAdjacentPresetRoom(L: MazeLevel, parent: MazeRoom, dir: number, merge: boolean): MazeRoom | null {
   const r = allocRoom(L);
   placeNextTo(r, parent, dir);
   // 출처: DRLGMAZE_CheckIfRoomOverlapsAythingOtherThanParent
@@ -280,7 +286,7 @@ function placeAdjacentPresetRoom(L: MazeLevel, parent: MazeRoom, dir: number, me
 }
 
 /** 출처: DRLGMAZE_ScanReplaceSpecialPreset — 해당 모양 방이 있으면 바꾸고, 없으면 새 방을 붙여 특수 방으로. 반환 = 갱신된 nRand */
-function scanReplaceSpecialPreset(L: MazeLevel, m: MazeId, rand: number): number {
+export function scanReplaceSpecialPreset(L: MazeLevel, m: MazeId, rand: number): number {
   const [id1, id2, file, dir] = m;
   for (const r of L.rooms) {
     if (!r.hasMap && r.prest === id1) {
@@ -309,7 +315,7 @@ function scanReplaceSpecialPreset(L: MazeLevel, m: MazeId, rand: number): number
 }
 
 /** 출처: DRLGMAZE_InitRoomFixedPreset */
-function initRoomFixedPreset(L: MazeLevel, parent: MazeRoom, dir: number, prest: number, file: number, useInitPreset: boolean): MazeRoom | null {
+export function initRoomFixedPreset(L: MazeLevel, parent: MazeRoom, dir: number, prest: number, file: number, useInitPreset: boolean): MazeRoom | null {
   const r = allocRoom(L);
   if (linkMazeRooms(L, r, parent, dir)) {
     allocOrths(parent, r, dir);
@@ -325,14 +331,14 @@ function initRoomFixedPreset(L: MazeLevel, parent: MazeRoom, dir: number, prest:
 }
 
 /** 출처: DRLGMAZE_AddSpecialPreset */
-function addSpecialPreset(L: MazeLevel, dir: number, prest: number, file: number): void {
+export function addSpecialPreset(L: MazeLevel, dir: number, prest: number, file: number): void {
   for (const r of [...L.rooms]) {
     if (!r.hasMap && initRoomFixedPreset(L, r, dir, prest, file, true)) break;
   }
 }
 
 /** 출처: DRLGMAZE_CheckIfMayPlaceAdjacentPresetRoom — 임시 방을 붙여 보고 곧 해제 (시드는 소비됨) */
-function mayPlaceAdjacent(L: MazeLevel, r: MazeRoom, dir: number): boolean {
+export function mayPlaceAdjacent(L: MazeLevel, r: MazeRoom, dir: number): boolean {
   if (r.hasMap) return false;
   if (r.orths.some((o) => o.dir === dir)) return false;
   const nr = placeAdjacentPresetRoom(L, r, dir, false);
@@ -344,7 +350,7 @@ function mayPlaceAdjacent(L: MazeLevel, r: MazeRoom, dir: number): boolean {
 }
 
 /** 출처: DRLGMAZE_GetFreeLocationForRoomEast/West/North/South — 가장 바깥 방 중 해당 방향에 붙일 수 있는 것 */
-function freeLocation(L: MazeLevel, better: (r: MazeRoom, best: MazeRoom) => boolean, dir: number): MazeRoom | null {
+export function freeLocation(L: MazeLevel, better: (r: MazeRoom, best: MazeRoom) => boolean, dir: number): MazeRoom | null {
   let best: MazeRoom | null = null;
   for (const r of [...L.rooms]) {
     if ((!best || better(r, best)) && mayPlaceAdjacent(L, r, dir)) best = r;
@@ -353,7 +359,7 @@ function freeLocation(L: MazeLevel, better: (r: MazeRoom, best: MazeRoom) => boo
 }
 
 /** 출처: DRLG_GetMinAndMaxCoordinatesFromLevel */
-function roomBounds(L: MazeLevel): Box {
+export function roomBounds(L: MazeLevel): Box {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const r of L.rooms) {
     minX = Math.min(minX, r.box.x);
@@ -435,7 +441,7 @@ function placeAct1Barracks(L: MazeLevel, world: Act1Placement): void {
 }
 
 /** 출처: DRLG_UpdateRoomExCoordinates — 최소 좌표를 레벨 위치에 맞춘다 */
-function updateRoomCoordinates(L: MazeLevel): void {
+export function updateRoomCoordinates(L: MazeLevel): void {
   const b = roomBounds(L);
   for (const r of L.rooms) {
     r.box.x += L.pos.x - b.x;

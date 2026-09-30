@@ -7,6 +7,7 @@ import type { AssetLoader } from '../assets/loader';
 import { MpqRemote, httpRange, type RangeFetcher } from '../assets/remote';
 import type { GameTables } from '../data/tables';
 import type { Game, GameData, GameEvent, WorldSnapshot } from '../engine/game';
+import { NPC_DEFS } from '../engine/npc';
 import {
   ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound,
   objectOpenSound, questPlayerSound, questSpeechCandidates, resolveSoundPath, weaponSwingSound, type SoundEntry, type SoundEnv,
@@ -648,19 +649,22 @@ class GameListener {
         break;
       }
       case 'npcInteract':
-        s.speak([npcGreetingSound(String(ev.typeId))]);
+        s.speak(npcGreetingSound(String(ev.typeId)));
         break;
       case 'npcTalk': {
         const str = (k: string) => this.opts.tables.string(k) !== k;
-        s.speak(npcGossipSound(String(ev.typeId), String(ev.gossip), this.opts.cls, !!ev.intro, Number(ev.pick), str));
+        // 막별 대사 묶음 (atma_act2_gossip_*, cain_act3_gossip_* …): NPC 가 사는 막
+        const act = (NPC_DEFS[String(ev.typeId)]?.act ?? 0) + 1;
+        s.speak(npcGossipSound(String(ev.typeId), String(ev.gossip), this.opts.cls, !!ev.intro, Number(ev.pick), str, act));
         break;
       }
       case 'questSpeech':
         s.speak(questSpeechCandidates(String(ev.key), String(ev.typeId)));
         break;
       case 'questScroll':
-        // 곰팡이 핀 책 (Narrator) — 출처: sounds.txt narrator_act1_q5_tome
+        // 곰팡이 핀 책·호라존 일지 (Narrator) — 출처: sounds.txt narrator_act1_q5_tome, narrator_act2_q4_journal
         if (ev.key === 'A1Q5InitQuestTome') s.speak(['narrator_act1_q5_tome']);
+        else if (ev.key === 'A2Q4SuccessfulNarrator') s.speak(['narrator_act2_q4_journal']);
         break;
       case 'npcClosed':
         s.stopSpeech();

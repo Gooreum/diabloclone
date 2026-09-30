@@ -1,8 +1,10 @@
 // 캐릭터가 가진 아이템: 인벤토리 격자 · 창고 · 벨트 · 장착 · 커서(손에 든 아이템).
 // 원작 조작: 아이템을 집으면 커서에 붙고, 빈 곳에 놓거나 한 아이템과 겹치면 그 아이템과 바꿔 든다.
 // 출처: The Arreat Summit — Inventory / Belt: 물약은 주우면 벨트에 자리가 있으면 벨트로, 벨트는 아래 줄부터 채움
+// 호라드릭 큐브 칸: 원작은 큐브 안 아이템도 플레이어 인벤토리의 INVPAGE_CUBE 쪽 (PLRTRADE_CheckCubeInput 이 플레이어 인벤토리에서 page 로 고른다) —
+//   큐브 아이템 자체가 아니라 캐릭터에 딸린 3×4 칸
 import type { ItemLocation } from './command';
-import { BODY_LOCS, Grid, INV_H, INV_W, STASH_H, STASH_W, beltBoxes, beltable, canEquip, type BodyLoc, type EquipContext, type EquipError, type Placed } from './inventory';
+import { BODY_LOCS, CUBE_H, CUBE_W, Grid, INV_H, INV_W, STASH_H, STASH_W, beltBoxes, beltable, canEquip, type BodyLoc, type EquipContext, type EquipError, type Placed } from './inventory';
 import type { ItemDb } from './items';
 import type { ItemInstance } from './treasure';
 
@@ -11,6 +13,7 @@ export const BELT_SLOTS = 16;
 export type Where =
   | { kind: 'inventory'; x: number; y: number }
   | { kind: 'stash'; x: number; y: number }
+  | { kind: 'cube'; x: number; y: number }
   | { kind: 'equip'; slot: BodyLoc }
   | { kind: 'belt'; slot: number }
   | { kind: 'cursor' };
@@ -20,6 +23,8 @@ export type MoveResult = { ok: true; swapped?: ItemInstance } | { ok: false; rea
 export interface StoreInit {
   inventory?: Placed[];
   stash?: Placed[];
+  /** 호라드릭 큐브 칸 */
+  cube?: Placed[];
   belt?: (ItemInstance | null)[];
   equipment?: Partial<Record<string, ItemInstance>>;
 }
@@ -27,6 +32,8 @@ export interface StoreInit {
 export class ItemStore {
   readonly inv: Grid;
   readonly stash: Grid;
+  /** 호라드릭 큐브 칸 (3×4) */
+  readonly cube: Grid;
   readonly belt: (ItemInstance | null)[];
   readonly equipment: Partial<Record<BodyLoc, ItemInstance>>;
   cursor: ItemInstance | null = null;
@@ -36,6 +43,7 @@ export class ItemStore {
     this.items = items;
     this.inv = new Grid(INV_W, INV_H, init.inventory ? [...init.inventory] : []);
     this.stash = new Grid(STASH_W, STASH_H, init.stash ? [...init.stash] : []);
+    this.cube = new Grid(CUBE_W, CUBE_H, init.cube ? [...init.cube] : []);
     this.belt = Array.from({ length: BELT_SLOTS }, (_, i) => init.belt?.[i] ?? null);
     this.equipment = { ...(init.equipment as Partial<Record<BodyLoc, ItemInstance>>) };
   }
@@ -50,6 +58,7 @@ export class ItemStore {
     if (this.cursor?.id === id) return { item: this.cursor, where: { kind: 'cursor' } };
     for (const p of this.inv.items) if (p.item.id === id) return { item: p.item, where: { kind: 'inventory', x: p.x, y: p.y } };
     for (const p of this.stash.items) if (p.item.id === id) return { item: p.item, where: { kind: 'stash', x: p.x, y: p.y } };
+    for (const p of this.cube.items) if (p.item.id === id) return { item: p.item, where: { kind: 'cube', x: p.x, y: p.y } };
     for (const [slot, it] of Object.entries(this.equipment)) if (it?.id === id) return { item: it, where: { kind: 'equip', slot: slot as BodyLoc } };
     const b = this.belt.findIndex((it) => it?.id === id);
     if (b >= 0) return { item: this.belt[b] as ItemInstance, where: { kind: 'belt', slot: b } };
@@ -60,6 +69,7 @@ export class ItemStore {
     if (where.kind === 'cursor') this.cursor = null;
     else if (where.kind === 'inventory') this.inv.remove(item);
     else if (where.kind === 'stash') this.stash.remove(item);
+    else if (where.kind === 'cube') this.cube.remove(item);
     else if (where.kind === 'equip') delete this.equipment[where.slot];
     else this.belt[where.slot] = null;
   }
@@ -68,6 +78,7 @@ export class ItemStore {
     if (where.kind === 'cursor') this.cursor = item;
     else if (where.kind === 'inventory') this.inv.items.push({ item, x: where.x, y: where.y });
     else if (where.kind === 'stash') this.stash.items.push({ item, x: where.x, y: where.y });
+    else if (where.kind === 'cube') this.cube.items.push({ item, x: where.x, y: where.y });
     else if (where.kind === 'equip') this.equipment[where.slot] = item;
     else this.belt[where.slot] = item;
   }
@@ -76,7 +87,7 @@ export class ItemStore {
    * 아이템을 옮긴다. 대상 칸이 비었으면 놓고, 아이템 하나와 겹치면 그 아이템을 커서로 들어 올린다(교환).
    * 실패하면 원래 자리 그대로.
    */
-  move(id: number, to: ItemLocation | { kind: 'stash'; x: number; y: number }, ctx?: Omit<EquipContext, 'items' | 'equipment'>): MoveResult {
+  move(id: number, to: ItemLocation | { kind: 'stash' | 'cube'; x: number; y: number }, ctx?: Omit<EquipContext, 'items' | 'equipment'>): MoveResult {
     const found = this.find(id);
     if (!found) return { ok: false, reason: 'missing' };
     const { item, where } = found;
@@ -93,8 +104,11 @@ export class ItemStore {
         this.cursor = item;
         return { ok: true };
       case 'inventory':
-      case 'stash': {
-        const g = to.kind === 'inventory' ? this.inv : this.stash;
+      case 'stash':
+      case 'cube': {
+        // 원작: 큐브는 큐브 안에 넣을 수 없다 (클라이언트가 막는다)
+        if (to.kind === 'cube' && item.code === 'box') return fail('slot');
+        const g = to.kind === 'inventory' ? this.inv : to.kind === 'stash' ? this.stash : this.cube;
         const over = g.overlapping(item, to.x, to.y);
         const s = { w: item.invW, h: item.invH };
         if (to.x < 0 || to.y < 0 || to.x + s.w > g.w || to.y + s.h > g.h) return fail('full');
@@ -207,7 +221,7 @@ export class ItemStore {
 
   allItems(): ItemInstance[] {
     return [
-      ...this.inventoryItems, ...this.stash.items.map((p) => p.item), ...this.belt.filter((x): x is ItemInstance => !!x),
+      ...this.inventoryItems, ...this.stash.items.map((p) => p.item), ...this.cube.items.map((p) => p.item), ...this.belt.filter((x): x is ItemInstance => !!x),
       ...Object.values(this.equipment).filter((x): x is ItemInstance => !!x), ...(this.cursor ? [this.cursor] : []),
     ];
   }

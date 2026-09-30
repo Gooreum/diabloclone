@@ -26,6 +26,12 @@ export function wait(w: AiWorld, m: MonsterUnit, frames: number): void {
   m.nextThink = w.frame + Math.max(frames, 1);
 }
 
+/** 출처: AiTactics.cpp sub_6FCD0150 — 다음 판단을 늦어도 nFrames 뒤로 (이미 더 이른 판단이 잡혀 있으면 그대로) */
+export function waitAtMost(w: AiWorld, m: MonsterUnit, frames: number): void {
+  const at = w.frame + Math.max(frames, 1);
+  if (m.nextThink <= w.frame || m.nextThink >= at) m.nextThink = at;
+}
+
 /** 출처: AITACTICS_SetVelocity — 다음 이동의 속도 % (STAT_VELOCITYPERCENT, −126~126) */
 export function setVelocity(m: MonsterUnit, vel: number): void {
   if (vel) m.velPct = Math.max(-126, Math.min(126, vel));
@@ -76,6 +82,12 @@ export function walkCloseToUnit(w: AiWorld, m: MonsterUnit, maxDist: number): bo
 export function wanderToTarget(w: AiWorld, m: MonsterUnit, maxDist: number): boolean {
   const [ox, oy] = randomOffset(m, maxDist);
   return w.moveTo(m, Math.floor(w.target.x) + ox, Math.floor(w.target.y) + oy, false, 1);
+}
+
+/** 출처: D2GAME_AICORE_WalkToOwner_6FCD0B60 / AITACTICS_WanderToTarget — 주어진 지점 주변 무작위 지점으로 걷기 */
+export function wanderToPoint(w: AiWorld, m: MonsterUnit, x: number, y: number, maxDist: number): boolean {
+  const [ox, oy] = randomOffset(m, maxDist);
+  return w.moveTo(m, Math.floor(x) + ox, Math.floor(y) + oy, false, 1);
 }
 
 /** 출처: AITACTICS_RunCloseToTargetUnit — 대상 주변 무작위 지점으로 달리기 */

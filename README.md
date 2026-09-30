@@ -1,0 +1,198 @@
+# diabloclone — Diablo II (클래식 1.14d) 웹 클론
+
+브라우저에서 돌아가는 **Diablo II 클래식 싱글플레이** 재현 프로젝트입니다.
+본인이 가진 정품 Diablo II의 MPQ 파일을 브라우저가 직접 읽어서, 원작 그래픽·사운드·수치를 그대로 씁니다.
+게임 규칙은 원작 데이터 표(`*.txt`)와 D2MOO 재구성 소스를 참고해 TypeScript로 새로 구현했습니다.
+
+> ⚠️ **이 저장소에는 원작 게임 파일이 들어 있지 않습니다.**
+> 실행하려면 본인 소유의 정품 **Diablo II (클래식) 1.14d** 설치 파일이 필요합니다. 자세한 내용은 [실행 방법](#실행-방법)을 보세요.
+
+현재 범위는 **Act 1 전체**입니다. Act 2~4와 악몽·지옥 난이도는 별도 브랜치에서 작업 중입니다.
+
+| 로그 야영지 | 전투 (바바리안 Whirlwind) |
+|---|---|
+| ![town](docs/media/town.gif) | ![combat](docs/media/combat.gif) |
+| **던전 (Den of Evil)** | **UI (인벤토리·스킬 트리·캐릭터·자동지도)** |
+| ![dungeon](docs/media/dungeon.gif) | ![ui](docs/media/ui.gif) |
+
+---
+
+## 특징
+
+### 원작 데이터를 그대로 사용
+- **MPQ 아카이브를 브라우저에서 직접 읽습니다.**
+  - HTTP Range 요청으로 필요한 부분만 가져옵니다.
+  - 압축 해제기(PKWARE implode, zlib, Huffman, ADPCM)와 복호화는 직접 구현했습니다.
+- **원작 파일 형식 파서:**
+  - DCC: 캐릭터·몬스터 애니메이션
+  - DC6: UI·아이템·글꼴
+  - DT1: 타일
+  - DS1: 맵 프리셋
+  - COF: 레이어 합성
+  - 그 밖에 팔레트·PL2 색표, `string.tbl`, 엑셀 표(`*.txt`), AnimData, WAV
+- 원작 팔레트, 색 바꿈 표(유니크 RandTransforms·변종 palshift), 원작 글꼴과 글자색을 씁니다.
+
+### 게임플레이 (Act 1)
+- **캐릭터 5종**(아마존·소서리스·네크로맨서·팔라딘·바바리안)과 **클래스별 스킬 30개 전부**
+  - 시너지, 스킬 공식, 시퀀스 애니메이션(Jab, Whirlwind 등)을 포함합니다.
+- **월드 생성 (DRLG):** D2MOO 재구성 코드를 옮겨, 원작과 같은 방식으로 야외·미로 던전·프리셋 맵을 무작위로 만듭니다.
+- **몬스터**
+  - 원작 AI
+  - 챔피언·유니크 무리와 접사
+  - 슈퍼 유니크: Bishibosh, Blood Raven, Andariel 등
+- **아이템**
+  - 트레저 클래스 드롭, 접두·접미사, 매직·레어·유니크·세트
+  - 내구도, 소켓
+  - 감정, 수리, 상점, 도박
+- **마을 NPC:** 대화, 상점, 고용(용병), Charsi 인챈트, Cain 감정
+- **퀘스트 6개:** Den of Evil, Sisters' Burial Grounds, Tools of the Trade, The Search for Cain, The Forgotten Tower, Sisters to the Slaughter
+- **이동:** 웨이포인트, 마을 포털, 자동지도(전체·미니, 시체 위치 표시)
+- **원작 UI:** 조작판, 벨트, 인벤토리, 창고, 스킬 트리, 캐릭터 창, 게임 메뉴, 단축키 설정
+- **사운드:** 원작 음악, 효과음, NPC 음성 (오디오 해석은 Web Worker에서)
+- **저장:** 브라우저 IndexedDB에 캐릭터를 저장하고 불러옵니다. 시체와 장비 회수도 됩니다.
+
+### 성능
+- **WebGL2 팔레트 텍스처 렌더러**
+  - 그림을 1바이트 팔레트 번호 텍스처 아틀라스에 올리고, 셰이더가 팔레트와 색 바꿈 표로 색을 입힙니다.
+  - 그림마다 캔버스를 만들던 방식보다 그래픽 메모리가 약 1/4로 줄었습니다.
+  - 색 변형용 그림을 따로 만들지 않고, 그래픽 컨텍스트를 잃었을 때도 복구합니다.
+  - WebGL2를 쓸 수 없으면 2D 캔버스로 자동 대체합니다.
+- **Web Worker:** MPQ 압축 해제와 DCC 해석을 게임 스레드 밖에서 합니다. DCC는 **필요한 방향만** 해석합니다.
+- **레벨 미리 불러오기:** 던전에 들어갈 때 로딩 화면 동안 가까운 몬스터 그림을 준비합니다.
+- **측정 결과** (Apple M1, 몬스터 수십 마리 + 광역 스킬 20초, `e2e/perf.spec.ts`):
+
+  | | 2D 캔버스 (이전) | WebGL2 (현재) |
+  |---|---|---|
+  | 평균 FPS | 44 | **60** |
+  | 가장 긴 프레임 | 183ms | **33ms** |
+  | 50ms 넘는 프레임 | 32 | **0** |
+  | JS 힙 | 342MB | **212MB** |
+
+---
+
+## 실행 방법
+
+### 준비물
+- **Node.js 20 이상** (개발 환경: Node 24)
+- **정품 Diablo II (클래식) 1.14d**의 MPQ 파일 6개
+
+  | 파일 | 내용 |
+  |---|---|
+  | `d2data.mpq` | 타일·몬스터·UI·데이터 표 |
+  | `d2char.mpq` | 플레이어 캐릭터 그래픽 |
+  | `d2sfx.mpq` | 효과음 |
+  | `d2music.mpq` | 음악 |
+  | `d2speech.mpq` | NPC 음성 |
+  | `patch_d2.mpq` | 1.14d 패치 |
+
+  Blizzard(Battle.net)에서 구매한 Diablo II를 설치하면 설치 폴더에 있습니다. 확장팩(LoD) 파일은 아직 쓰지 않습니다.
+
+### 설치와 실행
+```bash
+git clone https://github.com/Gooreum/diabloclone.git
+cd diabloclone
+npm install
+
+# 정품 MPQ 6개를 game-data/ 폴더에 복사 (git 에는 올라가지 않음)
+mkdir game-data
+cp "/설치경로/Diablo II/"{d2data,d2char,d2sfx,d2music,d2speech,patch_d2}.mpq game-data/
+
+npm run check-data   # 파일이 모두 있고 올바른 MPQ 인지 검사
+npm run dev          # http://localhost:5173
+```
+- 개발 서버가 `game-data/`의 파일을 `/d2/<파일명>`으로 브라우저에 제공합니다. 파일은 여러분의 컴퓨터 밖으로 나가지 않습니다.
+- 크롬 계열 브라우저를 권장합니다(WebGL2 필요).
+
+---
+
+## 조작법
+
+| 입력 | 동작 |
+|---|---|
+| 마우스 왼쪽 클릭 | 이동 · 공격 · 줍기 · 대화 · 오브젝트 사용 (왼쪽 스킬) |
+| 마우스 오른쪽 클릭 | 오른쪽 스킬 사용 |
+| `Shift` + 클릭 | 제자리에서 공격 |
+| `C` | 캐릭터 창 |
+| `I` | 인벤토리 |
+| `T` | 스킬 트리 |
+| `Q` | 퀘스트 로그 |
+| `Tab` | 자동지도 |
+| `V` | 미니 자동지도 |
+| `R` | 달리기/걷기 전환 |
+| `S` | 스킬 선택 막대 |
+| `1`~`4` | 벨트 물약 사용 |
+| `` ` `` | 벨트 펼치기 |
+| `Alt` | 바닥 아이템 이름 보기 |
+| `N` | 메시지 지우기 |
+| `Esc` | 게임 메뉴 (옵션 · 저장하고 나가기) |
+
+단축키는 게임 메뉴 → OPTIONS → CONFIGURE CONTROLS에서 바꿀 수 있습니다(브라우저에 저장).
+
+---
+
+## 구조
+
+```
+src/
+├── engine/     게임 규칙 (DOM 없는 순수 코드, Command 로만 입력받고 스냅샷을 내보냄)
+│   ├── drlg/       월드 생성 (야외·미로·프리셋, D2MOO 이식)
+│   ├── ai/         몬스터 AI
+│   ├── skills/     스킬 공식·데미지·시퀀스
+│   ├── quests/     퀘스트 상태 기계
+│   └── game.ts     게임 루프 (25 틱/초)
+├── formats/    원작 파일 파서 (MPQ, DCC, DC6, DT1, DS1, COF, WAV, 팔레트, 글꼴 …)
+├── assets/     MPQ Range 로더 + 그림 해석 Web Worker
+├── render/     월드 렌더링 (WebGL2 GlSink / 2D Canvas2dSink, 등각 좌표, 자동지도)
+├── ui/         원작 DC6 UI (조작판·패널·메뉴·커서·글꼴)
+├── audio/      사운드 (Web Audio, 해석 워커)
+├── input/      마우스·키보드 → Command
+└── main.ts     조립 (메뉴 → 게임 루프 → 렌더)
+tests/          vitest 단위 테스트
+e2e/            Playwright 브라우저 테스트
+scripts/        데이터 검사·분석 도구
+```
+
+- **엔진은 렌더링과 분리돼 있습니다.** `src/engine`은 DOM·캔버스·오디오를 쓰지 않습니다(`tests/arch.test.ts`가 검사).
+  - 입력은 `Command`(이동·공격·스킬 사용 등)로만 받습니다.
+  - 화면은 `snapshot()` 결과만 보고 그립니다.
+- **원작 동일성 원칙:** 원작에서 가져온 규칙과 수치에는 근거를 남깁니다.
+  - `// 출처: …` — D2MOO 함수, 원작 데이터 표 컬럼, 포맷 문서 등 근거
+  - `// 근사(원작 미확인): …` — 원작 동작을 확인하지 못해 비슷하게 만든 부분
+
+---
+
+## 테스트
+
+```bash
+npm test                                  # vitest 단위 테스트 (534개)
+npx tsc --noEmit                          # 타입 검사
+npx playwright test --workers=1           # 브라우저 e2e (44개, game-data 필요)
+RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 녹화
+```
+- 원작 파일이 필요한 테스트는 `game-data/`가 없으면 자동으로 건너뜁니다.
+- e2e는 캐릭터 생성 → 마을 → 필드 → 전투 → 줍기 → 저장 → 새로고침 → 불러오기까지 실제 흐름을 검사합니다.
+  - 던전 생성·렌더링, 퀘스트, 상점·용병, 웨이포인트·포털, WebGL 복구, 성능도 포함합니다.
+
+---
+
+## 로드맵
+- [x] Act 1 전체 (월드·몬스터·NPC·퀘스트 6개·UI·사운드·전 스킬)
+- [x] WebGL2 렌더러 + Worker 해석 + 레벨 미리 불러오기
+- [ ] Act 2~4 (루트 골레인 ~ 판데모니움 요새, 두리엘·메피스토·디아블로) — 작업 중
+- [ ] 악몽·지옥 난이도
+- [ ] 조명·그림자 렌더링
+- [ ] 확장팩(Lord of Destruction)
+
+---
+
+## 참고 자료·감사
+- [D2MOO](https://github.com/ThePhrozenKeep/D2MOO) — Diablo II 1.10 재구성 소스 (DRLG·AI·스킬·퀘스트 규칙 참고)
+- [OpenDiablo2](https://github.com/OpenDiablo2/OpenDiablo2) — DCC 디코딩, 방향 표
+- [The Phrozen Keep](https://d2mods.info/) — 데이터 표·파일 형식 문서
+- Paul Siramy — DCC / DT1 / DS1 파일 형식 문서
+- [Zezula](http://www.zezula.net/en/mpq/mpqformat.html) — MPQ 형식 문서
+
+## 면책
+- **Diablo®와 Blizzard Entertainment®는 Blizzard Entertainment, Inc.의 상표입니다.** 이 프로젝트는 Blizzard와 관련이 없고 승인받지 않은 개인 팬 프로젝트입니다.
+- 이 저장소에는 원작 게임 파일(그래픽·사운드·데이터)이 포함되어 있지 않으며, 배포하지도 않습니다. 실행하려면 본인이 소유한 정품 게임 파일이 필요합니다.
+- README의 GIF는 이 프로젝트의 플레이 화면을 소개하기 위한 짧은 녹화입니다.

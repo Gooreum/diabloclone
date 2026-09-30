@@ -16,6 +16,7 @@ import { makeSave, summarize, type CharacterSave } from './engine/save';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
+import { GlSink, glStats } from './render/gl/glsink';
 import { type Camera } from './render/iso';
 import { ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
 import { buildScene } from './render/scene';
@@ -79,6 +80,8 @@ declare global {
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
       };
+      /** e2e·진단: 다음 프레임의 화면 (WebGL 월드 + UI 합성) */
+      capture?: () => Promise<ImageData>;
     };
     __menuReady?: boolean;
     /** e2e: 프런트엔드 그림을 다 읽었는가 */
@@ -89,7 +92,11 @@ declare global {
   }
 }
 
-interface Shared { assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt; loading: LoadingScreen; cursor: GameCursor }
+interface Shared {
+  assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt; loading: LoadingScreen; cursor: GameCursor;
+  /** 월드(타일·유닛·미사일) 캔버스와 그리기 출구 — UI 캔버스(#game) 아래 */
+  worldCanvas: HTMLCanvasElement; worldSink: SpriteSink;
+}
 
 // dev 전용: 오류를 개발 서버 로그로 보낸다 (vite.config.ts clientErrorLog)
 function reportClientError(kind: string, e: unknown): void {
@@ -116,12 +123,19 @@ async function boot(): Promise<void> {
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   canvas.id = 'game';
+  // 월드는 아래 캔버스에 WebGL2 로 (팔레트 번호 텍스처), UI 는 위 캔버스(#game)에 2D 로 겹쳐 그린다. 입력은 위 캔버스가 받는다
+  const worldCanvas = document.createElement('canvas');
+  worldCanvas.width = WIDTH;
+  worldCanvas.height = HEIGHT;
+  worldCanvas.id = 'world';
+  Object.assign(worldCanvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', visibility: 'hidden' });
+  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0' });
   // 캔버스와 그 위의 투명 UI 단추 층을 같은 800×600 무대에 둔다
   const stage = document.createElement('div');
   stage.id = 'stage';
   Object.assign(stage.style, { position: 'relative', width: `${WIDTH}px`, height: `${HEIGHT}px` });
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
-  stage.append(canvas);
+  stage.append(worldCanvas, canvas);
   host.replaceChildren(stage);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   ctx.fillStyle = '#c7b377';
@@ -144,7 +158,9 @@ async function boot(): Promise<void> {
   const cursor = new GameCursor();
   const loading = new LoadingScreen(new UiArt(assets, loadingPal));
   const anim = AnimData.parse(assets.read(ANIMDATA) as Uint8Array);
-  const shared: Shared = { assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor };
+  // WebGL2 를 못 쓰면 예전처럼 2D 캔버스로 그린다
+  const worldSink: SpriteSink = GlSink.create(worldCanvas) ?? new Canvas2dSink(worldCanvas.getContext('2d') as CanvasRenderingContext2D, gamePal);
+  const shared: Shared = { assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor, worldCanvas, worldSink };
   void shared.art.preload(CURSOR_ART);
 
   const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
@@ -206,7 +222,7 @@ async function boot(): Promise<void> {
 
 /** 한 판 진행. Save and Exit 하면 resolve */
 function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null): Promise<void> {
-  const { data, tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor } = sh;
+  const { data, tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor, worldCanvas, worldSink } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   // 원작 DRLG 이식: 게임 시드로 Act 1 오버월드 생성 (출처: D2MOO DRLG_AllocDrlg)
   const world = buildAct1World(assets, tables, data, seed);
@@ -222,7 +238,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const itemGfx = new ItemGfx(assets);
   const missileGfx = new MissileGfx(assets);
   // 월드 그리기 출구 (팔레트 번호 그림 → 화면)
-  const worldSink: SpriteSink = new Canvas2dSink(ctx, pal);
+  worldSink.setPalette(pal);
   const cs = classStats(tables.table('charstats'), cls);
   const table = expTable(tables.table('experience'), cls);
   const token = CLASS_TOKEN[cls];
@@ -646,6 +662,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
       if (import.meta.env.DEV) delete window.__game;
+      // 메뉴로 돌아가면 월드 캔버스를 숨긴다 (메뉴는 UI 캔버스에 그린다)
+      worldCanvas.style.visibility = 'hidden';
       resolve();
     }
     window.addEventListener('keydown', onKey);
@@ -667,6 +685,24 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         },
       };
     }
+
+    // 화면 캡처 (e2e·진단): 월드 픽셀 위에 UI 캔버스를 겹친 결과
+    const captureWaiters: ((img: ImageData) => void)[] = [];
+    const readWorld = (): Uint8ClampedArray<ArrayBuffer> =>
+      worldSink instanceof GlSink ? new Uint8ClampedArray(worldSink.readPixels().buffer as ArrayBuffer) : (worldCanvas.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, WIDTH, HEIGHT).data as Uint8ClampedArray<ArrayBuffer>;
+    const finishCapture = (px: Uint8ClampedArray<ArrayBuffer>) => {
+      const tmp = document.createElement('canvas');
+      tmp.width = WIDTH;
+      tmp.height = HEIGHT;
+      const tc = tmp.getContext('2d') as CanvasRenderingContext2D;
+      tc.putImageData(new ImageData(px, WIDTH, HEIGHT), 0, 0);
+      tc.drawImage(canvas, 0, 0);
+      const img = tc.getImageData(0, 0, WIDTH, HEIGHT);
+      for (const w of captureWaiters.splice(0)) w(img);
+    };
+    const capture = () => new Promise<ImageData>((res) => captureWaiters.push(res));
+    if (window.__game) window.__game.capture = capture;
+    worldCanvas.style.visibility = 'visible';
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
@@ -753,11 +789,15 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const mm = input.mouse;
       const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
       hoverNow = overUi || !mm ? null : input.hoverAt(mm.x, mm.y);
+      // UI 캔버스는 투명으로 시작 (아래 월드 캔버스가 비친다)
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
       (renderers[game.levelId] as WorldRenderer).render(
         worldSink,
         cam,
         buildScene(s, cam, { units, items: itemGfx, missiles: missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow }, input.pickBoxes),
       );
+      // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
+      const worldPx = captureWaiters.length ? readWorld() : null;
       // 바닥 아이템 이름표: Alt(Show Items) = 모두, 아니면 가리킨 아이템만 (원작)
       labels = [];
       for (const b of input.pickBoxes) {
@@ -840,6 +880,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         repair: storePanel.mode === 'repair' && !!inter && inter.mode === 'trade' && !panels.menuOpen,
         hover: !panels.menuOpen && (overInv || (hoverNow !== null && hoverNow.kind !== 'body')),
       }), now);
+      if (worldPx) finishCapture(worldPx);
     };
     // 한 프레임에서 예외가 나도 루프가 멈추지 않게 한다 (예외 후 다음 프레임 예약이 빠져 화면이 검게 멈추던 문제).
     // 같은 오류는 한 번만 콘솔에 남긴다.
@@ -854,20 +895,24 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             return;
           }
           const s = game.snapshot();
-          const px = ctx.getImageData(400, 250, 1, 1).data;
           const audio = (window as unknown as { __audio?: { voices?: unknown[]; unlocked?: boolean } }).__audio;
           const state = {
             frames: diagFrames, maxFrameMs: Math.round(diagMaxMs), ticks: ticksOf() - diagTick, errors: diagErrors,
             level: game.levelId, loading: loading.active(performance.now()), vis: document.visibilityState, menu: panels.menuOpen,
             player: { x: Math.round(s.player.x), y: Math.round(s.player.y), mode: s.player.mode, life: Math.round(s.player.life), dead: game.isDead },
             monsters: s.monsters.length, missiles: s.missiles.length, voices: audio?.voices?.length ?? -1, unlocked: audio?.unlocked,
-            centerPixel: [px[0], px[1], px[2]], cam: [Math.round(cam.x), Math.round(cam.y)],
-            gfxLost: gfxEvents.lost, gfxRestored: gfxEvents.restored, unitLoads: unitGfxStats.loads, units: unitGfxStats.cached, sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
+            cam: [Math.round(cam.x), Math.round(cam.y)],
+            gfxLost: gfxEvents.lost, gfxRestored: gfxEvents.restored, gl: { ...glStats }, unitLoads: unitGfxStats.loads, units: unitGfxStats.cached, sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
           };
           diagFrames = 0;
           diagMaxMs = 0;
           diagTick = ticksOf();
-          void fetch('/__clientlog', { method: 'POST', body: `[diag] ${JSON.stringify(state)}` }).catch(() => undefined);
+          // 화면 가운데 픽셀 (월드+UI 합성) — 다음 프레임에 읽어 함께 보낸다
+          void capture().then((img) => {
+            const i = (250 * WIDTH + 400) * 4;
+            const body = { ...state, centerPixel: [img.data[i], img.data[i + 1], img.data[i + 2]] };
+            return fetch('/__clientlog', { method: 'POST', body: `[diag] ${JSON.stringify(body)}` });
+          }).catch(() => undefined);
         }, 2000)
       : 0;
     const frame = (now: number) => {

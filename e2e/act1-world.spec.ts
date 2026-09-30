@@ -27,12 +27,13 @@ test('Act 1 오버월드: 야외 레벨들이 원작 DRLG 로 생성되어 원�
       g.changeLevel(k, best.x + 0.5, best.y + 0.5);
     }, key);
     await page.waitForTimeout(700);
-    const ratio = await page.evaluate(() => {
-      const c = document.getElementById('game') as HTMLCanvasElement;
-      const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
+    const ratio = await page.evaluate(async () => {
+      // 월드(WebGL)와 UI 를 합성한 화면
+      const img = await window.__game!.capture!();
+      const d = img.data;
       let lit = 0;
       for (let i = 0; i < d.length; i += 4) if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) lit++;
-      return lit / (c.width * c.height);
+      return lit / (img.width * img.height);
     });
     await page.locator('#game').screenshot({ path: `test-results/act1-${key}.png` });
     expect(ratio, key).toBeGreaterThan(0.3);

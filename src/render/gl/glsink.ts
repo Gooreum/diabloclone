@@ -32,7 +32,7 @@ void main() {
 }`;
 
 /** 진단용 */
-export const glStats = { pages: 0, sprites: 0, uploads: 0, evictions: 0, drawCalls: 0, lost: 0, restored: 0 };
+export const glStats = { pages: 0, sprites: 0, uploads: 0, shiftUploads: 0, evictions: 0, drawCalls: 0, lost: 0, restored: 0 };
 
 interface GlRes { prog: WebGLProgram; vao: WebGLVertexArrayObject; vbo: WebGLBuffer; pages: WebGLTexture[]; shift: WebGLTexture; pal: WebGLTexture; uSize: WebGLUniformLocation | null; uAlpha: WebGLUniformLocation | null }
 
@@ -192,6 +192,7 @@ export class GlSink implements SpriteSink {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, this.res!.shift);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, r.row, 256, 1, gl.RED, gl.UNSIGNED_BYTE, sh.map.subarray(0, 256));
+        glStats.shiftUploads++;
       }
       row = r.row;
     }

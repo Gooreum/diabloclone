@@ -48,12 +48,13 @@ async function clickWarp(page: Page, from: string, to: string): Promise<void> {
 
 /** 캔버스에서 어둡지 않은 픽셀 비율 */
 async function litRatio(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const c = document.getElementById('game') as HTMLCanvasElement;
-    const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
+  return page.evaluate(async () => {
+    // 월드(WebGL)와 UI 를 합성한 화면
+    const img = await window.__game!.capture!();
+    const d = img.data;
     let lit = 0;
     for (let i = 0; i < d.length; i += 4) if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) lit++;
-    return lit / (c.width * c.height);
+    return lit / (img.width * img.height);
   });
 }
 

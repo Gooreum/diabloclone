@@ -9,12 +9,13 @@ test('새 캐릭터로 시작하면 Rogue Encampment 가 원작 타일로 렌더
   page.on('pageerror', (e) => errors.push(e.message));
   await newHero(page, uniqueName('Town'));
   await page.waitForTimeout(800);
-  const ratio = await page.evaluate(() => {
-    const c = document.getElementById('game') as HTMLCanvasElement;
-    const d = (c.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data;
+  const ratio = await page.evaluate(async () => {
+    // 월드(WebGL)와 UI 를 합성한 화면
+    const img = await window.__game!.capture!();
+    const d = img.data;
     let lit = 0;
     for (let i = 0; i < d.length; i += 4) if ((d[i] ?? 0) + (d[i + 1] ?? 0) + (d[i + 2] ?? 0) > 30) lit++;
-    return lit / (c.width * c.height);
+    return lit / (img.width * img.height);
   });
   await page.locator('#game').screenshot({ path: 'test-results/town-render.png' });
   expect(errors).toEqual([]);

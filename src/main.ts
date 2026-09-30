@@ -775,6 +775,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             player: { x: s.player.x, y: s.player.y },
             waypoints: objs.filter((o) => o.type.subClass & SUBCLASS.WAYPOINT).map((o) => ({ x: o.x, y: o.y })),
             portals: objs.filter((o) => o.portal).map((o) => ({ x: o.x, y: o.y })),
+            // 플레이어 시체 (같은 레벨일 때만 스냅샷에 온다)
+            corpse: s.corpse ? { x: s.corpse.x, y: s.corpse.y } : null,
             // 출구 표시: 드러난 곳의 출구에 도착 레벨의 LevelWarp 문자열
             exits: game.exits.filter((e) => reveal.isSeen(Math.floor((e.x + e.w / 2) / 5), Math.floor((e.y + e.h / 2) / 5)))
               .map((e) => ({ x: e.x + e.w / 2, y: e.y + e.h / 2, label: worldByKey.get(e.to)?.warpLabel || e.to })),

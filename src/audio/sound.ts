@@ -7,6 +7,7 @@ import type { AssetLoader } from '../assets/loader';
 import { MpqRemote, httpRange, type RangeFetcher } from '../assets/remote';
 import type { GameTables } from '../data/tables';
 import type { Game, GameData, GameEvent, WorldSnapshot } from '../engine/game';
+import { PERIOD } from '../engine/environment';
 import { NPC_DEFS } from '../engine/npc';
 import {
   ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound,
@@ -463,6 +464,8 @@ class GameListener {
   private travelVoices = new Map<number, Promise<Voice | null>>();
   private levelId = '';
   private env: SoundEnv | undefined;
+  /** 지금 밤 배경음인지 */
+  private night = false;
   private stepTick = 0;
   private steps = 0;
   private nextEvent = 0;
@@ -493,10 +496,15 @@ class GameListener {
     this.env = t.env.forLevel(def?.levelNo);
     const song = this.env && this.env.song ? t.sounds.get(this.env.song)?.name ?? null : null;
     this.s.setMusic(song);
-    // 근사(원작 미확인): 낮/밤 주기가 없어 항상 Day Ambience
-    const amb = this.env && this.env.dayAmbience ? t.sounds.get(this.env.dayAmbience)?.name ?? null : null;
-    this.s.setAmbience(amb);
+    this.applyAmbience(t);
     this.nextEvent = this.env ? this.env.eventDelay : 0;
+  }
+
+  /** 밤이면 Night Ambience, 아니면 Day Ambience (SoundEnviron). 출처: D2Environment 시기 (ENVPERIOD_NIGHT) */
+  private applyAmbience(t: Tables): void {
+    this.night = this.game.environment().period === PERIOD.NIGHT;
+    const id = this.env ? (this.night ? this.env.nightAmbience : this.env.dayAmbience) : 0;
+    this.s.setAmbience(id ? t.sounds.get(id)?.name ?? null : null);
   }
 
   onTick(evs: GameEvent[]): void {
@@ -504,6 +512,7 @@ class GameListener {
     const t = this.s.table;
     if (!t) return;
     if (this.game.levelId !== this.levelId) this.enterLevel();
+    else if ((this.game.environment().period === PERIOD.NIGHT) !== this.night) this.applyAmbience(t);
     const snap = this.snap;
     if (snap) this.s.setListener(snap.player.x, snap.player.y);
     for (const ev of evs) this.onEvent(ev, t);
@@ -763,14 +772,15 @@ class GameListener {
     this.missiles = now;
   }
 
-  /** SoundEnviron Day Event: Event Delay 틱마다 확률적으로 (근사(원작 미확인): 1/2 확률) */
+  /** SoundEnviron Day/Night Event: Event Delay 틱마다 확률적으로 (근사(원작 미확인): 1/2 확률) */
   private ambientEvent(t: Tables): void {
     const env = this.env;
-    if (!env || !env.dayEvent) return;
+    const ev = env ? (this.night ? env.nightEvent : env.dayEvent) : 0;
+    if (!env || !ev) return;
     if (--this.nextEvent > 0) return;
     this.nextEvent = env.eventDelay + (this.s.rollNext() % Math.max(1, env.eventDelay));
     if (this.s.rollNext() & 1) {
-      const n = t.sounds.get(env.dayEvent)?.name;
+      const n = t.sounds.get(ev)?.name;
       if (n) void this.s.play(n, { channel: 'sfx' });
     }
   }

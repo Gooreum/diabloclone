@@ -3,7 +3,7 @@
 //       ItemStatCost item_lightradius (아이템 빛 반경 보너스), Pal.PL2 밝기 단계 표 32줄 (0 = 가장 어둡게, 31 = 원래 색)
 // 근사(원작 미확인): 원작 클라이언트(D2Client 조명)는 공개 소스가 없다.
 //   - 플레이어 기본 빛 반경 PLAYER_LIGHT, 반경 안 밝기 곡선(직선 감쇠), 오브젝트 Lit 값 배율(½)
-//   - 야외·마을 = 낮 밝기 (원작 낮밤 주기 없음)
+//   - 야외 밝기 매핑 (ambientOf)
 import type { TxtRow } from '../formats/txt';
 
 /** 밝기 단계 최댓값 (PL2 항등 줄) */
@@ -15,8 +15,11 @@ export const OBJECT_LIGHT_SCALE = 0.5;
 
 export interface LightSource { x: number; y: number; r: number }
 
-/** 실내(IsInside) = 0 (빛 밖은 검정), 야외·마을 = 31 */
-export const ambientOf = (inside: boolean): number => (inside ? 0 : FULL_LIGHT);
+/**
+ * 주변광: 실내(IsInside) = 0 (빛 밖은 검정), 야외·마을 = 낮·밤 밝기 (Environment.intensity 0~255).
+ * 근사(원작 미확인): 클라이언트의 밝기 → 밝기 단계 매핑. 낮(128 이상) = 원래 밝기, 한밤(64) = 16단계, 일식(32) = 8단계
+ */
+export const ambientOf = (inside: boolean, intensity = 255): number => (inside ? 0 : Math.min(FULL_LIGHT, Math.round(intensity / 4)));
 
 /** (x,y) 서브타일의 밝기 0~31: 가장 밝은 광원 기준 직선 감쇠, 주변광보다 어둡지 않다 */
 export function lightAt(ambient: number, src: readonly LightSource[], x: number, y: number): number {

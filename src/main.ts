@@ -959,7 +959,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       worldSink.setPalette(view.pal);
       // 조명: 실내는 빛 반경 밖이 어둡다 (야외·마을은 낮 밝기 — 광원 계산 생략)
       if (worldSink instanceof GlSink) {
-        const ambient = ambientOf(lightTables.isInside(game.levelDef(game.levelId)?.levelNo ?? 0));
+        const ambient = ambientOf(lightTables.isInside(game.levelDef(game.levelId)?.levelNo ?? 0), game.environment().intensity);
         const src = ambient >= FULL_LIGHT ? [] : lightSources(s, lightTables, PLAYER_LIGHT + game.lightRadiusBonus());
         lightMap = buildLightMap(cam.x, cam.y, ambient, src, lightMap);
         worldSink.setLight(lightMap, cam, view.light);
@@ -973,12 +973,6 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       );
       // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
       const worldPx = captureWaiters.length ? readWorld() : null;
-      // Phase 7: 오염된 태양 (A2Q3 — 원작 ENVIRONMENT_TaintedSunBegin: Act 2 바깥이 일식으로 어두워짐).
-      // 근사(원작 미확인): 원작 조명 곡선 대신 야외 화면 위에 반투명 어둠 한 겹
-      if (game.taintedSun && /Wilderness|Town|Desert/i.test(worldByKey.get(game.levelId)?.automapName ?? '')) {
-        ctx.fillStyle = 'rgba(4, 2, 10, 0.62)';
-        ctx.fillRect(0, 0, WIDTH, HEIGHT);
-      }
       // 바닥 아이템 이름표: Alt(Show Items) = 모두, 아니면 가리킨 아이템만 (원작)
       labels = [];
       for (const b of input.pickBoxes) {

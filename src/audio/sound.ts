@@ -107,7 +107,7 @@ interface Tables {
   sounds: SoundTable; env: SoundEnvTable; mon: MonsterSounds; items: ItemSoundTable; skills: SkillSoundTable; missiles: MissileSoundTable;
 }
 
-export interface AttachOptions { assets: AssetLoader; tables: GameTables; data: GameData; cls: string; baseUrl?: string }
+export interface AttachOptions { assets: AssetLoader; tables: GameTables; data: GameData; cls: string; baseUrl?: string; fetchRange?: RangeFetcher }
 
 /** 효과음·음악·대사 */
 export class SoundSystem {
@@ -192,7 +192,7 @@ export class SoundSystem {
   async init(opts: AttachOptions): Promise<void> {
     this.opened ??= (async () => {
       const paths = SOUND_TABLES.map((t) => `data\\global\\excel\\${t}.txt`);
-      await Promise.all([opts.assets.preload(paths), this.files.open(opts.baseUrl ?? '/d2/')]);
+      await Promise.all([opts.assets.preload(paths), this.files.open(opts.baseUrl ?? '/d2/', opts.fetchRange)]);
       const t = opts.tables;
       this.tables = {
         sounds: new SoundTable(t.table('sounds')),

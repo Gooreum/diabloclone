@@ -1,6 +1,8 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
 import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
+import { blobRange, MpqStore } from './assets/local-mpq';
+import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
 import { withDifficulty } from './data/gamedata';
 import { parsePalette, type Palette } from './formats/palette';
@@ -30,6 +32,7 @@ import { buildScene, warmLevel } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
+import { ensureLocalMpqs } from './ui/mpq-setup';
 import { ControlPanel, type HudAction, type HudState } from './ui/hud';
 import { Panels } from './ui/panels';
 import { SkillTree } from './ui/skillpanel';
@@ -148,8 +151,15 @@ function reportClientError(kind: string, e: unknown): void {
 window.addEventListener('error', (e) => reportClientError('error', e.error ?? e.message));
 window.addEventListener('unhandledrejection', (e) => reportClientError('rejection', e.reason));
 
+/** 원작 MPQ 를 어디서 읽나: dev 서버는 로컬 game-data/ 를 /d2/ 로 서빙, 배포판(또는 ?local)은 유저가 고른 파일(브라우저 보관) */
+async function mpqSource(host: HTMLElement): Promise<{ base: string; fetch: RangeFetcher; local: boolean }> {
+  if (import.meta.env.DEV && !new URLSearchParams(location.search).has('local')) return { base: '/d2/', fetch: httpRange, local: false };
+  return { base: 'local/', fetch: blobRange(await ensureLocalMpqs(host)), local: true };
+}
+
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
+  const src = await mpqSource(host);
   const canvas = document.createElement('canvas');
   // 브라우저가 그래픽 메모리를 회수해 컨텍스트를 잃었다 되찾으면 만들어 둔 그림이 모두 비므로 캐시를 버린다
   canvas.addEventListener('contextrestored', () => {
@@ -183,7 +193,17 @@ async function boot(): Promise<void> {
   ctx.font = '16px serif';
   ctx.fillText('Loading...', 20, 30);
 
-  const assets = await AssetLoader.open('/d2/');
+  let assets: AssetLoader;
+  try {
+    assets = await AssetLoader.open(src.base, src.fetch);
+  } catch (e) {
+    // 보관한 파일이 깨졌거나 브라우저가 지웠으면 비우고 다시 고르게 한다
+    if (src.local) {
+      await MpqStore.clear();
+      location.reload();
+    }
+    throw e;
+  }
   await assets.preload([PALETTE, ANIMDATA, ...WORLD_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\local\\lng\\eng\\string.tbl', 'data\\local\\lng\\eng\\expansionstring.tbl', 'data\\local\\lng\\eng\\patchstring.tbl']);
   const { data, tables } = await loadGameData(assets);
   // Act 1 월드 DRLG 가 읽는 원작 DS1/DT1 (LvlPrest·LvlSub·LvlTypes). 다른 막은 그 막에 갈 때·게임 시작 때 배경으로
@@ -240,7 +260,7 @@ async function boot(): Promise<void> {
   let inMenu = true, soundReady = false;
   menu.onSound = (n) => void sound.play(n);
   sound.bindUnlock();
-  void sound.init({ assets, tables, data, cls: '' }).then(() => {
+  void sound.init({ assets, tables, data, cls: '', baseUrl: src.base, fetchRange: src.fetch }).then(() => {
     soundReady = true;
     if (inMenu) sound.setMusic('music_options');
   }).catch(() => undefined);

@@ -33,11 +33,19 @@ test('죽음: 시체에 장비가 남고, 시체를 클릭하면 다시 장착�
 
 // 원작 싱글: 죽은 채로 나갔다가 다시 들어오면 시체가 마을 시작 자리 옆에 있다 (시체 장비 그대로).
 // 시체 그림은 맨손(HTH) COF 만 있으므로 무기(소서리스 지팡이 STF)를 든 채 죽어도 그려져야 한다.
-test('죽음 → 저장하고 나가기 → 다시 들어오면 마을에 시체가 그려져 있고, 주우면 지팡이가 돌아온다', async ({ page }) => {
+test('투구·갑옷·지팡이를 입고 죽음 → 저장하고 나가기 → 다시 들어오면 마을에 시체가 그려져 있고, 주우면 장비가 돌아온다', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const name = uniqueName('Body');
   await newHero(page, name, 'sorceress');
+  // 원작 시체·죽기 그림은 몸통 기본 외형(lit) 한 장뿐 — 투구·갑옷을 입고 죽어도 그려져야 한다
+  await page.evaluate(() => {
+    const g = window.__game!.game as unknown as { data: { items: { base(c: string): unknown }; treasure: { createItem(b: unknown, l: number, r: unknown, q: number): unknown } }; rng: unknown; equipment: Record<string, unknown>; statsDirty: boolean };
+    const mk = (c: string) => g.data.treasure.createItem(g.data.items.base(c), 10, g.rng, 2);
+    g.equipment.head = mk('skp');
+    g.equipment.tors = mk('ltp');
+    g.statsDirty = true;
+  });
   const weapon = await page.evaluate(() => window.__game!.game.equipment.rarm?.code ?? null);
   expect(weapon).not.toBeNull();
   await page.evaluate(() => (window.__game!.game as unknown as { playerDie(): void }).playerDie());
@@ -98,6 +106,7 @@ test('죽음 → 저장하고 나가기 → 다시 들어오면 마을에 시체
   const canvas = (await page.locator('#game').boundingBox())!;
   await page.mouse.click(canvas.x + at.x + at.w / 2, canvas.y + at.y + at.h / 2);
   await expect.poll(() => page.evaluate(() => window.__game!.game.equipment.rarm?.code ?? null), { timeout: 10_000 }).toBe(weapon);
+  expect(await page.evaluate(() => [window.__game!.game.equipment.head?.code, window.__game!.game.equipment.tors?.code])).toEqual(['skp', 'ltp']);
   expect(await page.evaluate(() => window.__game!.game.snapshot().corpse)).toBeNull();
   expect(errors).toEqual([]);
 });

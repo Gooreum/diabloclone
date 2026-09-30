@@ -227,14 +227,17 @@ export class UnitGfx {
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
-        const stem = `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}`;
-        const h = await openDcc(this.assets, `${stem}.dcc`);
-        if (h) layers.set(l.type, { h, dirs: [], id: newSpriteId() });
-        else {
+        const open = async (c: string): Promise<LayerGfx | null> => {
+          const stem = `${base}\\${l.name}\\${s.token}${l.name}${c}${s.mode}${l.weaponClass}`;
+          const h = await openDcc(this.assets, `${stem}.dcc`);
+          if (h) return { h, dirs: [], id: newSpriteId() };
           // 원작 몇몇 몬스터 레이어는 DC6 (Mephisto 전부, Diablo·Maggot Queen 죽음, Tyrael) — 같은 이름의 .dc6 (d2data.mpq 목록)
           const b6 = await loadOnce(this.assets, `${stem}.dc6`);
-          if (b6) layers.set(l.type, { h: handleOf(dc6AsDcc(parseDc6(b6))), dirs: [], id: newSpriteId() });
-        }
+          return b6 ? { h: handleOf(dc6AsDcc(parseDc6(b6))), dirs: [], id: newSpriteId() } : null;
+        };
+        // 이 동작에 그 외형 그림이 없으면 기본 외형(lit). 출처: 원작 d2char.mpq — 캐릭터 시체(DD)·죽기(DT)는 SOTRLITDDHTH 처럼 lit 한 장뿐
+        const g = (await open(code)) ?? (code !== 'lit' ? await open('lit') : null);
+        if (g) layers.set(l.type, g);
       }),
     );
     return s.shift ? { cof, layers, shift: s.shift } : { cof, layers };

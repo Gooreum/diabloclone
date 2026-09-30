@@ -223,7 +223,8 @@ export class SoundSystem {
         r.channels.forEach((d, i) => buf.copyToChannel(d as Float32Array<ArrayBuffer>, i));
         return buf;
       }).catch(() => null);
-      this.buffers.set(path, p);
+      // 배경음악은 한 곡이 수십 MB(풀린 PCM) 라 기억하지 않는다 — 재생 중인 목소리가 버퍼를 붙잡고 있고, 바뀌면 버려진다
+      if (!/\\music\\/i.test(path)) this.buffers.set(path, p);
     }
     return p;
   }
@@ -457,6 +458,8 @@ class GameListener {
   private prevPlayerMode = '';
   private readonly monModes = new Map<number, string>();
   private missiles = new Map<number, { name: string; x: number; y: number }>();
+  /** 미사일마다 재생 중인 비행음 — 미사일이 사라지면 멈춘다 (반복 비행음이 계속 울리던 문제) */
+  private travelVoices = new Map<number, Promise<Voice | null>>();
   private levelId = '';
   private env: SoundEnv | undefined;
   private stepTick = 0;
@@ -741,10 +744,15 @@ class GameListener {
       now.set(m.id, { name: m.name, x: m.x, y: m.y });
       if (!this.missiles.has(m.id)) {
         const ms = t.missiles.of(m.name);
-        if (ms?.travel) void s.play(ms.travel, { at: { x: m.x, y: m.y } });
+        if (ms?.travel) this.travelVoices.set(m.id, s.play(ms.travel, { at: { x: m.x, y: m.y } }));
       }
     }
     for (const [id, m] of this.missiles) if (!now.has(id)) {
+      const tv = this.travelVoices.get(id);
+      if (tv) {
+        this.travelVoices.delete(id);
+        void tv.then((v) => v?.stop(0.1));
+      }
       const ms = t.missiles.of(m.name);
       if (ms?.hit) void s.play(ms.hit, { at: { x: m.x, y: m.y } });
     }

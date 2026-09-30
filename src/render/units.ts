@@ -3,12 +3,35 @@
 //       레이어 DCC = <토큰>\<레이어>\<토큰><레이어><외형코드><모드><레이어 무기클래스>.dcc, 프레임별 레이어 순서 = COF priority
 // 출처: OpenDiablo2 d2dcc/dcc_dir_lookup.go Dir64ToDcc (64방향 → 파일 방향 인덱스)
 import { parseCof, type Cof } from '../formats/cof';
-import { parseDcc, type Dcc } from '../formats/dcc';
+import { parseDcc, type Dcc, type DccDirection } from '../formats/dcc';
+import type { DccHandle } from '../assets/gfx-client';
 import { parseDc6, type Dc6 } from '../formats/dc6';
-import type { Palette } from '../formats/palette';
-import { indexedToCanvas, type Drawable } from './sprites';
+import type { ColorShift, IndexedImage, SpriteSink } from './sink';
+import { newSpriteId } from './sprites';
 
-export interface AsyncAssets { load(path: string): Promise<Uint8Array | null> }
+export type { ColorShift } from './sink';
+
+export interface AsyncAssets {
+  load(path: string): Promise<Uint8Array | null>;
+  /** 캐시에 남기지 않고 읽기 (있으면 사용) */
+  loadOnce?(path: string): Promise<Uint8Array | null>;
+  /** DCC 를 방향 단위로 (워커가 필요한 방향만 해석) */
+  loadDcc?(path: string): Promise<DccHandle | null>;
+}
+
+const loadOnce = (a: AsyncAssets, path: string) => (a.loadOnce ? a.loadOnce(path) : a.load(path));
+
+/** DCC 열기: 방향 단위 로더가 있으면 그것, 없으면 통째로 읽어 해석 */
+async function openDcc(a: AsyncAssets, path: string): Promise<DccHandle | null> {
+  if (a.loadDcc) return a.loadDcc(path);
+  const b = await loadOnce(a, path);
+  if (!b) return null;
+  return handleOf(parseDcc(b));
+}
+/** 해석한 유닛 그림(COF+DCC) 을 기억할 최대 개수 — 넘으면 오래 안 쓴 것부터 버린다 */
+const MAX_COMPOSITES = 1200;
+/** 진단용: 유닛 그림을 불러와 해석한 횟수와 기억 중인 수 */
+export const unitGfxStats = { loads: 0, cached: 0 };
 
 // 출처: OpenDiablo2 dcc_dir_lookup.go (64방향 테이블)
 const DIR4 = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -25,8 +48,6 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
   if (numDirs === 32) return DIR32[d] ?? 0;
   return d % numDirs;
 }
-
-interface LayerGfx { dcc: Dcc; canvases: Map<number, Drawable> }
 
 /**
  * DC6 레이어를 DCC 모양으로 (방향마다 프레임들의 합집합 상자, 프레임 픽셀을 그 상자에 놓는다).
@@ -55,10 +76,33 @@ function dc6AsDcc(d: Dc6): Dcc {
   });
   return { directions, framesPerDirection: fpd };
 }
-export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; trans?: Uint8Array }
 
-/** 팔레트 색 바꿈 표 (256 바이트: 원래 색 번호 → 바뀐 색 번호) */
-export interface ColorShift { key: string; map: Uint8Array }
+/** 이미 해석한 그림을 방향 단위 핸들로 */
+const handleOf = (dcc: Dcc): DccHandle => ({ directions: dcc.directions.length, framesPerDirection: dcc.framesPerDirection, dir: async (d) => dcc.directions[d] ?? null });
+
+/** DCC 레이어: 방향은 처음 그릴 때 해석한다 (undefined = 아직 안 함, 'loading' = 해석 중, null = 없음) */
+interface LayerGfx { h: DccHandle; dirs: (DccDirection | null | 'loading' | undefined)[]; id: number }
+
+/** 불러오거나 해석 중인 그림 수 (로딩 화면이 기다린다) */
+let inflight = 0;
+const track = <T>(p: Promise<T>): Promise<T> => {
+  inflight++;
+  return p.finally(() => inflight--);
+};
+/** 유닛·미사일 그림을 불러오거나 해석하는 중인가 */
+export const gfxBusy = (): boolean => inflight > 0;
+
+/** 레이어의 방향 d (해석 중이면 undefined — 요청을 보낸다) */
+function layerDir(lg: LayerGfx, d: number): DccDirection | null | undefined {
+  const v = lg.dirs[d];
+  if (v === 'loading') return undefined;
+  if (v !== undefined) return v;
+  if (d < 0 || d >= lg.h.directions) return null;
+  lg.dirs[d] = 'loading';
+  track(lg.h.dir(d)).then((x) => (lg.dirs[d] = x)).catch(() => (lg.dirs[d] = null));
+  return undefined;
+}
+export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; shift?: ColorShift }
 
 export interface CompositeSpec {
   /** 'CHARS', 'MONSTERS' 또는 'OBJECTS' */
@@ -76,13 +120,11 @@ const specKey = (s: CompositeSpec) => `${s.root}/${s.token}/${s.mode}/${s.wclass
 
 export class UnitGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
   private readonly cache = new Map<string, Composite | null | Promise<void>>();
   private readonly shiftFiles = new Map<string, Uint8Array | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
   private shiftFile(path: string): Uint8Array | null | undefined {
@@ -118,13 +160,60 @@ export class UnitGfx {
     return identity ? null : { key: `ps${token}${i}`, map };
   }
 
+  /** 유닛별로 마지막으로 그린 그림과 방향 (새 동작·방향 그림을 해석하는 동안 대신 그려 깜박임을 막는다) */
+  private readonly lastShown = new Map<string, { comp: Composite; dir: number }>();
+
+  /**
+   * 유닛 하나의 그림: 이 동작·방향 그림이 준비됐으면 그것, 아직이면 그 유닛이 직전에 쓰던 그림(과 그때 방향).
+   * 원작은 동작이 바뀌어도 그림이 비는 순간이 없으므로, 불러오는 동안 빈 화면(깜박임)을 보이지 않게 한다.
+   */
+  getFor(unitKey: string, spec: CompositeSpec, dir64: number): { comp: Composite; dir: number } | null {
+    const c = this.get(spec);
+    if (c && this.ready(c, dir64)) {
+      const v = { comp: c, dir: dir64 };
+      this.lastShown.delete(unitKey);
+      this.lastShown.set(unitKey, v);
+      if (this.lastShown.size > 3000) {
+        const first = this.lastShown.keys().next().value;
+        if (first !== undefined) this.lastShown.delete(first);
+      }
+      return v;
+    }
+    return this.lastShown.get(unitKey) ?? (c ? { comp: c, dir: dir64 } : null);
+  }
+
+  /** 이 방향의 모든 레이어가 해석됐는가 (안 됐으면 해석 요청) */
+  ready(comp: Composite, dir64: number): boolean {
+    const d = dir64ToFile(dir64, comp.cof.directions);
+    let ok = true;
+    for (const lg of comp.layers.values()) if (layerDir(lg, d) === undefined) ok = false;
+    return ok;
+  }
+
+  /** 곧 쓸 그림을 미리 불러 방향까지 해석해 둔다 */
+  warm(spec: CompositeSpec, dir64: number): void {
+    const c = this.get(spec);
+    if (c) this.ready(c, dir64);
+  }
+
   /** 준비되면 Composite, 로딩 중이면 undefined, 없으면 null */
   get(spec: CompositeSpec): Composite | null | undefined {
     const k = specKey(spec);
     const hit = this.cache.get(k);
     if (hit instanceof Promise) return undefined;
-    if (hit !== undefined) return hit;
-    this.cache.set(k, this.load(spec).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
+    if (hit !== undefined) {
+      // 최근 사용으로 옮긴다
+      this.cache.delete(k);
+      this.cache.set(k, hit);
+      return hit;
+    }
+    unitGfxStats.loads++;
+    this.cache.set(k, track(this.load(spec)).then((c) => void this.cache.set(k, c)).catch(() => void this.cache.set(k, null)));
+    unitGfxStats.cached = this.cache.size;
+    for (const key of this.cache.keys()) {
+      if (this.cache.size <= MAX_COMPOSITES) break;
+      if (!(this.cache.get(key) instanceof Promise)) this.cache.delete(key);
+    }
     return undefined;
   }
 
@@ -134,29 +223,28 @@ export class UnitGfx {
     if (!cofBytes) return null;
     const cof = parseCof(cofBytes);
     const layers = new Map<number, LayerGfx>();
-    const trans = s.shift?.map;
     await Promise.all(
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
         const stem = `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}`;
-        const b = await this.assets.load(`${stem}.dcc`);
-        if (b) layers.set(l.type, { dcc: parseDcc(b), canvases: new Map() });
+        const h = await openDcc(this.assets, `${stem}.dcc`);
+        if (h) layers.set(l.type, { h, dirs: [], id: newSpriteId() });
         else {
           // 원작 몇몇 몬스터 레이어는 DC6 (Mephisto 전부, Diablo·Maggot Queen 죽음, Tyrael) — 같은 이름의 .dc6 (d2data.mpq 목록)
-          const b6 = await this.assets.load(`${stem}.dc6`);
-          if (b6) layers.set(l.type, { dcc: dc6AsDcc(parseDc6(b6)), canvases: new Map() });
+          const b6 = await loadOnce(this.assets, `${stem}.dc6`);
+          if (b6) layers.set(l.type, { h: handleOf(dc6AsDcc(parseDc6(b6))), dirs: [], id: newSpriteId() });
         }
       }),
     );
-    return trans ? { cof, layers, trans } : { cof, layers };
+    return s.shift ? { cof, layers, shift: s.shift } : { cof, layers };
   }
 
   /**
    * 합성 유닛 그리기. (x,y) = 유닛 발 위치 캔버스 좌표. 그린 영역(화면 좌표) 반환.
-   * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 캔버스 brightness(1.6) 필터로 근사)
+   * bright = 마우스를 올린 유닛 (원작: 가리킨 유닛·오브젝트 그림을 밝게 — 근사(원작 미확인): 1.6배 밝기로 근사)
    */
-  draw(ctx: CanvasRenderingContext2D, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
+  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
@@ -166,26 +254,12 @@ export class UnitGfx {
       const lg = comp.layers.get(type);
       if (!lg) continue;
       const layer = cof.layers.find((l) => l.type === type);
-      const dir = lg.dcc.directions[d];
+      const dir = layerDir(lg, d);
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
-      const key = d * 1000 + f;
-      let c = lg.canvases.get(key);
-      if (!c) {
-        const tr = comp.trans;
-        c = indexedToCanvas(tr ? fr.pixels.map((p) => (p ? tr[p] ?? p : 0)) : fr.pixels, dir.box.width, dir.box.height, this.pal);
-        lg.canvases.set(key, c);
-      }
-      // 반투명 레이어 (COF transparent + drawEffect). 근사(원작 미확인): 원작 혼합 표(0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기)를 캔버스 합성으로 근사
+      // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
       const blend = layer?.transparent ? layer.drawEffect : -1;
-      if (blend >= 0 || bright) {
-        ctx.save();
-        if (bright) ctx.filter = 'brightness(1.6)';
-        if (blend >= 0 && blend <= 2) ctx.globalAlpha = [0.75, 0.5, 0.25][blend] as number;
-        else if (blend >= 0) ctx.globalCompositeOperation = blend === 4 ? 'multiply' : 'lighter';
-      }
-      ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
-      if (blend >= 0 || bright) ctx.restore();
+      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright });
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);
       r0 = Math.max(r0, x + dir.box.left + dir.box.width);
@@ -198,15 +272,14 @@ export class UnitGfx {
 /** 바닥 아이템: flippy DC6 의 마지막 프레임 (떨어진 뒤 정지 모습) */
 export class ItemGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
-  private readonly cache = new Map<string, { canvas: Drawable; w: number; h: number; ox: number; oy: number } | null | 'loading'>();
+  private readonly id = newSpriteId();
+  private readonly cache = new Map<string, { image: IndexedImage; w: number; h: number; ox: number; oy: number } | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
-  draw(ctx: CanvasRenderingContext2D, flippyFile: string, x: number, y: number): { w: number; h: number; x: number; y: number } | null {
+  draw(sink: SpriteSink, flippyFile: string, x: number, y: number): { w: number; h: number; x: number; y: number } | null {
     const hit = this.cache.get(flippyFile);
     if (hit === undefined) {
       this.cache.set(flippyFile, 'loading');
@@ -217,14 +290,14 @@ export class ItemGfx {
           const dc6 = parseDc6(b);
           const fr = dc6.frames[dc6.frames.length - 1];
           if (!fr) return void this.cache.set(flippyFile, null);
-          this.cache.set(flippyFile, { canvas: indexedToCanvas(fr.pixels, fr.width, fr.height, this.pal), w: fr.width, h: fr.height, ox: fr.offsetX, oy: fr.offsetY });
+          this.cache.set(flippyFile, { image: { id: `i${this.id}:${flippyFile}`, w: fr.width, h: fr.height, pixels: fr.pixels }, w: fr.width, h: fr.height, ox: fr.offsetX, oy: fr.offsetY });
         })
         .catch(() => this.cache.set(flippyFile, null));
       return null;
     }
     if (!hit || hit === 'loading') return null;
     // 출처: Phrozen Keep DC6 문서 — offsetY 는 프레임 아래쪽 기준
-    ctx.drawImage(hit.canvas as CanvasImageSource, x + hit.ox, y + hit.oy - hit.h);
+    sink.draw(hit.image, x + hit.ox, y + hit.oy - hit.h);
     return { w: hit.w, h: hit.h, x: x + hit.ox, y: y + hit.oy - hit.h };
   }
 }
@@ -236,47 +309,32 @@ export class ItemGfx {
  */
 export class MissileGfx {
   private readonly assets: AsyncAssets;
-  private readonly pal: Palette;
   private readonly cache = new Map<string, LayerGfx | null | 'loading'>();
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets) {
     this.assets = assets;
-    this.pal = pal;
   }
 
-  draw(ctx: CanvasRenderingContext2D, celFile: string, dir64: number, frame: number, x: number, y: number, blend?: number): void {
+  draw(sink: SpriteSink, celFile: string, dir64: number, frame: number, x: number, y: number, blend?: number): void {
     const key = celFile.toLowerCase();
     const hit = this.cache.get(key);
     if (hit === undefined) {
       this.cache.set(key, 'loading');
-      this.assets
+      track(openDcc(this.assets,
         // 상태 오버레이는 엔진이 'overlays\<Filename>' 으로 보낸다 (data\global\overlays, 출처: overlay.txt Filename)
-        .load(celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
-        .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), canvases: new Map() } : null))
+        celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`))
+        .then((h) => this.cache.set(key, h ? { h, dirs: [], id: newSpriteId() } : null))
         .catch(() => this.cache.set(key, null));
       return;
     }
     if (!hit || hit === 'loading') return;
-    const d = dir64ToFile(dir64, hit.dcc.directions.length);
-    const dir = hit.dcc.directions[d];
+    const d = dir64ToFile(dir64, hit.h.directions);
+    const dir = layerDir(hit, d);
     if (!dir || !dir.frames.length) return;
     const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
     const fr = dir.frames[f];
     if (!fr) return;
-    const k = d * 1000 + f;
-    let c = hit.canvases.get(k);
-    if (!c) {
-      c = indexedToCanvas(fr.pixels, dir.box.width, dir.box.height, this.pal);
-      hit.canvases.set(k, c);
-    }
     // missiles.txt / overlay.txt Trans ≠ 0: 빛 더하기 (검은 바탕이 비친다). 근사(원작 미확인): 원작 DrawMode 종류별 혼합 대신 가산 하나
-    if (blend) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
-      ctx.restore();
-      return;
-    }
-    ctx.drawImage(c as CanvasImageSource, x + dir.box.left, y + dir.box.top);
+    sink.draw({ id: `m${hit.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { blend: blend ? 3 : -1 });
   }
 }

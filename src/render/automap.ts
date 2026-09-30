@@ -18,6 +18,8 @@ export interface AutomapMarkers {
   waypoints: { x: number; y: number }[];
   portals: { x: number; y: number }[];
   exits: { x: number; y: number; label: string }[];
+  /** 플레이어 시체 위치 (없으면 null) */
+  corpse?: { x: number; y: number } | null;
 }
 
 const CELL_PATH = 'data\\global\\ui\\automap\\MaxiMap.dc6';
@@ -122,6 +124,19 @@ export class AutomapRenderer {
       ctx.beginPath();
       ctx.arc(p.x, p.y - 3 * scale, 3, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // 시체: 붉은 십자 (드러나지 않은 곳이어도 표시 — 죽은 자리를 찾아가게)
+    // 근사(원작 미확인): 원작 시체 표시 모양·색
+    if (mk.corpse) {
+      const c = toMap(mk.corpse.x, mk.corpse.y);
+      ctx.strokeStyle = '#ff3030';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(c.x - 5, c.y);
+      ctx.lineTo(c.x + 5, c.y);
+      ctx.moveTo(c.x, c.y - 5);
+      ctx.lineTo(c.x, c.y + 5);
+      ctx.stroke();
     }
     const pp = toMap(mk.player.x, mk.player.y);
     ctx.strokeStyle = '#ffffff';

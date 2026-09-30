@@ -74,4 +74,6 @@ function clientErrorLog(): Plugin {
 
 export default defineConfig({
   plugins: [serveGameData(), clientErrorLog()],
+  // 플레이 중에 코드가 바뀌어도 페이지를 자동으로 새로고침하지 않는다 (진행 중인 게임이 끊기지 않게 — 적용은 직접 F5)
+  server: { hmr: false },
 });

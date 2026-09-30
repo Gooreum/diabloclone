@@ -6,8 +6,11 @@ import { OBJMODE_TOKENS, type ObjectDb } from '../engine/objects';
 import type { WorldSnapshot } from '../engine/game';
 import type { PickBox } from '../input/dom';
 import { toCanvas, type Camera } from './iso';
-import type { ItemGfx, MissileGfx, UnitGfx } from './units';
+import type { CompositeSpec, ItemGfx, MissileGfx, UnitGfx } from './units';
 import type { DepthSprite } from './world';
+
+/** 몬스터가 보이면 미리 불러 둘 동작 (NU·WL 외): 맞기 GH, 공격 A1, 죽기 DT·시체 DD */
+const PRELOAD_MODES = ['GH', 'A1', 'DT', 'DD', 'WL'] as const;
 
 export interface SceneDeps {
   units: UnitGfx;
@@ -38,6 +41,44 @@ const animFrame = (anim: AnimData, key: string, modeTick: number, loop = true): 
   return loop ? f : Math.min(f, r.frames - 1);
 };
 
+type SnapMonster = Readonly<WorldSnapshot>['monsters'][number];
+
+/** 몬스터 그림 사양 (없으면 null, 색 바꿈 표를 불러오는 중이면 undefined) */
+function monsterSpec(d: Pick<SceneDeps, 'units' | 'monsters'>, m: SnapMonster): CompositeSpec | null | undefined {
+  const t = d.monsters?.types.get(m.typeId);
+  if (!t) return null;
+  const equip: Record<string, string> = {};
+  // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
+  for (const [layer, variants] of Object.entries(t.layers)) {
+    const v = variants[(m.components?.[layer] ?? m.id) % variants.length] ?? 'lit';
+    if (v !== 'nil') equip[layer] = v;
+  }
+  // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
+  const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
+  if (shift === undefined) return undefined;
+  // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
+  return { root: 'MONSTERS', token: t.code, mode: m.anim?.mode ?? m.mode, wclass: t.baseW, equip, shift };
+}
+
+/** 레벨에 들어갈 때 미리 불러 둘 몬스터 수·거리 (서브타일) */
+const WARM_COUNT = 40, WARM_RADIUS = 60;
+
+/**
+ * 레벨에 들어가면 플레이어 가까운 몬스터들의 서 있기·걷기·맞기·공격·죽기 그림을 지금 방향으로 미리 불러 해석한다.
+ * 로딩 화면이 이것이 끝날 때까지 기다리므로, 들어가자마자 싸울 때 그림을 읽느라 비거나 멈칫하지 않는다.
+ */
+export function warmLevel(s: Readonly<WorldSnapshot>, d: Pick<SceneDeps, 'units' | 'monsters'>): void {
+  const p = s.player;
+  const near = s.monsters
+    .filter((m) => !m.npc && Math.hypot(m.x - p.x, m.y - p.y) < WARM_RADIUS)
+    .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))
+    .slice(0, WARM_COUNT);
+  for (const m of near) {
+    const spec = monsterSpec(d, m);
+    if (spec) for (const mode of ['NU', 'WL', 'GH', 'A1', 'DT', 'DD']) d.units.warm({ ...spec, mode }, m.dir);
+  }
+}
+
 export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps, picks: PickBox[]): DepthSprite[] {
   const out: DepthSprite[] = [];
   picks.length = 0;
@@ -54,9 +95,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!base?.flippyFile) continue;
     out.push({
       depth: it.x + it.y - 0.5,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, it.x, it.y);
-        const size = d.items.draw(ctx, base.flippyFile, p.x, p.y);
+        const size = d.items.draw(sink, base.flippyFile, p.x, p.y);
         if (size) picks.push({ kind: 'item', id: it.id, x: size.x - 4, y: size.y - 4, w: size.w + 8, h: size.h + 8 });
       },
     });
@@ -73,12 +114,12 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const raw = (t.start[o.mode] ?? 0) + Math.floor((o.modeTick * (t.frameDelta[o.mode] ?? 256)) / 256);
     out.push({
       depth: o.x + o.y - (t.drawUnder ? 4 : 0),
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, o.x, o.y);
         if (!comp) return;
         const fpd = comp.cof.framesPerDirection;
         const frame = t.cycleAnim[o.mode] ? raw % fpd : Math.min(raw, fpd - 1);
-        const box = d.units.draw(ctx, comp, 0, frame, p.x, p.y, !!o.selectable && d.hover?.kind === 'object' && d.hover.id === o.id);
+        const box = d.units.draw(sink, comp, 0, frame, p.x, p.y, !!o.selectable && d.hover?.kind === 'object' && d.hover.id === o.id);
         if (!o.selectable) return;
         // 선택 상자: objects.txt Left/Top/Width/Height (있으면), 없으면 그림 영역
         if (t.width > 0 && t.height > 0) picks.push({ kind: 'object', id: o.id, x: p.x + t.left, y: p.y + t.top, w: t.width, h: t.height });
@@ -91,26 +132,20 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!onScreen(m.x, m.y)) continue;
     const t = d.monsters?.types.get(m.typeId);
     if (!t) continue;
-    const equip: Record<string, string> = {};
-    // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
-    for (const [layer, variants] of Object.entries(t.layers)) {
-      const v = variants[(m.components?.[layer] ?? m.id) % variants.length] ?? 'lit';
-      if (v !== 'nil') equip[layer] = v;
-    }
-    // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
-    const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
-    if (shift === undefined) continue;
-    // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
-    const mode = m.anim?.mode ?? m.mode;
-    const comp = d.units.get({ root: 'MONSTERS', token: t.code, mode, wclass: t.baseW, equip, shift });
+    const spec = monsterSpec(d, m);
+    if (!spec) continue;
+    const mode = spec.mode;
+    const shown = d.units.getFor(`m${m.id}`, spec, m.dir);
+    // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 지금 방향으로 미리 해석해 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
+    if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.warm({ ...spec, mode: pre }, m.dir);
     const loop = !(m.mode === 'DT' || m.mode === 'DD') && ['NU', 'WL', 'RN'].includes(m.mode);
     const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
       depth: m.x + m.y,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        if (comp) d.units.draw(ctx, comp, m.dir, frame, p.x, p.y, lit);
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
@@ -129,9 +164,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     if (!d.missiles || !ms.celFile || ms.celFile === 'null' || !onScreen(ms.x, ms.y)) continue;
     out.push({
       depth: ms.x + ms.y + 0.25,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, ms.x, ms.y);
-        d.missiles?.draw(ctx, ms.celFile, ms.dir, ms.frame, p.x, p.y, ms.blend);
+        d.missiles?.draw(sink, ms.celFile, ms.dir, ms.frame, p.x, p.y, ms.blend);
       },
     });
   }
@@ -143,9 +178,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     const cc = d.units.get({ root: 'CHARS', token: d.playerToken, mode: 'DD', wclass: look.wclass, equip: look.equip });
     out.push({
       depth: cp.x + cp.y - 0.25,
-      draw: (ctx, cm) => {
+      draw: (sink, cm) => {
         const p = toCanvas(cm, cp.x, cp.y);
-        if (cc) d.units.draw(ctx, cc, cp.dir, 0, p.x, p.y, d.hover?.kind === 'body');
+        if (cc) d.units.draw(sink, cc, cp.dir, 0, p.x, p.y, d.hover?.kind === 'body');
         picks.push({ kind: 'body', id: 0, x: p.x - 30, y: p.y - 24, w: 60, h: 30 });
       },
     });
@@ -155,14 +190,14 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
-  const comp = d.units.get({ root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip });
+  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip }, pm.dir);
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
   out.push({
     depth: pm.x + pm.y,
-    draw: (ctx, cm) => {
+    draw: (sink, cm) => {
       const p = toCanvas(cm, pm.x, pm.y);
-      if (comp) d.units.draw(ctx, comp, pm.dir, frame, p.x, p.y);
+      if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y);
     },
   });
   return out;

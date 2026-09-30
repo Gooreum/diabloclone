@@ -1,4 +1,5 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
+import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { loadGameData } from './assets/gamedata-loader';
 import { withDifficulty } from './data/gamedata';
@@ -17,9 +18,11 @@ import { heroTitle, type Difficulty } from './engine/difficulty';
 import { questNameKey } from './engine/quests/messages-acts';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
+import { Canvas2dSink, type SpriteSink } from './render/sink';
+import { GlSink, glStats } from './render/gl/glsink';
 import { type Camera } from './render/iso';
-import { ItemGfx, MissileGfx, UnitGfx } from './render/units';
-import { buildScene } from './render/scene';
+import { gfxBusy, ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
+import { buildScene, warmLevel } from './render/scene';
 import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
@@ -84,6 +87,8 @@ declare global {
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
       };
+      /** e2e·진단: 다음 프레임의 화면 (WebGL 월드 + UI 합성) */
+      capture?: () => Promise<ImageData>;
     };
     __menuReady?: boolean;
     /** e2e: 프런트엔드 그림을 다 읽었는가 */
@@ -98,6 +103,8 @@ declare global {
 
 interface Shared {
   assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt; loading: LoadingScreen; cursor: GameCursor;
+  /** 월드(타일·유닛·미사일) 캔버스와 그리기 출구 — UI 캔버스(#game) 아래 */
+  worldCanvas: HTMLCanvasElement; worldSink: SpriteSink;
   /** DS1/DT1·팔레트를 미리 읽은 막 (막 월드는 이 막만 동기로 만들 수 있다) */
   prefetched: Set<number>;
 }
@@ -138,15 +145,32 @@ window.addEventListener('unhandledrejection', (e) => reportClientError('rejectio
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const canvas = document.createElement('canvas');
+  // 브라우저가 그래픽 메모리를 회수해 컨텍스트를 잃었다 되찾으면 만들어 둔 그림이 모두 비므로 캐시를 버린다
+  canvas.addEventListener('contextrestored', () => {
+    spriteCache.clear();
+    healGraphics();
+  });
+  // 탭으로 돌아오면 숨겨진 동안 버려진 그림(조작판·커서 등)이 있는지 보고 다시 그린다
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') healGraphics();
+  });
+  healGraphics();
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
   canvas.id = 'game';
+  // 월드는 아래 캔버스에 WebGL2 로 (팔레트 번호 텍스처), UI 는 위 캔버스(#game)에 2D 로 겹쳐 그린다. 입력은 위 캔버스가 받는다
+  const worldCanvas = document.createElement('canvas');
+  worldCanvas.width = WIDTH;
+  worldCanvas.height = HEIGHT;
+  worldCanvas.id = 'world';
+  Object.assign(worldCanvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', visibility: 'hidden' });
+  Object.assign(canvas.style, { position: 'absolute', left: '0', top: '0' });
   // 캔버스와 그 위의 투명 UI 단추 층을 같은 800×600 무대에 둔다
   const stage = document.createElement('div');
   stage.id = 'stage';
   Object.assign(stage.style, { position: 'relative', width: `${WIDTH}px`, height: `${HEIGHT}px` });
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
-  stage.append(canvas);
+  stage.append(worldCanvas, canvas);
   host.replaceChildren(stage);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   ctx.fillStyle = '#c7b377';
@@ -169,7 +193,9 @@ async function boot(): Promise<void> {
   const cursor = new GameCursor();
   const loading = new LoadingScreen(new UiArt(assets, loadingPal));
   const anim = AnimData.parse(assets.read(ANIMDATA) as Uint8Array);
-  const shared: Shared = { assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor, prefetched: new Set([0]) };
+  // WebGL2 를 못 쓰면 예전처럼 2D 캔버스로 그린다
+  const worldSink: SpriteSink = GlSink.create(worldCanvas) ?? new Canvas2dSink(worldCanvas.getContext('2d') as CanvasRenderingContext2D, gamePal);
+  const shared: Shared = { assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor, prefetched: new Set([0]), worldCanvas, worldSink };
   void shared.art.preload(CURSOR_ART);
 
   const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
@@ -181,7 +207,8 @@ async function boot(): Promise<void> {
     window.__heroStore = HeroStore;
   }
   // 캐릭터 선택 칸 영웅 그림: 저장된 장비로 게임 속 COF 합성 (서 있기 NU, 앞(아래)을 봄 = 64방향 0)
-  const figGfx = new UnitGfx(assets, gamePal);
+  const figGfx = new UnitGfx(assets);
+  const figSink = new Canvas2dSink(ctx, gamePal);
   const looks = new Map<string, { token: string; wclass: string; equip: Record<string, string> }>();
   menu.heroFigure = (c, name, x, y, now) => {
     const lk = looks.get(name);
@@ -190,7 +217,7 @@ async function boot(): Promise<void> {
     if (!comp) return false;
     const r = anim.get(`${lk.token}NU${lk.wclass}`);
     const frame = r ? Math.floor(((now / 40) * r.speed) / 256) : 0;
-    figGfx.draw(c, comp, 0, frame, x, y);
+    figGfx.draw(figSink.target(c), comp, 0, frame, x, y);
     return true;
   };
   const listHeroes = async () => {
@@ -238,14 +265,14 @@ async function boot(): Promise<void> {
 function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null, difficulty: Difficulty = 0): Promise<void> {
   // 난이도 판 표 (monstats (N)/(H), SuperUniques TC(N), levels MonLvl2/3·상자 TC) — 월드 만들기와 Game 이 같이 쓴다
   const data = withDifficulty(sh.data, difficulty);
-  const { tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor } = sh;
+  const { tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor, worldCanvas, worldSink } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   const renderers: Record<string, WorldRenderer> = {};
   // HUD 레벨 이름: levels.txt LevelName → 원작 문자열
   const levelNames: Record<string, string> = {};
   const worldByKey = new Map<string, WorldLevel>();
   // 막별 월드·그림 (막 팔레트로 타일·유닛·아이템·미사일). 막에 처음 들어갈 때 만든다 (출처: D2MOO DRLG_AllocDrlg — 막 단위)
-  interface ActView { world: ActWorld; units: UnitGfx; itemGfx: ItemGfx; missileGfx: MissileGfx }
+  interface ActView { world: ActWorld; pal: Palette; units: UnitGfx; itemGfx: ItemGfx; missileGfx: MissileGfx }
   const views = new Map<number, ActView>();
   const actView = (act: number): ActView => {
     const have = views.get(act);
@@ -258,11 +285,11 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (b) apal = parsePalette(b);
     }
     for (const l of w.levels) {
-      renderers[l.key] = new WorldRenderer(l.preset, apal);
+      renderers[l.key] = new WorldRenderer(l.preset);
       levelNames[l.key] = l.name;
       worldByKey.set(l.key, l);
     }
-    const v: ActView = { world: w, units: new UnitGfx(assets, apal), itemGfx: new ItemGfx(assets, apal), missileGfx: new MissileGfx(assets, apal) };
+    const v: ActView = { world: w, pal: apal, units: new UnitGfx(assets), itemGfx: new ItemGfx(assets), missileGfx: new MissileGfx(assets) };
     views.set(act, v);
     return v;
   };
@@ -758,6 +785,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
       if (import.meta.env.DEV) delete window.__game;
+      // 메뉴로 돌아가면 월드 캔버스를 숨긴다 (메뉴는 UI 캔버스에 그린다)
+      worldCanvas.style.visibility = 'hidden';
       resolve();
     }
     window.addEventListener('keydown', onKey);
@@ -779,6 +808,24 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         },
       };
     }
+
+    // 화면 캡처 (e2e·진단): 월드 픽셀 위에 UI 캔버스를 겹친 결과
+    const captureWaiters: ((img: ImageData) => void)[] = [];
+    const readWorld = (): Uint8ClampedArray<ArrayBuffer> =>
+      worldSink instanceof GlSink ? new Uint8ClampedArray(worldSink.readPixels().buffer as ArrayBuffer) : (worldCanvas.getContext('2d') as CanvasRenderingContext2D).getImageData(0, 0, WIDTH, HEIGHT).data as Uint8ClampedArray<ArrayBuffer>;
+    const finishCapture = (px: Uint8ClampedArray<ArrayBuffer>) => {
+      const tmp = document.createElement('canvas');
+      tmp.width = WIDTH;
+      tmp.height = HEIGHT;
+      const tc = tmp.getContext('2d') as CanvasRenderingContext2D;
+      tc.putImageData(new ImageData(px, WIDTH, HEIGHT), 0, 0);
+      tc.drawImage(canvas, 0, 0);
+      const img = tc.getImageData(0, 0, WIDTH, HEIGHT);
+      for (const w of captureWaiters.splice(0)) w(img);
+    };
+    const capture = () => new Promise<ImageData>((res) => captureWaiters.push(res));
+    if (window.__game) window.__game.capture = capture;
+    worldCanvas.style.visibility = 'visible';
 
     const step = 1000 / ENGINE_FPS;
     let last = performance.now(), acc = 0;
@@ -809,12 +856,13 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               wpPanel.open = false;
               // 원작: 계단·입구로 다른 레벨에 들어가면 잠깐 로딩 화면 (야외끼리 이어진 경계는 없음 — 근사: 자동 지도 이름으로 야외 판단)
               const to = String(ev.level);
-              if (!(outdoor(prevLevel) && outdoor(to))) loading.flash(performance.now());
+              // 그 레벨 가까운 몬스터 그림이 준비될 때까지 로딩 화면 유지 (최대 4초)
+              if (!(outdoor(prevLevel) && outdoor(to))) loading.flash(performance.now(), 350, gfxBusy);
               prevLevel = to;
-            } else if (ev.type === 'waypointTravel' || ev.type === 'portalTaken') loading.flash(performance.now());
+            } else if (ev.type === 'waypointTravel' || ev.type === 'portalTaken') loading.flash(performance.now(), 350, gfxBusy);
             else if (ev.type === 'actChanged') {
               // 원작: 막을 옮기면 로딩 화면이 조금 더 길다 (근사(원작 미확인): 0.7초)
-              loading.flash(performance.now(), 700);
+              loading.flash(performance.now(), 700, gfxBusy);
               wpPanel.open = false;
               questPanel.open = false;
             }
@@ -880,6 +928,13 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
       void larm;
       const equip: Record<string, string> = { ...BODY, ...playerLayers(data.items, game.equipment) };
+      // 로딩 화면 동안 가까운 몬스터·플레이어 그림을 미리 불러 해석한다 (로딩 화면은 그동안 기다린다)
+      if (loading.active(now)) {
+        const units = (views.get(game.act) ?? actView(startAct)).units;
+        warmLevel(s, { units, monsters: data.monsters });
+        // 플레이어가 곧 쓸 동작 (걷기·달리기·공격·맞기)
+        for (const mode of ['NU', 'WL', 'RN', 'A1', 'A2', 'GH']) units.warm({ root: 'CHARS', token, mode, wclass, equip }, s.player.dir);
+      }
       const cpItems = game.corpse?.items;
       const corpseLook = cpItems
         ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: ((cpItems.rarm ? data.items.base(cpItems.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase() }
@@ -889,11 +944,17 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || !!cubePanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
       hoverNow = overUi || !mm ? null : input.hoverAt(mm.x, mm.y);
       const view = views.get(game.act) ?? actView(startAct);
+      // 막 팔레트 (타일·유닛 색은 그리는 쪽이 팔레트로 입힌다)
+      worldSink.setPalette(view.pal);
+      // UI 캔버스는 투명으로 시작 (아래 월드 캔버스가 비친다)
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
       (renderers[game.levelId] as WorldRenderer).render(
-        ctx,
+        worldSink,
         cam,
         buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow }, input.pickBoxes),
       );
+      // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
+      const worldPx = captureWaiters.length ? readWorld() : null;
       // Phase 7: 오염된 태양 (A2Q3 — 원작 ENVIRONMENT_TaintedSunBegin: Act 2 바깥이 일식으로 어두워짐).
       // 근사(원작 미확인): 원작 조명 곡선 대신 야외 화면 위에 반투명 어둠 한 겹
       if (game.taintedSun && /Wilderness|Town|Desert/i.test(worldByKey.get(game.levelId)?.automapName ?? '')) {
@@ -921,6 +982,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             player: { x: s.player.x, y: s.player.y },
             waypoints: objs.filter((o) => o.type.subClass & SUBCLASS.WAYPOINT).map((o) => ({ x: o.x, y: o.y })),
             portals: objs.filter((o) => o.portal).map((o) => ({ x: o.x, y: o.y })),
+            // 플레이어 시체 (같은 레벨일 때만 스냅샷에 온다)
+            corpse: s.corpse ? { x: s.corpse.x, y: s.corpse.y } : null,
             // 출구 표시: 드러난 곳의 출구에 도착 레벨의 LevelWarp 문자열
             exits: game.exits.filter((e) => reveal.isSeen(Math.floor((e.x + e.w / 2) / 5), Math.floor((e.y + e.h / 2) / 5)))
               .map((e) => ({ x: e.x + e.w / 2, y: e.y + e.h / 2, label: worldByKey.get(e.to)?.warpLabel || e.to })),
@@ -982,6 +1045,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         repair: storePanel.mode === 'repair' && !!inter && inter.mode === 'trade' && !panels.menuOpen,
         hover: !panels.menuOpen && (overInv || (hoverNow !== null && hoverNow.kind !== 'body')),
       }), now);
+      if (worldPx) finishCapture(worldPx);
     };
     // 한 프레임에서 예외가 나도 루프가 멈추지 않게 한다 (예외 후 다음 프레임 예약이 빠져 화면이 검게 멈추던 문제).
     // 같은 오류는 한 번만 콘솔에 남긴다.
@@ -996,19 +1060,24 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
             return;
           }
           const s = game.snapshot();
-          const px = ctx.getImageData(400, 250, 1, 1).data;
           const audio = (window as unknown as { __audio?: { voices?: unknown[]; unlocked?: boolean } }).__audio;
           const state = {
             frames: diagFrames, maxFrameMs: Math.round(diagMaxMs), ticks: ticksOf() - diagTick, errors: diagErrors,
             level: game.levelId, loading: loading.active(performance.now()), vis: document.visibilityState, menu: panels.menuOpen,
             player: { x: Math.round(s.player.x), y: Math.round(s.player.y), mode: s.player.mode, life: Math.round(s.player.life), dead: game.isDead },
             monsters: s.monsters.length, missiles: s.missiles.length, voices: audio?.voices?.length ?? -1, unlocked: audio?.unlocked,
-            centerPixel: [px[0], px[1], px[2]], cam: [Math.round(cam.x), Math.round(cam.y)],
+            cam: [Math.round(cam.x), Math.round(cam.y)],
+            gfxLost: gfxEvents.lost, gfxRestored: gfxEvents.restored, gl: { ...glStats }, unitLoads: unitGfxStats.loads, units: unitGfxStats.cached, sprites: spriteCache.size, spriteMpx: Math.round(spriteCache.pixels / 1e5) / 10, heapMb: Math.round(((performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0) / 1e6),
           };
           diagFrames = 0;
           diagMaxMs = 0;
           diagTick = ticksOf();
-          void fetch('/__clientlog', { method: 'POST', body: `[diag] ${JSON.stringify(state)}` }).catch(() => undefined);
+          // 화면 가운데 픽셀 (월드+UI 합성) — 다음 프레임에 읽어 함께 보낸다
+          void capture().then((img) => {
+            const i = (250 * WIDTH + 400) * 4;
+            const body = { ...state, centerPixel: [img.data[i], img.data[i + 1], img.data[i + 2]] };
+            return fetch('/__clientlog', { method: 'POST', body: `[diag] ${JSON.stringify(body)}` });
+          }).catch(() => undefined);
         }, 2000)
       : 0;
     const frame = (now: number) => {
@@ -1026,6 +1095,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         }
       }
       diagFrames++;
+      // 약 1초마다 그림이 사라졌는지 확인 (브라우저가 그래픽 메모리를 회수한 경우 다시 그린다)
+      if (diagFrames % 60 === 0 && healGraphics()) reportClientError('healed', 'graphics repainted');
       diagMaxMs = Math.max(diagMaxMs, performance.now() - t0);
       requestAnimationFrame(frame);
     };

@@ -59,3 +59,46 @@ export async function loadHero(page: Page, name: string, diff: 'normal' | 'night
   await page.click('#btn-select-ok');
   await chooseDifficulty(page, diff);
 }
+
+/**
+ * 레벨 from 의 to 로 가는 이동 타일에서 걸어서 8 칸 떨어진 곳으로 옮긴 뒤, 입구 그림(LvlWarp Select 상자 중앙)을 클릭하는 move 명령.
+ * 걷기 거리는 출구 사각형의 걷기 가능한 칸에서 시작하는 BFS 로 잰다 (절벽 너머 같은 닿지 않는 곳을 고르지 않도록).
+ */
+export async function clickWarp(page: Page, from: string, to: string): Promise<void> {
+  const ok = await page.evaluate(
+    ([from, to]) => {
+      const g = window.__game!.game;
+      if (g.levelId !== from) g.changeLevel(from!, 1, 1);
+      const m = g.map;
+      const e = g.exits.find((x) => x.to === to && x.warp);
+      if (!e?.warp) return false;
+      const dist = new Map<number, number>();
+      const q: number[] = [];
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (m.walkable(x, y)) { dist.set(y * m.width + x, 0); q.push(y * m.width + x); }
+      let pick: number | null = null;
+      while (q.length && pick === null) {
+        const k = q.shift()!;
+        const d = dist.get(k)!;
+        const x = k % m.width, y = Math.floor(k / m.width);
+        const inExit = x >= e.x && x < e.x + e.w && y >= e.y && y < e.y + e.h;
+        if (d >= 8 && !inExit) { pick = k; break; }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx!, ny = y + dy!, nk = ny * m.width + nx;
+          if (m.walkable(nx, ny) && !dist.has(nk)) { dist.set(nk, d + 1); q.push(nk); }
+        }
+      }
+      if (pick === null) return false;
+      g.changeLevel(from!, (pick % m.width) + 0.5, Math.floor(pick / m.width) + 0.5);
+      // 클릭 = Select 상자 중앙의 화면 좌표 → 서브타일 (render/iso.ts screenToWorld)
+      const w = e.warp;
+      const px = w.selectX + w.selectDX / 2, py = w.selectY + w.selectDY / 2;
+      g.enqueue({ type: 'move', x: w.x + py / 16 + px / 32, y: w.y + py / 16 - px / 32, run: true });
+      return true;
+    },
+    [from, to],
+  );
+  expect(ok, `${from} → ${to} 이동 타일`).toBe(true);
+  await page.waitForFunction((k) => window.__game!.game.levelId === k, to, { timeout: 20_000 });
+  // 로딩 화면은 그 레벨 그림이 준비될 때까지(최대 4초) 떠 있다
+  await page.waitForFunction(() => !window.__game!.ui!.loading.active(performance.now()), undefined, { timeout: 6000 });
+}

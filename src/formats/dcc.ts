@@ -59,17 +59,26 @@ interface Cell { x: number; y: number; w: number; h: number }
 interface PBE { value: [number, number, number, number]; frame: number; cellIndex: number }
 interface FrameHdr { box: Box; hCells: number; vCells: number; cells: Cell[] }
 
-export function parseDcc(buf: Uint8Array): Dcc {
+/** 파일 머리: 방향 수·방향당 프레임 수·방향별 시작 바이트 */
+export interface DccHeader { directions: number; framesPerDirection: number; offsets: number[] }
+
+export function parseDccHeader(buf: Uint8Array): DccHeader {
   if (buf.length < 15 || buf[0] !== 0x74) throw new Error('dcc: bad signature');
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const numDirs = buf[2] ?? 0;
-  const framesPerDirection = dv.getUint32(3, true);
-  const directions: DccDirection[] = [];
-  for (let d = 0; d < numDirs; d++) {
-    const off = dv.getUint32(15 + d * 4, true);
-    directions.push(decodeDirection(buf, off * 8, framesPerDirection));
-  }
-  return { directions, framesPerDirection };
+  const directions = buf[2] ?? 0;
+  const offsets: number[] = [];
+  for (let d = 0; d < directions; d++) offsets.push(dv.getUint32(15 + d * 4, true));
+  return { directions, framesPerDirection: dv.getUint32(3, true), offsets };
+}
+
+/** 방향 하나만 해석 (방향마다 독립된 비트스트림이라 필요한 방향만 풀 수 있다) */
+export function parseDccDirection(buf: Uint8Array, h: DccHeader, d: number): DccDirection {
+  return decodeDirection(buf, (h.offsets[d] ?? 0) * 8, h.framesPerDirection);
+}
+
+export function parseDcc(buf: Uint8Array): Dcc {
+  const h = parseDccHeader(buf);
+  return { directions: h.offsets.map((_, d) => parseDccDirection(buf, h, d)), framesPerDirection: h.framesPerDirection };
 }
 
 function decodeDirection(buf: Uint8Array, startBit: number, numFrames: number): DccDirection {

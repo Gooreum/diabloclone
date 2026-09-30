@@ -106,9 +106,9 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
     const mode = m.anim?.mode ?? m.mode;
     const spec = { root: 'MONSTERS' as const, token: t.code, mode, wclass: t.baseW, equip, shift };
-    const comp = d.units.getFor(`m${m.id}`, spec);
-    // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 미리 불러 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
-    if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.get({ ...spec, mode: pre });
+    const shown = d.units.getFor(`m${m.id}`, spec, m.dir);
+    // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 지금 방향으로 미리 해석해 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
+    if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.warm({ ...spec, mode: pre }, m.dir);
     const loop = !(m.mode === 'DT' || m.mode === 'DD') && ['NU', 'WL', 'RN'].includes(m.mode);
     const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
@@ -116,7 +116,7 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        if (comp) d.units.draw(sink, comp, m.dir, frame, p.x, p.y, lit);
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });
@@ -161,14 +161,14 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
-  const comp = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip });
+  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass: d.playerWclass, equip: d.playerEquip }, pm.dir);
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${d.playerWclass}`, pm.modeTick, looping);
   out.push({
     depth: pm.x + pm.y,
     draw: (sink, cm) => {
       const p = toCanvas(cm, pm.x, pm.y);
-      if (comp) d.units.draw(sink, comp, pm.dir, frame, p.x, p.y);
+      if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y);
     },
   });
   return out;

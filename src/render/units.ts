@@ -3,7 +3,8 @@
 //       레이어 DCC = <토큰>\<레이어>\<토큰><레이어><외형코드><모드><레이어 무기클래스>.dcc, 프레임별 레이어 순서 = COF priority
 // 출처: OpenDiablo2 d2dcc/dcc_dir_lookup.go Dir64ToDcc (64방향 → 파일 방향 인덱스)
 import { parseCof, type Cof } from '../formats/cof';
-import { parseDcc, type Dcc } from '../formats/dcc';
+import { parseDcc, type DccDirection } from '../formats/dcc';
+import type { DccHandle } from '../assets/gfx-client';
 import { parseDc6 } from '../formats/dc6';
 import type { ColorShift, IndexedImage, SpriteSink } from './sink';
 import { newSpriteId } from './sprites';
@@ -14,9 +15,20 @@ export interface AsyncAssets {
   load(path: string): Promise<Uint8Array | null>;
   /** 캐시에 남기지 않고 읽기 (있으면 사용) */
   loadOnce?(path: string): Promise<Uint8Array | null>;
+  /** DCC 를 방향 단위로 (워커가 필요한 방향만 해석) */
+  loadDcc?(path: string): Promise<DccHandle | null>;
 }
 
 const loadOnce = (a: AsyncAssets, path: string) => (a.loadOnce ? a.loadOnce(path) : a.load(path));
+
+/** DCC 열기: 방향 단위 로더가 있으면 그것, 없으면 통째로 읽어 해석 */
+async function openDcc(a: AsyncAssets, path: string): Promise<DccHandle | null> {
+  if (a.loadDcc) return a.loadDcc(path);
+  const b = await loadOnce(a, path);
+  if (!b) return null;
+  const dcc = parseDcc(b);
+  return { directions: dcc.directions.length, framesPerDirection: dcc.framesPerDirection, dir: async (d) => dcc.directions[d] ?? null };
+}
 /** 해석한 유닛 그림(COF+DCC) 을 기억할 최대 개수 — 넘으면 오래 안 쓴 것부터 버린다 */
 const MAX_COMPOSITES = 1200;
 /** 진단용: 유닛 그림을 불러와 해석한 횟수와 기억 중인 수 */
@@ -38,7 +50,19 @@ export function dir64ToFile(dir64: number, numDirs: number): number {
   return d % numDirs;
 }
 
-interface LayerGfx { dcc: Dcc; id: number }
+/** DCC 레이어: 방향은 처음 그릴 때 해석한다 (undefined = 아직 안 함, 'loading' = 해석 중, null = 없음) */
+interface LayerGfx { h: DccHandle; dirs: (DccDirection | null | 'loading' | undefined)[]; id: number }
+
+/** 레이어의 방향 d (해석 중이면 undefined — 요청을 보낸다) */
+function layerDir(lg: LayerGfx, d: number): DccDirection | null | undefined {
+  const v = lg.dirs[d];
+  if (v === 'loading') return undefined;
+  if (v !== undefined) return v;
+  if (d < 0 || d >= lg.h.directions) return null;
+  lg.dirs[d] = 'loading';
+  lg.h.dir(d).then((x) => (lg.dirs[d] = x)).catch(() => (lg.dirs[d] = null));
+  return undefined;
+}
 export interface Composite { cof: Cof; layers: Map<number, LayerGfx>; shift?: ColorShift }
 
 export interface CompositeSpec {
@@ -97,25 +121,40 @@ export class UnitGfx {
     return identity ? null : { key: `ps${token}${i}`, map };
   }
 
-  /** 유닛별로 마지막으로 그린 그림 (새 동작 그림을 불러오는 동안 대신 그려 깜박임을 막는다) */
-  private readonly lastShown = new Map<string, Composite>();
+  /** 유닛별로 마지막으로 그린 그림과 방향 (새 동작·방향 그림을 해석하는 동안 대신 그려 깜박임을 막는다) */
+  private readonly lastShown = new Map<string, { comp: Composite; dir: number }>();
 
   /**
-   * 유닛 하나의 그림: 이 동작 그림이 준비됐으면 그것, 아직이면 그 유닛이 직전에 쓰던 그림.
+   * 유닛 하나의 그림: 이 동작·방향 그림이 준비됐으면 그것, 아직이면 그 유닛이 직전에 쓰던 그림(과 그때 방향).
    * 원작은 동작이 바뀌어도 그림이 비는 순간이 없으므로, 불러오는 동안 빈 화면(깜박임)을 보이지 않게 한다.
    */
-  getFor(unitKey: string, spec: CompositeSpec): Composite | null {
+  getFor(unitKey: string, spec: CompositeSpec, dir64: number): { comp: Composite; dir: number } | null {
     const c = this.get(spec);
-    if (c) {
+    if (c && this.ready(c, dir64)) {
+      const v = { comp: c, dir: dir64 };
       this.lastShown.delete(unitKey);
-      this.lastShown.set(unitKey, c);
+      this.lastShown.set(unitKey, v);
       if (this.lastShown.size > 3000) {
         const first = this.lastShown.keys().next().value;
         if (first !== undefined) this.lastShown.delete(first);
       }
-      return c;
+      return v;
     }
-    return this.lastShown.get(unitKey) ?? null;
+    return this.lastShown.get(unitKey) ?? (c ? { comp: c, dir: dir64 } : null);
+  }
+
+  /** 이 방향의 모든 레이어가 해석됐는가 (안 됐으면 해석 요청) */
+  ready(comp: Composite, dir64: number): boolean {
+    const d = dir64ToFile(dir64, comp.cof.directions);
+    let ok = true;
+    for (const lg of comp.layers.values()) if (layerDir(lg, d) === undefined) ok = false;
+    return ok;
+  }
+
+  /** 곧 쓸 그림을 미리 불러 방향까지 해석해 둔다 */
+  warm(spec: CompositeSpec, dir64: number): void {
+    const c = this.get(spec);
+    if (c) this.ready(c, dir64);
   }
 
   /** 준비되면 Composite, 로딩 중이면 undefined, 없으면 null */
@@ -149,8 +188,8 @@ export class UnitGfx {
       cof.layers.map(async (l) => {
         const code = s.equip[l.name];
         if (!code) return;
-        const b = await loadOnce(this.assets, `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
-        if (b) layers.set(l.type, { dcc: parseDcc(b), id: newSpriteId() });
+        const h = await openDcc(this.assets, `${base}\\${l.name}\\${s.token}${l.name}${code}${s.mode}${l.weaponClass}.dcc`);
+        if (h) layers.set(l.type, { h, dirs: [], id: newSpriteId() });
       }),
     );
     return s.shift ? { cof, layers, shift: s.shift } : { cof, layers };
@@ -170,7 +209,7 @@ export class UnitGfx {
       const lg = comp.layers.get(type);
       if (!lg) continue;
       const layer = cof.layers.find((l) => l.type === type);
-      const dir = lg.dcc.directions[d];
+      const dir = layerDir(lg, d);
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
       // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
@@ -236,16 +275,16 @@ export class MissileGfx {
     const hit = this.cache.get(key);
     if (hit === undefined) {
       this.cache.set(key, 'loading');
-      loadOnce(this.assets,
+      openDcc(this.assets,
         // 상태 오버레이는 엔진이 'overlays\<Filename>' 으로 보낸다 (data\global\overlays, 출처: overlay.txt Filename)
         celFile.toLowerCase().startsWith('overlays\\') ? `data\\global\\${celFile}.dcc` : `data\\global\\missiles\\${celFile}.dcc`)
-        .then((b) => this.cache.set(key, b ? { dcc: parseDcc(b), id: newSpriteId() } : null))
+        .then((h) => this.cache.set(key, h ? { h, dirs: [], id: newSpriteId() } : null))
         .catch(() => this.cache.set(key, null));
       return;
     }
     if (!hit || hit === 'loading') return;
-    const d = dir64ToFile(dir64, hit.dcc.directions.length);
-    const dir = hit.dcc.directions[d];
+    const d = dir64ToFile(dir64, hit.h.directions);
+    const dir = layerDir(hit, d);
     if (!dir || !dir.frames.length) return;
     const f = ((frame % dir.frames.length) + dir.frames.length) % dir.frames.length;
     const fr = dir.frames[f];

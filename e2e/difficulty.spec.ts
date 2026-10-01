@@ -50,18 +50,19 @@ test('Nightmare 해금 → 캐릭터 선택 → 난이도 창 → Nightmare Bloo
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
   expect(await page.evaluate(() => window.__game!.game.difficulty)).toBe(1);
   await page.waitForFunction(() => (window.__game?.game.snapshot().tick ?? 0) > 1 && window.__game!.game.npcs.length > 0, undefined, { timeout: 30_000 });
-  // 클래식 Nightmare 저항 페널티 −20 (맨몸)
-  expect(await page.evaluate(() => window.__game!.game.playerResist('fireresist'))).toBe(-20);
+  // Nightmare 저항 페널티 (맨몸): 클래식 −20, 확장팩 캐릭터 (LoD 서버 기본) 는 DifficultyLevels ResistPenalty −40
+  const expansion = await page.evaluate(() => window.__game!.game.expansion);
+  expect(await page.evaluate(() => window.__game!.game.playerResist('fireresist'))).toBe(expansion ? -40 : -20);
 
   await walkToBloodMoor(page);
   await page.waitForTimeout(1000);
   const mons = await page.evaluate(() => window.__game!.game.monsters.filter((m) => !m.pet && !m.npc && m.levelKey === 'bloodmoor').map((m) => ({ id: m.type.id, level: m.stats.level, hp: m.stats.maxHp, flags: m.flags, tc: m.type.treasure[0] })));
   expect(mons.length).toBeGreaterThan(20);
-  // 보통 몬스터 (수식어 없음): 레벨 26, 생명은 Normal 최대(좀비 12)보다 훨씬 크다, TC 는 (N)
+  // 보통 몬스터 (수식어 없음): 레벨 클래식 26 (25 + Level) · 확장팩 36 (levels.txt MonLvl2Ex — 지역 레벨), 생명은 Normal 최대(좀비 12)보다 훨씬 크다, TC 는 (N)
   const plain = mons.filter((m) => m.flags === 0);
   expect(plain.length).toBeGreaterThan(10);
   for (const m of plain) {
-    expect(m.level).toBe(26);
+    expect(m.level).toBe(expansion ? 36 : 26);
     expect(m.tc).toContain('(N)');
   }
   expect(plain.filter((m) => m.id === 'zombie1').every((m) => m.hp > 250)).toBe(true);

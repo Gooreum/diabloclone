@@ -19,6 +19,7 @@ import type { HeroSummary } from '../engine/save';
 import type { Difficulty } from '../engine/difficulty';
 import { validHeroName } from '../engine/save';
 import { CLASSIC_CLASSES, type ClassName } from '../engine/player';
+import type { Edition } from '../assets/edition';
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
 import { HeroStore } from './storage';
@@ -30,6 +31,10 @@ const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;
 const FPS = 25;
 const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
+/** 확장팩 캐릭터 체크 상자 그림 (15×16, 프레임 0 빈 칸 / 1 체크) — d2data FrontEnd */
+const CLICKBOX = `${FE}clickbox.dc6`;
+/** 근사(원작 미확인): 체크 상자 위치 — 이름 칸(318,493) 아래, Exit·OK 단추 사이. 누르는 칸은 글자까지 */
+const EXP_BOX: HRect = { x: 318, y: 541, w: 180, h: 16 };
 const SCROLL = `${UI}PANEL\\scrollbar.dc6`, POPUP = `${CS}PopUpOkCancel.dc6`, SMALL = `${FE}CancelButtonBlank.dc6`;
 const SB = { x: 586, y: 87, h: 369 } as const;
 const POP = { x: 268, y: 212, w: 264, h: 176 } as const;
@@ -85,6 +90,15 @@ export class Menu {
   /** 원작 프런트엔드 소리 (sounds.txt 이름) — main 이 사운드 시스템에 연결 */
   onSound: ((name: string) => void) | null = null;
   private listHeroes: (() => Promise<HeroSummary[]>) | null = null;
+  /**
+   * 설치 판본 — 확장팩이면 만들기 화면에 "Expansion Character" 체크 (원작 LoD, 기본 켬).
+   * 클래식 판본은 확장팩 캐릭터를 시작할 수 없다 (원작 클래식 설치와 같다)
+   */
+  edition: Edition = 'classic';
+  /** 만들기 화면 체크 상태 */
+  private expansionChecked = true;
+  /** 선택 화면 알림 (클래식 판본에서 확장팩 캐릭터를 골랐을 때) */
+  private notice = '';
 
   constructor(stage: HTMLElement, ctx: CanvasRenderingContext2D, sky: UiArt, fechar: UiArt) {
     this.stage = stage;
@@ -112,7 +126,7 @@ export class Menu {
       if (this.screen !== 'select' || this.confirmDelete) return;
       this.scrollBy(e.deltaY > 0 ? 1 : -1);
     });
-    void sky.preload([SCROLL, POPUP, SMALL, DIFF_POPUP, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
+    void sky.preload([CLICKBOX, SCROLL, POPUP, SMALL, DIFF_POPUP, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
     void fechar.preload([`${FE}CharacterCreate.dc6`, `${FE}fire.dc6`, `${FE}textbox.dc6`, ...CLASSIC_CLASSES.flatMap((c) => [heroFile(c, 'NU1'), heroFile(c, 'NU2'), heroFile(c, 'FW'), heroFile(c, 'NU3'), heroFile(c, 'BW')])]);
   }
 
@@ -180,6 +194,9 @@ export class Menu {
         el.addEventListener('mouseenter', () => (this.hover = c));
         el.addEventListener('mouseleave', () => this.hover === c && (this.hover = null));
       });
+      this.expansionChecked = true;
+      if (this.edition === 'lod') this.btn('chkexp', EXP_BOX, () => (this.expansionChecked = !this.expansionChecked), 'chk-expansion', 'Expansion Character', (el) => el.setAttribute('role', 'checkbox'));
+      else this.layer.remove('chkexp');
       this.btn('cexit', { x: 33, y: 537, w: 128, h: 35 }, () => void this.openSelect(), 'btn-create-exit', 'Exit');
       this.btn('cok', { x: 627, y: 537, w: 128, h: 35 }, () => this.confirmCreate(), 'btn-ok', 'OK');
     }
@@ -235,6 +252,12 @@ export class Menu {
   /** 영웅으로 게임 시작: Nightmare 가 열렸으면 난이도 창, 아니면 바로 Normal (원작 클래식 싱글플레이) */
   private startHero(h: HeroSummary): void {
     if (this.diffHero) return;
+    // 근사(원작 미확인 — 원작 클래식 설치는 확장팩 캐릭터를 목록에서 흐리게 보여 준다고 알려짐): 시작하지 않고 알린다
+    if (h.expansion && this.edition !== 'lod') {
+      this.notice = 'Expansion Character: Lord of Destruction required';
+      return;
+    }
+    this.notice = '';
     if (!h.difficultyUnlocked) {
       this.finish({ kind: 'load', name: h.name, difficulty: 0 });
       return;
@@ -325,7 +348,7 @@ export class Menu {
       this.err = 'Invalid character name';
       return;
     }
-    this.finish({ kind: 'new', name, cls: this.cls });
+    this.finish({ kind: 'new', name, cls: this.cls, expansion: this.edition === 'lod' && this.expansionChecked });
   }
 
   // ---------------------------------------------------------------- 그리기
@@ -372,8 +395,11 @@ export class Menu {
         if (h.title) drawText(ctx, h.title, r.x + 100, r.y + 4, { font: 'font16', color: 'gold' });
         drawText(ctx, h.name, r.x + 100, r.y + 20, { font: 'font16', color: 'gold' });
         drawText(ctx, `Level ${h.level} ${h.cls}`, r.x + 100, r.y + 40, { font: 'font16', color: 'white' });
+        // 원작 LoD 선택 화면: 확장팩 캐릭터는 초록 글자로 표시. 근사(원작 미확인): 줄 위치·색 번호
+        if (h.expansion) drawText(ctx, 'Expansion Character', r.x + 100, r.y + 60, { font: 'font16', color: 'green' });
       });
       this.drawScrollbar(ctx);
+      if (this.notice) drawText(ctx, this.notice, 400, 445, { font: 'font16', align: 'center', color: 'red' });
       this.button(a, WIDE, { x: 33, y: 468, w: 272, h: 35 }, 'Create New Character');
       this.button(a, WIDE, { x: 433, y: 468, w: 272, h: 35 }, 'Delete Character');
       this.button(a, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');
@@ -399,6 +425,11 @@ export class Menu {
         a.draw(ctx, `${FE}textbox.dc6`, 0, 318, 493);
         drawText(ctx, this.nameInput.value, 324, 498, { font: 'font16', color: 'white' });
         if (this.err) drawText(ctx, this.err, 400, 525, { font: 'font16', align: 'center', color: 'red' });
+      }
+      // 원작 LoD: 이름 칸 아래 "Expansion Character" 체크 상자 (FrontEnd\clickbox.dc6 — 0 빈 칸, 1 체크). 근사(원작 미확인): 위치
+      if (this.edition === 'lod') {
+        this.sky.draw(ctx, CLICKBOX, this.expansionChecked ? 1 : 0, EXP_BOX.x, EXP_BOX.y);
+        drawText(ctx, 'Expansion Character', EXP_BOX.x + 22, EXP_BOX.y + 1, { font: 'font16', color: 'gold' });
       }
       // 단추 그림은 Sky 팔레트용 (fechar 로 그리면 색이 깨진다 — 원작 파일 확인)
       this.button(this.sky, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');

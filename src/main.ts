@@ -260,6 +260,7 @@ async function boot(): Promise<void> {
   void shared.art.preload(CURSOR_ART);
 
   const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
+  menu.edition = src.edition;
   window.__menuArtReady = () => menu.ready && shared.art.ready(CURSOR_ART);
   menu.overlay = (c, m, now) => cursor.draw(c, shared.art, m, cursor.pick({ holding: false }), now);
   if (import.meta.env.DEV) {

@@ -24,7 +24,7 @@ import { computeDerived, itemSkillBonus, skillBonusOf, usableCharms, type Derive
 import { gemStats, statOf } from './itemgen';
 import type { TxtRow } from '../formats/txt';
 import { isBroken, type NpcPrice } from './price';
-import type { Placed } from './inventory';
+import { playerWclass, type Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
@@ -1766,8 +1766,7 @@ export class Game {
   }
 
   private weaponWclass(): string {
-    const base = this.weaponBase();
-    return (base?.wclass || 'hth').toUpperCase();
+    return this.data ? playerWclass(this.data.items, this.equipment) : (this.weaponBase()?.wclass || 'hth').toUpperCase();
   }
 
   private playerToken(): string {
@@ -2673,7 +2672,8 @@ export class Game {
     // 반복 스킬은 발사할 때마다 마나를 쓴다 (skills.txt startmana 로 시작 조건만 검사)
     else if (c && s.id > 5 && data.skillCalc && !s.repeat) c.mana = Math.max(0, c.mana - data.skillCalc.manaCost256(s, lvl) / 256);
     if (Math.hypot(tx - p.x, ty - p.y) > 1e-6) p.dir = dir64(tx - p.x, ty - p.y);
-    const wclass = this.weaponWclass();
+    // 발차기(KK)는 무기와 상관없이 맨손 COF·AnimData (원작 CHARS\AI\COF\AIKKHTH 만 있다)
+    const wclass = s.anim === 'KK' ? 'HTH' : this.weaponWclass();
     const token = this.playerToken();
     // 무기 공격 속도: weapons.txt speed (WSM, 음수 = 빠름). 출처: Maxroll Attack Speed — AnimRate − WSM
     // 공격 속도: WSM + IAS / 시전 속도: FCR (EFCR = ⌊120 × FCR / (120 + FCR)⌋). 출처: Maxroll Attack Speed / Cast Rate
@@ -6688,14 +6688,18 @@ export class Game {
     const block = shield?.block && !alwaysHit ? blockChance((dv?.block ?? shield.block) + this.player.states.stat('toblock'), cs.blockFactor, this.effStat('dex'), c.level, running) : 0;
     if (block > 0 && rollPercent(block, this.rng)) {
       this.events.push({ type: 'playerBlocked' });
-      // 막기 애니: 속도 50 (Holy Shield 100) + EFBR %. 출처: D2MOO Units.cpp 막기 애니 속도 (item_fasterblockrate)
-      if (!p.cast) {
-        p.path = [];
-        this.setPlayerMode('BL', (this.player.states.has('holyshield') ? 100 : 50) + effectiveRate(dv?.stat('item_fasterblockrate') ?? 0));
-      }
+      this.playerBlockAnim();
       return;
     }
     const moving = p.mode === 'WL' || p.mode === 'RN';
+    // 무기 막기 (어쌔신 Weapon Block): 서 있고 손톱 두 개(무기 클래스 HT2)면 passive_weaponblock % 로 막는다.
+    // 출처: D2MOO SUNITDMG_ApplyDodge → SUNITDMG_GetWeaponBlock (손에 든 종류와 맞는 passivestat 값 중 큰 것)
+    const wb = moving ? 0 : this.weaponBlockChance();
+    if (wb > 0 && this.rng.pick(100) < wb) {
+      this.events.push({ type: 'playerBlocked', weapon: true });
+      this.playerBlockAnim();
+      return;
+    }
     const evadeStat = moving ? 'passive_evade' : missile ? 'passive_avoid' : 'passive_dodge';
     const ev = this.playerStat(evadeStat);
     if (ev > 0 && this.rng.pick(100) < ev) {
@@ -6803,6 +6807,28 @@ export class Game {
     const cap = 75 + (dv?.stat(maxSt) ?? 0) + this.playerStat(maxSt);
     // Phase 8: 클래식 난이도 저항 페널티 (마법 저항 제외 — 원작도 DAMAGERESIST·MAGICRESIST 는 빼지 않는다). 출처: SUnitDmg.cpp
     return applyResistPenalty(raw, Math.min(95, cap), st === 'magicresist' ? 0 : this.rules.playerResistPenalty);
+  }
+
+  /** 막기 애니: 속도 50 (Holy Shield 100) + EFBR %. 출처: D2MOO Units.cpp 막기 애니 속도 (item_fasterblockrate) */
+  private playerBlockAnim(): void {
+    const p = this.player;
+    if (p.cast) return;
+    p.path = [];
+    this.setPlayerMode('BL', (p.states.has('holyshield') ? 100 : 50) + effectiveRate(this.derived()?.stat('item_fasterblockrate') ?? 0));
+  }
+
+  /** 무기 막기 확률: 손톱 두 개(HT2)일 때 passive_weaponblock (패시브 itype 이 손에 든 무기와 맞는 값 중 최대) */
+  private weaponBlockChance(): number {
+    const items = this.data?.items;
+    if (!items || this.weaponWclass() !== 'HT2') return 0;
+    const hands = [this.equipment.rarm, this.equipment.larm].map((it) => (it ? items.base(it.code) : undefined));
+    let best = 0;
+    for (const ps of this.passives()) {
+      if (ps.stat !== 'passive_weaponblock') continue;
+      if (ps.itype && !hands.some((b) => b && items.isType(b, ps.itype as string))) continue;
+      best = Math.max(best, ps.value);
+    }
+    return best;
   }
 
   /** 얼지 않음(0) · 빙결 절반(/2) — 냉기·빙결 길이 (출처: SUNITDMG_CalculateTotalDamage) */
@@ -9202,8 +9228,9 @@ export class Game {
   private opChest(o: ObjectUnit): void {
     if (o.mode !== OBJMODE.NEUTRAL) return;
     const locked = (o.interact & 0x80) !== 0;
+    // 어쌔신은 열쇠 없이 잠긴 상자를 연다 (출처: D2MOO ObjMode.cpp:1267 — PCLASS_ASSASSIN 이면 열쇠 확인 생략)
     if (locked) {
-      if (!this.useKey()) {
+      if (this.character?.cls !== 'Assassin' && !this.useKey()) {
         this.events.push({ type: 'locked', objectId: o.id });
         return;
       }

@@ -99,3 +99,68 @@ describe.skipIf(!hasLod)('1단계 — 드루이드·어쌔신 직업 기반', ()
     expect(heroTitle(true, 8)).toBe('Lady');
   });
 });
+
+describe.skipIf(!hasLod)('3단계 — 손톱·직업 전용 장착·무기 막기', () => {
+  const item = (code: string) => lod.treasure.createItem(lod.items.base(code)!, 30, new Rng(2), QUALITY.NORMAL, false);
+  const ctx = (cls: ClassName, equipment: Record<string, ReturnType<typeof item>> = {}) => ({ items: lod.items, cls, level: 99, str: 500, dex: 500, equipment });
+
+  it('어쌔신: 손톱 두 개 장착 가능, 무기 클래스 HT2 · 손톱 하나 HT1 · 손톱 + 검은 쌍수 금지', async () => {
+    const { canEquip, playerWclass } = await import('../../src/engine/inventory');
+    const a = item('ktr'), b = item('wrb'), sword = item('ssd');
+    expect(canEquip(ctx('Assassin', { rarm: a }), b, 'larm')).toBeNull();
+    expect(playerWclass(lod.items, { rarm: a, larm: b })).toBe('HT2');
+    expect(playerWclass(lod.items, { rarm: a })).toBe('HT1');
+    expect(canEquip(ctx('Assassin', { rarm: a }), sword, 'larm')).toBe('dualwield');
+  });
+
+  it('직업 전용: 바바리안은 손톱, 소서리스는 드루이드 가죽 투구를 낄 수 없다 (드루이드는 된다)', async () => {
+    const { canEquip } = await import('../../src/engine/inventory');
+    expect(canEquip(ctx('Barbarian'), item('ktr'), 'rarm')).toBe('class');
+    expect(canEquip(ctx('Sorceress'), item('dr1'), 'head')).toBe('class');
+    expect(canEquip(ctx('Druid'), item('dr1'), 'head')).toBeNull();
+  });
+
+  it('Weapon Block: 손톱 두 개 + 스킬이면 근접 공격을 막고 BL, 손톱 하나면 막지 못한다', () => {
+    const wb = lod.skills!.byNameOf('Weapon Block')!;
+    const run = (two: boolean) => {
+      const cs = classStats(tables.table('charstats'), 'Assassin');
+      const ch = createCharacter(cs);
+      ch.level = 30;
+      ch.skills[wb.id] = 20;
+      const g = new Game({
+        map: new CollisionMap(60, 60), player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
+        seed: 3, data: lod, character: ch, classStats: cs, expTable: expTable(tables.table('experience'), 'Assassin'),
+        equipment: two ? { rarm: item('ktr'), larm: item('wrb') } : { rarm: item('ktr') },
+      });
+      g.tick();
+      const inner = g as unknown as { hitPlayer(a: { min: number; max: number; toHit: number }, l: number, h: number, m: boolean, at?: unknown): void; events: { type: string; weapon?: boolean }[]; player: { mode: string } };
+      const z = g.spawnMonster('zombie1', 22.5, 20.5);
+      let blocked = 0;
+      for (let i = 0; i < 40; i++) {
+        inner.events.length = 0;
+        inner.hitPlayer({ min: 1, max: 1, toHit: 100000 }, 99, 0, false, z);
+        if (inner.events.some((e) => e.type === 'playerBlocked' && e.weapon)) {
+          blocked++;
+          expect(inner.player.mode).toBe('BL');
+        }
+        for (let k = 0; k < 15; k++) g.tick();
+      }
+      return blocked;
+    };
+    expect(run(true)).toBeGreaterThan(5);
+    expect(run(false)).toBe(0);
+  });
+
+  it('Claw Mastery: 손톱 마스터리 패시브 (passiveitype h2h) 가 걸린다', () => {
+    const cm = lod.skills!.byNameOf('Claw Mastery')!;
+    const cs = classStats(tables.table('charstats'), 'Assassin');
+    const ch = createCharacter(cs);
+    ch.skills[cm.id] = 5;
+    const g = new Game({
+      map: new CollisionMap(60, 60), player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
+      seed: 3, data: lod, character: ch, classStats: cs, expTable: expTable(tables.table('experience'), 'Assassin'), equipment: { rarm: item('ktr') },
+    });
+    const ps = (g as unknown as { passives(): { stat: string; itype?: string; value: number }[] }).passives();
+    expect(ps.some((p) => p.stat === 'passive_mastery_melee_dmg' && p.itype === 'h2h' && p.value > 0)).toBe(true);
+  });
+});

@@ -8,6 +8,7 @@ import type { ItemBase, ItemDb } from './items';
 import type { ItemInstance } from './treasure';
 import type { ClassName } from './player';
 import { statOf } from './itemgen';
+import { CLASS_CODE } from './skills/db';
 
 export const BODY_LOCS = ['head', 'neck', 'tors', 'rarm', 'larm', 'rrin', 'lrin', 'belt', 'feet', 'glov'] as const;
 export type BodyLoc = (typeof BODY_LOCS)[number];
@@ -144,11 +145,39 @@ const isQuiver = (items: ItemDb, b: ItemBase) => items.isType(b, 'misl');
 /** 한 손으로 쥘 수 있는가: 2handed 가 아니거나, 바바리안이 1or2handed 무기를 */
 export const oneHanded = (b: ItemBase, cls: ClassName): boolean => !b.twoHanded || (cls === 'Barbarian' && b.oneOrTwoHanded);
 
-/** 장착 가능 여부. 원작 규칙: 위치 · 요구치 · 양손 무기와 반대 손(방패/무기, 활은 화살통만) · 무기 두 개는 바바리안만 */
+/** 손톱 (itemtypes h2h — h2h2 포함, 어쌔신 전용) */
+export const isClaw = (items: ItemDb, b: ItemBase | undefined): boolean => !!b && items.isType(b, 'h2h');
+
+/** 직업 전용 아이템의 직업 코드 (itemtypes Class — 종류 사슬에서 처음 나오는 값), 없으면 '' */
+export function itemClassCode(items: ItemDb, b: ItemBase): string {
+  for (const t of items.typeChain(b.type)) {
+    const c = items.types.get(t)?.classCode;
+    if (c) return c;
+  }
+  return '';
+}
+
+/**
+ * 플레이어 애니메이션 무기 클래스: 손톱 두 개 = HT2 (원작 AI COF LH:ht2 · RH:ht1, 무기 클래스 13),
+ * 아니면 오른손 무기 wclass, 오른손 무기가 없으면 왼손 무기, 맨손 HTH. 엔진·그림·소리 공통.
+ * 출처: D2MOO COMPOSIT_GetWeaponClassId (nWeaponClassId 13 = HT2 — SUNITDMG_ApplyDodge 무기 막기 조건)
+ * 근사(원작 미확인): 바바리안 쌍수 클래스(1SS·1JS·1ST·1JT)는 아직 오른손 클래스로
+ */
+export function playerWclass(items: ItemDb, eq: Partial<Record<string, ItemInstance>>): string {
+  const r = eq.rarm ? items.base(eq.rarm.code) : undefined, l = eq.larm ? items.base(eq.larm.code) : undefined;
+  if (isClaw(items, r) && isClaw(items, l)) return 'HT2';
+  const w = r && isWeapon(items, r) ? r : l && isWeapon(items, l) ? l : undefined;
+  return (w?.wclass || 'hth').toUpperCase();
+}
+
+/** 장착 가능 여부. 원작 규칙: 위치 · 직업 전용 · 요구치 · 양손 무기와 반대 손(방패/무기, 활은 화살통만) · 무기 두 개는 바바리안 (어쌔신은 손톱 두 개) */
 export function canEquip(ctx: EquipContext, item: ItemInstance, loc: BodyLoc): EquipError | null {
   const { items } = ctx;
   const b = items.base(item.code);
   if (!b || !bodyLocsOf(items, b).includes(loc)) return 'slot';
+  // 직업 전용 아이템 (itemtypes Class: 손톱·클로크 ass, 가죽 투구 dru, 오브 sor …). 출처: D2MOO ITEMS_CheckRequirements (클래스 확인)
+  const cc = itemClassCode(items, b);
+  if (cc && cc !== CLASS_CODE[ctx.cls]) return 'class';
   const r = requirements(items, item);
   if (ctx.level < r.level) return 'level';
   if (ctx.str < r.str) return 'str';
@@ -158,7 +187,8 @@ export function canEquip(ctx: EquipContext, item: ItemInstance, loc: BodyLoc): E
     const ob = other ? items.base(other.code) : undefined;
     if (ob) {
       const bothWeapons = isWeapon(items, b) && isWeapon(items, ob);
-      if (bothWeapons && ctx.cls !== 'Barbarian') return 'dualwield';
+      // 출처: D2MOO ItemMode.cpp:5355 — 바바리안, 또는 어쌔신이 손톱 두 개
+      if (bothWeapons && ctx.cls !== 'Barbarian' && !(ctx.cls === 'Assassin' && isClaw(items, b) && isClaw(items, ob))) return 'dualwield';
       if (isShield(items, b) && isShield(items, ob)) return 'slot';
       // 양손 무기 + 반대 손: 활·석궁과 화살통만 허용
       const bow = (w: ItemBase, q: ItemBase) => (items.isType(w, 'bow') || items.isType(w, 'xbow')) && isQuiver(items, q);

@@ -193,7 +193,8 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;
   // 원작 캐릭터 죽기(DT)·시체(DD) COF 는 맨손(HTH)만 있다
-  const wclass = mode === 'DT' || mode === 'DD' ? 'HTH' : d.playerWclass;
+  // 죽기·시체·발차기(KK) COF 는 맨손(HTH)만 있다
+  const wclass = mode === 'DT' || mode === 'DD' || mode === 'KK' ? 'HTH' : d.playerWclass;
   const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass, equip: d.playerEquip }, pm.dir);
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${wclass}`, pm.modeTick, looping);

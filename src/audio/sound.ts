@@ -9,6 +9,7 @@ import type { GameTables } from '../data/tables';
 import type { Game, GameData, GameEvent, WorldSnapshot } from '../engine/game';
 import { PERIOD } from '../engine/environment';
 import { NPC_DEFS } from '../engine/npc';
+import { playerWclass } from '../engine/inventory';
 import {
   ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound,
   objectOpenSound, questPlayerSound, questSpeechCandidates, resolveSoundPath, weaponSwingSound, type SoundEntry, type SoundEnv,
@@ -718,7 +719,7 @@ class GameListener {
     const t = this.s.table;
     const rarm = this.game.equipment.rarm;
     const base = rarm ? this.opts.data.items.base(rarm.code) : undefined;
-    const wclass = base?.wclass ?? 'hth';
+    const wclass = playerWclass(this.opts.data.items, this.game.equipment);
     // 근사(원작 미확인): 큰 무기 = 인벤토리 높이 3 이상
     const large = (base?.invHeight ?? 0) >= 3;
     if (t) void this.s.play(weaponSwingSound(wclass, large), { delay: 0.15 });

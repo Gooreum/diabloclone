@@ -44,7 +44,7 @@ import { UiArt } from './ui/art';
 import { d2text, drawText } from './ui/text';
 import { ItemText } from './ui/itemtext';
 import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
-import { requirements } from './engine/inventory';
+import { playerWclass, requirements } from './engine/inventory';
 import { playerLayers } from './render/appearance';
 import type { Placed } from './engine/inventory';
 import { AutomapTable } from './engine/automap';
@@ -292,7 +292,7 @@ async function boot(): Promise<void> {
       const eq = sv.equipment;
       // 확장팩 캐릭터는 확장팩 아이템 표 (손톱·가죽 투구 등)
       const d = dataFor(sv.expansion === true && src.edition === 'lod');
-      const wclass = ((eq.rarm ? d.items.base(eq.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
+      const wclass = playerWclass(d.items, eq);
       looks.set(sv.name, { token: CLASS_TOKEN[sv.character.cls], wclass, equip: { ...BODY, ...playerLayers(d.items, eq) } });
     }
     return saves.map(summarize).sort((a, b) => b.savedAt - a.savedAt);
@@ -1081,9 +1081,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const s = game.snapshot();
       cam.x = s.player.x;
       cam.y = s.player.y;
-      const rarm = game.equipment.rarm, larm = game.equipment.larm;
-      const wclass = ((rarm ? data.items.base(rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
-      void larm;
+      const wclass = playerWclass(data.items, game.equipment);
       const equip: Record<string, string> = { ...BODY, ...playerLayers(data.items, game.equipment) };
       // 로딩 화면 동안 가까운 몬스터·플레이어 그림을 미리 불러 해석한다 (로딩 화면은 그동안 기다린다)
       if (loading.active(now)) {

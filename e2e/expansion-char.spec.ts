@@ -10,6 +10,7 @@ test.skip(!existsSync('game-data/d2exp.mpq') || !existsSync('game-data/lod/patch
 async function create(page: Page, name: string, expansion: boolean): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  test.skip((await page.evaluate(() => window.__edition)) !== 'lod', '확장팩 서버에서만 (클래식 서버는 체크 상자가 없다)');
   await page.click('#btn-single');
   await page.click('#btn-create');
   await page.click('#btn-sorceress');

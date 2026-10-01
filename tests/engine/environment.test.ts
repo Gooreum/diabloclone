@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Environment, PERIOD, TIME_RATES } from '../../src/engine/environment';
+import { weatherKind } from '../../src/render/weather';
 
 const run = (e: Environment, n: number, level = 2, act = 0) => {
   for (let i = 0; i < n; i++) e.update(level, act);
@@ -64,5 +65,20 @@ describe('낮·밤 주기 (D2Environment.cpp)', () => {
     expect([e.eclipse, e.rate, e.cycle, e.period, e.intensity]).toEqual([false, 128, 2, PERIOD.DAY, 32]);
     e.update(40, 1);
     expect(e.intensity).toBe(128);
+  });
+  // 출처: ENVIRONMENT_UpdateLightIntensity — LEVEL_ROCKYSUMMIT 200, ACT_V 상한 170
+  it('확장팩 Act 5: 한낮에도 밝기 170 까지, Arreat Summit(120) 은 200 고정, Act 1 은 그대로 255', () => {
+    const e = new Environment();
+    run(e, 90 * 128, 111, 4);
+    expect(e.intensity).toBe(170);
+    e.update(120, 4);
+    expect(e.intensity).toBe(200);
+    const a1 = new Environment();
+    run(a1, 90 * 128, 2, 0);
+    expect(a1.intensity).toBe(255);
+  });
+  it('날씨: Act 5 는 눈, 나머지 막은 비', () => {
+    expect(weatherKind(4)).toBe('snow');
+    expect([0, 1, 2, 3].map(weatherKind)).toEqual(['rain', 'rain', 'rain', 'rain']);
   });
 });

@@ -24,7 +24,7 @@ import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
 import { GlSink, glStats } from './render/gl/glsink';
 import { buildLightMap, type LightMap } from './render/lightmap';
-import { Rain } from './render/weather';
+import { Rain, weatherKind } from './render/weather';
 import { FULL_LIGHT, LightTables, PLAYER_LIGHT, ambientOf, lightSources } from './engine/lighting';
 import { parsePl2Light } from './formats/pl2';
 import { type Camera } from './render/iso';
@@ -1176,8 +1176,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const worldPx = captureWaiters.length ? readWorld() : null;
       // 비 (월드 위, UI 아래) + 빗소리
       const raining = rain.active(rainLevels.has(game.levelDef(game.levelId)?.levelNo ?? 0), now);
-      if (raining) rain.draw(ctx, now, WIDTH, 553);
-      sound.setWeather(raining ? 'scene_rain' : null);
+      const weather = weatherKind(game.act);
+      if (raining) rain.draw(ctx, now, WIDTH, 553, weather);
+      sound.setWeather(raining && weather === 'rain' ? 'scene_rain' : null);
       // 바닥 아이템 이름표: Alt(Show Items) = 모두, 아니면 가리킨 아이템만 (원작)
       labels = [];
       for (const b of input.pickBoxes) {

@@ -18,7 +18,9 @@ const NOON = 2, SUNRISE = 0;
 export const TIME_RATES = [128, 4, 8] as const;
 
 /** 막 번호 (0 = Act 1) */
-const ACT3 = 2, ACT4_NO = 3;
+const ACT3 = 2, ACT4_NO = 3, ACT5 = 4;
+/** 확장팩 Arreat Summit (levels.txt 120, LEVEL_ROCKYSUMMIT) */
+const ROCKY_SUMMIT = 120;
 /** 출처: UpdateLightIntensity — Act 4 레벨별 목표 밝기 (levels.txt 번호: 103 판데모니움 요새, 104 외곽 초원, 105 절망의 평원, 106 저주받은 도시) */
 const ACT4_TARGET: Record<number, number> = { 103: 128, 104: 64, 105: 56, 106: 48 };
 
@@ -72,7 +74,7 @@ export class Environment {
     }
   }
 
-  /** 출처: ENVIRONMENT_UpdateLightIntensity (Rocky Summit 은 확장팩 레벨이라 뺐다) */
+  /** 출처: ENVIRONMENT_UpdateLightIntensity (확장팩: Arreat Summit 밝기 200 고정, Act 5 상한 170) */
   private updateIntensity(levelNo: number, act: number): void {
     if (act === ACT4_NO) {
       const target = ACT4_TARGET[levelNo] ?? 16;
@@ -86,10 +88,14 @@ export class Environment {
       if (this.intensity < 32) this.intensity = 32;
       return;
     }
+    if (levelNo === ROCKY_SUMMIT) {
+      this.intensity = 200;
+      return;
+    }
     const angle = (this.ticks / this.rate) * (Math.PI / 180);
     let sin = Math.sin(angle);
     if (this.ticks >= 180 * this.rate) sin *= 0.5;
-    this.intensity = Math.min(255, Math.max(0, Math.trunc(sin * 128 + 128 + 0.5)));
+    this.intensity = Math.min(act === ACT5 ? 170 : 255, Math.max(0, Math.trunc(sin * 128 + 128 + 0.5)));
   }
 
   /** 출처: ENVIRONMENT_InitializeEnvironment */

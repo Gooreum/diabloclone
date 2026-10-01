@@ -3,8 +3,9 @@
 //   방패 칸 (247,45)-(307,162), 갑옷 칸 (131,73)-(191,162), 글자 칸: 1 줄 (5,199)-(157,217)·(162,199)-(315,217),
 //   2 줄 (7,223)-(129,258)·(135,222)-(185,258)·(193,223)-(313,258), 능력치 4 줄 y 266·290·314·338 (높이 17, 이름 x 7~105·164~262, 값 ~157·~315),
 //   닫기 칸 (272,385)-(304,417) — buysellbtn.dc6 프레임 10
-// 출처(문자열): string.tbl strchrlvl·strchrexp·strchrnxtlvl·strchrstr·strchrdex·strchrdef·ItemStats1g·strchrfir·strchrcld·strchrlit·strchrpos,
+// 출처(문자열): string.tbl strchrlvl·strchrexp·strchrnxtlvl·strchrstr·strchrdex·strchrdef·ItemStats1g·strchrfir·strchrcol·strchrlit·strchrpos,
 //   확장팩 hireiconinfo1 "Drop Potion on Portrait to Heal" · hireiconinfo2 "Right-click to Open Inventory (%s)",
+//   글자 크기: 캐릭터 창과 같은 규칙 (두 줄 이름은 font6, 한 줄은 font16 — 넘치면 font8·font6)
 //   VerifyTransaction9 "This Mercenary will replace your current one." · VerifyTransaction6 "Hire" · CfgCancel "Cancel"
 // 근사(원작 미확인 — D2Client 는 D2MOO 에 없다): 글자 칸에 넣는 항목·순서, 고용 교체 확인 상자 모양
 import type { MercSnapshot } from '../engine/game';
@@ -14,7 +15,7 @@ import { UI, type UiArt } from './art';
 import { drawTooltip, type ItemIcons, type Rect } from './invpanel';
 import type { TextLine } from './itemtext';
 import { HIRE_DESC_STRING } from './npcpanel';
-import { drawText } from './text';
+import { d2text, drawText, type FontName } from './text';
 
 const NPCINV = `${UI}PANEL\\NPCInv.dc6`;
 const CLOSEBTN = `${UI}PANEL\\buysellbtn.dc6`;
@@ -88,20 +89,28 @@ export class MercPanel {
     text(String(m.nextExp), 253, 240, { align: 'center' });
     if (!s) return;
     const left: [string, string][] = [
-      [one('strchrstr'), String(s.str)], [one('strchrdex'), String(s.dex)],
-      [one('ItemStats1g').replace(/:\s*$/, ''), `${s.min}-${s.max}`], [one('strchrdef'), String(s.defense)],
+      [str('strchrstr'), String(s.str)], [str('strchrdex'), String(s.dex)],
+      [str('ItemStats1g').replace(/:\s*$/, ''), `${s.min}-${s.max}`], [str('strchrdef'), String(s.defense)],
     ];
     const right: [string, string][] = [
-      [one('strchrfir'), `${s.resist.fi}%`], [one('strchrcld'), `${s.resist.co}%`], [one('strchrlit'), `${s.resist.li}%`], [one('strchrpos'), `${s.resist.po}%`],
+      [str('strchrfir'), `${s.resist.fi}%`], [str('strchrcol'), `${s.resist.co}%`], [str('strchrlit'), `${s.resist.li}%`], [str('strchrpos'), `${s.resist.po}%`],
     ];
+    // 이름 칸 (폭 98 · 높이 17)
+    const label = (t: string, cx: number, y: number) => {
+      const lines = t.split('\n');
+      const f: FontName = lines.length > 1 ? 'font6' : d2text.width(t, 'font16') <= 96 ? 'font16' : d2text.width(t, 'font8') <= 96 ? 'font8' : 'font6';
+      const lh = f === 'font6' ? 9 : f === 'font8' ? 13 : 16;
+      const top = y + Math.round((17 - lines.length * lh) / 2) + (f === 'font16' ? 1 : 0);
+      lines.forEach((ln, k) => text(ln, cx, top + k * lh, { align: 'center', font: f }));
+    };
     ROWS.forEach((y, i) => {
       const l = left[i], r = right[i];
       if (l) {
-        text(l[0], 56, y + 4, { align: 'center', font: 'font8' });
+        label(l[0], 56, y);
         text(l[1], 131, y + 1, { align: 'center' });
       }
       if (r) {
-        text(r[0], 213, y + 4, { align: 'center', font: 'font8' });
+        label(r[0], 213, y);
         text(r[1], 289, y + 1, { align: 'center' });
       }
     });

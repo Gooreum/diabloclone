@@ -4,7 +4,8 @@
 //       D2Game/src/QUESTS/Quests.cpp (QUESTS_SequenceCycler — 게임 시작 때 퀘스트 22(A4Q1) 의 SeqCallback)
 //       D2Game/src/MONSTER/MonsterSpawn.cpp (퀘스트 연결: izual → A4Q1, diablo → A4Q2, hephasto → A4Q3)
 // (https://github.com/ThePhrozenKeep/D2MOO)
-// 싱글플레이·클래식(bExpansion = 0) 분기만 옮겼다. 봉인·봉인 보스·디아블로 소환은 engine/chaos.ts (Phase 5) 가 맡는다.
+// 싱글플레이 분기를 옮겼다 (클래식 엔딩 + 확장팩: Tyrael 20000 → Harrogath 포털 566 · OperateFn73 LastLastPortal).
+// 봉인·봉인 보스·디아블로 소환은 engine/chaos.ts (Phase 5) 가 맡는다.
 import { OBJMODE, type ObjectUnit } from '../objects';
 import { QUALITY } from '../treasure';
 import type { QuestSpeech } from './act1';
@@ -17,6 +18,12 @@ export const L4 = { FORTRESS: 103, PLAINS: 105, RIVEROFFLAME: 107, CHAOS: 108 } 
 
 /** 출처: objects.txt 376 Hellforge */
 export const OBJ_HELLFORGE = 376;
+
+/** 확장팩: Harrogath 로 가는 포털 (objects.txt 566 "Last Last Portal", InitFn 78 / OperateFn 73) */
+export const OBJ_LASTLASTPORTAL = 566;
+
+/** Harrogath 막 번호 (0 = Act 1) */
+const ACT5 = 4;
 
 const { A4Q1, A4Q2, A4Q3 } = QW;
 const TOWN = L4.FORTRESS;
@@ -47,7 +54,7 @@ export class Act4Quests extends ActQuestBase {
   // A4Q1 (D2Act4Quest1Strc)
   private q1 = { tyraelActivated: false, ghostSpawning: false, ghostAt: null as { x: number; y: number } | null, enteredArea: false };
   // A4Q2 (D2Act4Quest2Strc)
-  private q2 = { talkedTyrael: false, diabloKilled: false, endingAt: -1, warped: false };
+  private q2 = { talkedTyrael: false, diabloKilled: false, endingAt: -1, warped: false, portalSpawned: false, portalMode: 0 as number };
   // A4Q3 (D2Act4Quest3Strc)
   private q3 = { forgeMode: 0 as number, hits: 0, cainActivated: false, soulstoneAcquired: false, smashed: false, tier: 0 };
 
@@ -89,6 +96,8 @@ export class Act4Quests extends ActQuestBase {
   /** 출처: ACT4Q2_Callback13_PlayerStartedGame */
   private startedQ2(): void {
     const d = this.Q(A4Q2);
+    // 확장팩: Act 5 로 넘어가기 전이면 Tyrael 의 포털 대사(CUSTOM5)를 다시
+    if (this.h.expansion() && this.has(A4Q2, QFLAG.CUSTOM5) && !this.has(QW.A4COMPLETED, QFLAG.REWARDGRANTED)) this.clr(A4Q2, QFLAG.CUSTOM5);
     if (this.has(A4Q2, QFLAG.REWARDGRANTED) || this.has(A4Q2, QFLAG.COMPLETEDBEFORE)) return;
     if (this.has(A4Q2, QFLAG.ENTERAREA)) [d.lastState, d.state] = [2, 3];
     else if (this.has(A4Q2, QFLAG.LEAVETOWN)) [d.state, d.lastState] = [3, 1];
@@ -156,10 +165,12 @@ export class Act4Quests extends ActQuestBase {
       if (npc === 'tyrael2' && (this.has(A4Q1, QFLAG.REWARDPENDING) || d1.state === 1)) return true;
       if (npc === 'izualghost' && !this.has(A4Q1, QFLAG.CUSTOM1)) return true;
     }
-    // 출처: ACT4Q2_ActiveFilterCallback (클래식)
-    const d2 = this.Q(A4Q2);
-    if (npc === 'tyrael2' && ((!this.has(A4Q2, G) && !this.has(A4Q2, QFLAG.COMPLETEDBEFORE) && d2.state === 1) || (this.has(A4Q2, G) && this.has(A4Q2, QFLAG.CUSTOM3)))) return true;
-    if (npc === 'cain4' && this.has(A4Q2, G) && this.has(A4Q2, QFLAG.CUSTOM2)) return true;
+    // 출처: ACT4Q2_ActiveFilterCallback (클래식 CUSTOM2·3, 확장팩 CUSTOM4·5)
+    const d2 = this.Q(A4Q2), exp = this.h.expansion();
+    if (npc === 'tyrael2' && ((!this.has(A4Q2, G) && !this.has(A4Q2, QFLAG.COMPLETEDBEFORE) && d2.state === 1) || (!exp && this.has(A4Q2, G) && this.has(A4Q2, QFLAG.CUSTOM3)))) return true;
+    if (npc === 'tyrael2' && exp && this.has(A4Q2, G) && !this.has(A4Q2, QFLAG.CUSTOM5)) return true;
+    if (npc === 'cain4' && !exp && this.has(A4Q2, G) && this.has(A4Q2, QFLAG.CUSTOM2)) return true;
+    if (npc === 'cain4' && exp && this.has(A4Q2, G) && !this.has(A4Q2, QFLAG.CUSTOM4)) return true;
     // 출처: ACT4Q3_ActiveFilterCallback
     const d3 = this.Q(A4Q3);
     return npc === 'cain4' && !this.done(A4Q3) && d3.notIntro && d3.state === 1 && !this.q3.soulstoneAcquired;
@@ -191,6 +202,25 @@ export class Act4Quests extends ActQuestBase {
    */
   private activateQ2(npc: string, out: QuestSpeech[]): void {
     const d = this.Q(A4Q2);
+    // 확장팩 (출처: 같은 함수 — 보상 받은 뒤 표 4 Tyrael 20000 · 표 5 Cain 20001)
+    if (this.h.expansion()) {
+      if (this.has(A4Q2, QFLAG.REWARDGRANTED)) {
+        if (!this.has(A4Q2, QFLAG.CUSTOM5)) {
+          if (npc === 'tyrael2') this.chain(A4Q2, 4, npc, out);
+          else if (npc === 'cain4') this.chain(A4Q2, 5, npc, out);
+        }
+        if (!this.has(A4Q2, QFLAG.CUSTOM4)) {
+          if (npc === 'cain4') this.chain(A4Q2, 4, npc, out);
+          else if (npc === 'tyrael2') this.chain(A4Q2, 5, npc, out);
+        }
+        return;
+      }
+      if ((d.state < 4 || this.has(A4Q2, QFLAG.PRIMARYGOALDONE)) && d.notIntro && d.state) {
+        const i = [-1, 0, 1, -1, -1][d.state] ?? -1;
+        if (i !== -1) this.chain(A4Q2, i, npc, out);
+      }
+      return;
+    }
     const c2 = this.has(A4Q2, QFLAG.CUSTOM2), c3 = this.has(A4Q2, QFLAG.CUSTOM3);
     if (c2 || c3) {
       if (c3 && npc === 'tyrael2') this.chain(A4Q2, 2, npc, out);
@@ -252,6 +282,11 @@ export class Act4Quests extends ActQuestBase {
       this.updateFlags(A4Q2);
     } else if (npc === 'tyrael2' && index === 684) this.clr(A4Q2, QFLAG.CUSTOM3);
     else if (npc === 'cain4' && index === 685) this.clr(A4Q2, QFLAG.CUSTOM2);
+    else if (npc === 'tyrael2' && index === 20000 && this.h.expansion()) {
+      // 확장팩: Tyrael 오른쪽 5 칸에 Harrogath 포털 (QUESTS_GetFreePosition → 빈 칸)
+      this.set(A4Q2, QFLAG.CUSTOM5);
+      this.spawnAct5Portal();
+    } else if (npc === 'cain4' && index === 20001) this.set(A4Q2, QFLAG.CUSTOM4);
     // A4Q3 (출처: ACT4Q3_Callback11_ScrollMessage) — 679: Cain 이 영혼석을 준다, 680: 보상 받음
     const d3 = this.Q(A4Q3), x3 = this.q3;
     if (npc !== 'cain4') return;
@@ -274,6 +309,14 @@ export class Act4Quests extends ActQuestBase {
       this.clr(A4Q3, QFLAG.REWARDPENDING);
       d3.guid = true;
     }
+  }
+
+  /** 출처: ACT4Q2_Callback11_ScrollMessage (20000) — SUNIT_AllocUnitData(UNIT_OBJECT, 566, Tyrael x + 5, OBJMODE_OPERATING) */
+  private spawnAct5Portal(): void {
+    if (this.q2.portalSpawned) return;
+    const at = this.h.npcPos('tyrael2');
+    if (!at) return;
+    if (this.h.createObject(TOWN, OBJ_LASTLASTPORTAL, at.x + 5, at.y, OBJMODE.OPERATING)) this.q2.portalSpawned = true;
   }
 
   npcDeactivate(npc: string): void {
@@ -371,6 +414,7 @@ export class Act4Quests extends ActQuestBase {
   private killedDiablo(k: ActsKill): void {
     const d = this.Q(A4Q2), x = this.q2;
     if (x.diabloKilled) return;
+    if (this.h.expansion()) return this.killedDiabloExpansion(k);
     this.h.emit({ type: 'questFx', fx: 13 });
     x.diabloKilled = true;
     if (k.byPlayer || k.playerNear) {
@@ -399,6 +443,24 @@ export class Act4Quests extends ActQuestBase {
       this.h.completeDifficulty();
       this.h.emit({ type: 'gameCompleted', difficulty: this.h.difficulty() });
     }
+  }
+
+  /**
+   * 확장팩 (출처: ACT4Q2_Callback08_MonsterKilled · UnitIterate_SetPrimaryGoalDone 의 bExpansion 분기) — FX 13·CUSTOM2/3·진행 값·
+   *   엔딩(마을 이동·게임 끝)이 없다. 난이도는 바알(A5Q6)에서 끝난다. Tyrael 이 Harrogath 포털을 연다 (대사 20000)
+   */
+  private killedDiabloExpansion(k: ActsKill): void {
+    const d = this.Q(A4Q2);
+    this.q2.diabloKilled = true;
+    if (!d.notIntro) return;
+    this.iterate(A4Q2, 13);
+    if ((k.byPlayer || k.playerNear) && !this.done(A4Q2)) {
+      this.set(A4Q2, QFLAG.PRIMARYGOALDONE);
+      this.set(A4Q2, QFLAG.REWARDGRANTED);
+      this.h.record.resetIntermediate(A4Q2);
+    }
+    if (!this.has(A4Q2, QFLAG.REWARDGRANTED)) this.set(A4Q2, QFLAG.COMPLETEDNOW);
+    if (this.has(A4Q2, QFLAG.PRIMARYGOALDONE)) this.h.emit({ type: 'questCompleted', quest: A4Q2, act: this.act });
   }
 
   /** 출처: ACT4Q2_SpawnDiablo 클래식 분기 — 90 초 뒤 PGD 인 플레이어를 판데모니움 요새로 (엔딩 영상은 근사: 생략) */
@@ -443,8 +505,16 @@ export class Act4Quests extends ActQuestBase {
 
   // ------------------------------------------------------------ 오브젝트
 
-  /** 출처: OBJECTS_InitFunction48_HellForge */
+  /** 출처: OBJECTS_InitFunction48_HellForge, OBJECTS_InitFunction78_LastLastPortal (처음은 열리는 중, 다시 만들면 열림) */
   initObject(o: ObjectUnit): void {
+    if (o.type.initFn === 78) {
+      if (this.q2.portalMode === OBJMODE.OPENED) this.h.setObjectMode(o, OBJMODE.OPENED);
+      else {
+        this.q2.portalMode = OBJMODE.OPENED;
+        this.h.setObjectMode(o, OBJMODE.OPERATING, true);
+      }
+      return;
+    }
     if (o.type.initFn !== 48) return;
     const d = this.Q(A4Q3);
     if (!d.notIntro) {
@@ -455,8 +525,12 @@ export class Act4Quests extends ActQuestBase {
     if (d.lastState !== 13 && d.lastState !== 2 && d.lastState !== 3) this.iterate(A4Q3, 2);
   }
 
-  /** objects.txt OperateFn 49 HellForge */
+  /** objects.txt OperateFn 49 HellForge, 73 LastLastPortal */
   operate(o: ObjectUnit): boolean {
+    if (o.type.operateFn === 73) {
+      this.opLastLastPortal();
+      return true;
+    }
     if (o.type.operateFn !== 49) return false;
     this.opForge(o);
     return true;
@@ -507,6 +581,24 @@ export class Act4Quests extends ActQuestBase {
     // 출처: EVENTTYPE_QUESTFN (S1 애니메이션 프레임 뒤) → ACT4Q3_CreateReward
     // 근사(원작 미확인): objects.txt FrameCnt3 대신 1초
     this.timer(25, () => this.forgeReward(o));
+  }
+
+  /**
+   * 출처: OBJECTS_OperateFunction73_LastLastPortal — 확장팩만. Terror's End 를 끝냈으면 A4COMPLETED (GRANTED·PGD) 후 Harrogath 로 (웨이포인트 켜짐).
+   * 근사(원작 미확인): 원작은 도착 칸 nTileInfo 5 와 Act 4 끝 영상(0x61 5) — 여기서는 마을 시작 자리, 영상 없이 actChange 만
+   */
+  private opLastLastPortal(): void {
+    if (!this.h.expansion()) return;
+    if (!this.has(A4Q2, QFLAG.REWARDGRANTED) && !this.has(A4Q2, QFLAG.PRIMARYGOALDONE)) {
+      this.h.emit({ type: 'questSound', sound: 19 });
+      return;
+    }
+    if (this.h.act() !== this.act) return;
+    if (!this.has(QW.A4COMPLETED, QFLAG.REWARDGRANTED)) {
+      this.set(QW.A4COMPLETED, QFLAG.REWARDGRANTED);
+      this.set(QW.A4COMPLETED, QFLAG.PRIMARYGOALDONE);
+    }
+    this.h.travelAct(ACT5);
   }
 
   /** 출처: ACT4Q3_CreateReward — 등급 4 (완벽) → 3·2 (흠 없는) → 1 (보통), 20 틱마다 한 개, 아이템 레벨 50 */

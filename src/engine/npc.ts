@@ -20,6 +20,8 @@ export type NpcOption =
   | 'talk' | 'trade' | 'tradeRepair' | 'gamble' | 'hire' | 'resurrect' | 'identify' | 'cancel' | 'imbue'
   /** 막 이동: Warriv go east (Act 1 → 2) / go west (Act 2 → 1), Meshif sail east (Act 2 → 3) / sail west (Act 3 → 2) */
   | 'goEast' | 'goWest' | 'sailEast' | 'sailWest'
+  /** 확장팩: Tyrael (Act 4) → Harrogath */
+  | 'goHarrogath'
   | QuestTopic;
 /** 메뉴의 퀘스트 항목: quest:<퀘스트 번호>:<원작 문자열 번호> (원작 QUESTS_InitScrollTextChain nMenu 2 대사) */
 export type QuestTopic = `quest:${number}:${number}`;
@@ -100,6 +102,17 @@ export const NPC_DEFS: Record<string, NpcDef> = {
   cain4: { menu: ['talk', 'identify', 'cancel'], act: 3, identify: true, gossip: 'CainAct4' },
   // Phase 7: Izual 의 영혼 (MONSTER_IZUALGHOST — A4Q1 대사 675)
   izualghost: { menu: ['talk', 'cancel'], act: 3, gossip: 'Izual' },
+  // ---- 확장팩 Act 5 (Harrogath). 출처: SUnitProxy.cpp NPC 표 (MALAH·DREHYA·LARZUK·NIHLATHAK 상인, QUAL_KEHK·TYRAEL3·CAIN6),
+  //      SUnitNpc.cpp — 1 상점 LARZUK·DREHYA·MALAH, 2 도박 DREHYA·NIHLATHAK, 수리 LARZUK, 치료 MALAH, 고용·부활 QUAL_KEHK, 감정 CAIN6
+  //      대사 키: string.tbl LarzukAct5IntroGossip1 · AnyaGossip1 · QualKehkGossip1 · CainAct5Gossip1 … (Drehya 의 대사 이름은 Anya)
+  larzuk: { menu: ['talk', 'tradeRepair', 'cancel'], vendor: 'larzuk', act: 4, repair: true, gossip: 'Larzuk' },
+  malah: { menu: ['talk', 'trade', 'cancel'], vendor: 'malah', act: 4, heal: true, gossip: 'Malah' },
+  'qual-kehk': { menu: ['talk', 'hire', 'cancel'], act: 4, hire: true, resurrect: true, gossip: 'QualKehk' },
+  drehya: { menu: ['talk', 'trade', 'gamble', 'cancel'], vendor: 'drehya', act: 4, gamble: true, gossip: 'Anya' },
+  // 근사(원작 미확인): 마을 Nihlathak 의 상점 칸 — 원작 서버는 도박(2)만 받는다. 도박 가격 배수는 npc.txt nihlathak 행
+  nihlathak: { menu: ['talk', 'gamble', 'cancel'], act: 4, price: 'nihlathak', gamble: true, gossip: 'Nihlathak' },
+  cain6: { menu: ['talk', 'identify', 'cancel'], act: 4, identify: true, gossip: 'CainAct5' },
+  tyrael3: { menu: ['talk', 'cancel'], act: 4, gossip: 'TyraelAct5' },
 };
 
 /**
@@ -110,6 +123,7 @@ export const NPC_DEFS: Record<string, NpcDef> = {
 export const NPC_MENU_STRING: Record<Exclude<NpcOption, QuestTopic>, string> = {
   talk: 'TalkMenu', trade: 'NPCMenuTrade', tradeRepair: 'NPCMenuTradeRepair', gamble: 'gamble', hire: 'NPCMenuHire', resurrect: '', identify: 'NPCIdentify1', cancel: 'lowercasecancel',
   imbue: 'Upgrade', goEast: 'WarrivMenu1b', goWest: 'WarrivMenu1c', sailEast: 'MeshifMenuEast', sailWest: 'MeshifMenuWest',
+  goHarrogath: 'Travel To Harrogath',
 };
 
 /** 메뉴 항목의 string.tbl 키 */
@@ -124,6 +138,9 @@ export const NPC_LEVEL_CAP = [12, 20, 28, 36, 45];
 
 /** 퀘스트 플래그 (A1Q2 Blood Raven 보상 — Kashya 고용 허용) */
 export const QUEST_A1Q2 = 'a1q2';
+
+/** 퀘스트 플래그 (A5Q2 Rescue on Mount Arreat 보상 — Qual-Kehk 고용 허용) */
+export const QUEST_A5Q2 = 'a5q2';
 
 /** 상점 기능이 게임에 요청하는 것 */
 export interface TradeHost {
@@ -191,9 +208,9 @@ export interface HireCandidate { index: number; name: string; init: HirelingInit
  */
 /**
  * 레벨업 때 재고를 새로 채우는 상인 (npcTrade.bLevelRefresh).
- * 출처: SUNITPROXY_InitializeNpcControl — Gheed·Charsi·Fara·Hratli·Asheara·Halbu·Jamella (Akara·Lysander·Drognan·Alkor·Ormus·Elzix 는 0)
+ * 출처: SUNITPROXY_InitializeNpcControl — Gheed·Charsi·Fara·Hratli·Asheara·Halbu·Jamella·Malah (Akara·Lysander·Drognan·Alkor·Ormus·Elzix·Drehya·Larzuk·Nihlathak 는 0)
  */
-export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed', 'fara', 'hratli', 'asheara', 'halbu', 'jamella'];
+export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed', 'fara', 'hratli', 'asheara', 'halbu', 'jamella', 'malah'];
 
 /** 막 마을 엔진 레벨 키 (data/world-level.ts LEVEL_KEYS: 1 Rogue Encampment, 40 Lut Gholein, 75 Kurast Docks, 103 Pandemonium Fortress, 109 Harrogath) */
 export const ACT_TOWN_KEYS: readonly string[] = ['town', 'lutgholein', 'kurastdocks', 'pandemonium', 'harrogath'];
@@ -211,6 +228,8 @@ export const TRAVEL: Partial<Record<NpcOption, { npc: string; to: number }>> = {
   goWest: { npc: 'warriv2', to: 0 },
   sailEast: { npc: 'meshif1', to: 2 },
   sailWest: { npc: 'meshif2', to: 1 },
+  // 출처: NPC_HandleDialogMessage (TYRAEL2) — 확장팩 + A4Q2 REWARDGRANTED → D2GAME_PlayerChangeAct(LEVEL_HARROGATH)
+  goHarrogath: { npc: 'tyrael2', to: 4 },
 };
 
 export class NpcServices {
@@ -544,6 +563,11 @@ export class NpcServices {
     let lvl = h.playerLevel;
     if (h.difficulty === 0) lvl = Math.min(lvl, NPC_LEVEL_CAP[def.act] ?? lvl);
     if (npc === 'kashya' && lvl < 8 && !h.questDone(QUEST_A1Q2)) {
+      h.emit({ type: 'hireFailed', reason: 'locked' });
+      return null;
+    }
+    // 출처: sub_6FCC7FA0 — QUAL_KEHK 는 QUESTRECORD_GetQuestState(…, QUEST_A5Q6_BAAL(36) = 기록 워드 A5Q2, REWARDGRANTED) 이 없으면 거절
+    if (npc === 'qual-kehk' && !h.questDone(QUEST_A5Q2)) {
       h.emit({ type: 'hireFailed', reason: 'locked' });
       return null;
     }

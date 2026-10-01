@@ -176,7 +176,8 @@ function killNear(g: Game, m: MonsterUnit): GameEvent[] {
 d('Act 2~4 대사 표·퀘스트 로그 문자열 (string.tbl)', () => {
   it('모든 대사 키가 string.tbl 에 있다 (A2Q1~A4Q3)', () => {
     const missing: string[] = [];
-    for (const [w, tabs] of Object.entries(NPC_MESSAGES_ACTS)) for (const t of tabs) for (const m of t) if (tables.string(m.key) === m.key) missing.push(`${w}:${m.npc}:${m.index}:${m.key}`);
+    // 확장팩 대사 (문자열 번호 20000 이상 — A4Q2 Tyrael·Cain 의 Harrogath 대사) 는 클래식 string.tbl 에 없다 (act5-travel.test.ts 가 확장팩으로 본다)
+    for (const [w, tabs] of Object.entries(NPC_MESSAGES_ACTS)) for (const t of tabs) for (const m of t) if (m.index < 20000 && tables.string(m.key) === m.key) missing.push(`${w}:${m.npc}:${m.index}:${m.key}`);
     expect(missing).toEqual([]);
   });
 

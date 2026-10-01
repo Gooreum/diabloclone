@@ -179,12 +179,14 @@ export const NPC_MESSAGES_ACTS: Record<number, NpcMessage[][]> = {
     table('A4Q1', 'Successful', [['tyrael2', 676, 1], ['cain4', 677, 2], ['izualghost', 675, 1]]),
     table('A4Q1', 'Successful', [['tyrael2', 676, 2], ['cain4', 677, 2]]),
   ],
-  // 출처: A4Q2.cpp gpAct4Q2NpcMessages (Terror's End). 표 4·5 (20000·20001) 는 확장팩(Act 5 포털) 전용이라 뺐다
+  // 출처: A4Q2.cpp gpAct4Q2NpcMessages (Terror's End). 표 4·5 (20000·20001) 는 확장팩 전용 (Tyrael → Act 5 포털)
   [QW.A4Q2]: [
     table('A4Q2', 'Init', [['tyrael2', 681, 1]]),
     table('A4Q2', 'AfterInit', [['tyrael2', 683, 2], ['cain4', 682, 2]]),
     table('A4Q2', 'Successful', [['tyrael2', 684, 1], ['cain4', 685, 1]]),
     table('A4Q2', 'Successful', [['tyrael2', 684, 2], ['cain4', 685, 2]]),
+    table('', '', [['tyrael2', 20000, 1, 'A4Q2ExpansionSuccessTyrael'], ['cain4', 20001, 1, 'A4Q2ExpansionSuccessCain']]),
+    table('', '', [['tyrael2', 20000, 2, 'A4Q2ExpansionSuccessTyrael'], ['cain4', 20001, 2, 'A4Q2ExpansionSuccessCain']]),
   ],
   // 출처: A4Q3.cpp gpAct4Q3NpcMessages (Hell's Forge). 원작 표의 166~168 은 바이트가 잘린 값 — ScrollMessage 는 678~680 을 본다
   [QW.A4Q3]: [

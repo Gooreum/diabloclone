@@ -23,11 +23,12 @@ export function pickGossip(str: Str, prefix: string, cls: string, intro: boolean
   const has = (k: string) => str(k) !== k;
   const ab = ({ Amazon: 'Ama', Sorceress: 'Sor', Necromancer: 'Nec', Paladin: 'Pal', Barbarian: 'Bar', Druid: 'Dru', Assassin: 'Ass' } as Record<string, string>)[cls] ?? '';
   if (intro) {
-    // 막 소개 대사 (막에 처음 온 날): HratliActIntroGossip1 · TyraelActIntroGossip1 · CainAct3IntroGossip1 · MeshifAct3IntroBarGossip1 …
+    // 막 소개 대사 (막에 처음 온 날): HratliActIntroGossip1 · TyraelActIntroGossip1 · CainAct3IntroGossip1 · MeshifAct3IntroBarGossip1 ·
+    // 확장팩 LarzukAct5IntroGossip1 · MalahAct5IntroBarGossip1 …
     const base = prefix.replace(/Act\d$/, '');
     const keys = [
-      `${prefix}Intro${ab}Gossip1`, `${prefix}Act1Intro${ab}Gossip1`, `${prefix}ActIntro${ab}Gossip1`, `${base}ActIntro${ab}Gossip1`,
-      `${prefix}IntroGossip1`, `${prefix}Act1IntroGossip1`, `${prefix}ActIntroGossip1`, `${base}ActIntroGossip1`,
+      `${prefix}Intro${ab}Gossip1`, `${prefix}Act1Intro${ab}Gossip1`, `${prefix}ActIntro${ab}Gossip1`, `${base}ActIntro${ab}Gossip1`, `${prefix}Act5Intro${ab}Gossip1`,
+      `${prefix}IntroGossip1`, `${prefix}Act1IntroGossip1`, `${prefix}ActIntroGossip1`, `${base}ActIntroGossip1`, `${prefix}Act5IntroGossip1`,
     ];
     for (const k of keys) if (has(k)) return stripSpeed(str(k));
   }

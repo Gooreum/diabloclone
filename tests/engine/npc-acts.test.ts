@@ -242,7 +242,7 @@ d('막별 상점·메뉴', () => {
   });
 
   it('레벨업 재고 갱신 상인: Charsi·Gheed·Fara·Hratli·Asheara·Halbu·Jamella', () => {
-    expect([...LEVEL_REFRESH].sort()).toEqual(['asheara', 'charsi', 'fara', 'gheed', 'halbu', 'hratli', 'jamella']);
+    expect([...LEVEL_REFRESH].sort()).toEqual(['asheara', 'charsi', 'fara', 'gheed', 'halbu', 'hratli', 'jamella', 'malah']);
   });
 });
 

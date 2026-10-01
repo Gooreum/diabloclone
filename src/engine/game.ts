@@ -53,6 +53,7 @@ import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from
 import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index';
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
+import { QW } from './quests/messages-acts';
 import { LEVEL } from './drlg/types';
 import { actCount } from './drlg/acts';
 import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
@@ -8884,6 +8885,7 @@ export class Game {
     const r = this.questRecord;
     if (typeof f === 'number') return r.get(f, QFLAG.REWARDGRANTED) || r.get(f, QFLAG.REWARDPENDING);
     if (f === 'a1q2') return r.get(QUEST.BLOODRAVEN, QFLAG.REWARDGRANTED);
+    if (f === 'a5q2') return r.get(QW.A5Q2, QFLAG.REWARDGRANTED);
     if (f === 'cain') return r.get(QUEST.CAIN, QFLAG.REWARDGRANTED) || r.get(QUEST.CAIN, QFLAG.REWARDPENDING);
     return false;
   }
@@ -8936,6 +8938,8 @@ export class Game {
       if (this.act === 0) return this.quests.canGoEast();
       if (this.act === 1) return this.questRecord.get(QUESTFLAG_A2Q6, QFLAG.REWARDGRANTED);
       if (this.act === 2) return this.questRecord.get(QUESTFLAG_A3Q6, QFLAG.PRIMARYGOALDONE) || this.questRecord.get(QUESTFLAG_A3Q6, QFLAG.REWARDGRANTED);
+      // 출처: NPC_HandleDialogMessage (TYRAEL2) — 확장팩 + A4Q2 REWARDGRANTED
+      if (this.act === 3) return this.expansion && this.questRecord.get(QW.A4Q2, QFLAG.REWARDGRANTED);
       return false;
     }
     return to === this.act - 1 && (this.act === 1 || this.act === 2);
@@ -9102,7 +9106,8 @@ export class Game {
       case 'goEast':
       case 'goWest':
       case 'sailEast':
-      case 'sailWest': {
+      case 'sailWest':
+      case 'goHarrogath': {
         // 출처: NPC_HandleDialogMessage (WARRIV1·WARRIV2·MESHIF1·MESHIF2) — D2GAME_PlayerChangeAct. 월드가 아직 없으면 대화를 연 채 둔다 (브라우저가 막 파일을 읽고 다시 고른다)
         const tr = TRAVEL[option];
         if (tr) this.travelAct(tr.to);
@@ -9389,6 +9394,11 @@ export class Game {
       },
       difficulty: () => g.difficulty,
       act: () => g.act,
+      expansion: () => g.expansion,
+      npcPos: (typeId) => {
+        const n = g.level.npcs.find((x) => x.type.id === typeId);
+        return n ? { x: Math.floor(n.x), y: Math.floor(n.y) } : null;
+      },
     };
   }
 

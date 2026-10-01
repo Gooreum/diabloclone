@@ -54,6 +54,10 @@ export interface ActsQuestHost extends QuestHost {
   difficulty(): number;
   /** 지금 막 (0 = Act 1) */
   act(): number;
+  /** 확장팩 게임 (원작 pGame->bExpansion) */
+  expansion(): boolean;
+  /** 지금 레벨의 NPC 자리 (UNITS_GetCoords(pQuestArg->pTarget)) — 없으면 null */
+  npcPos(typeId: string): { x: number; y: number } | null;
 }
 
 /** 원작 D2QuestDataStrc 에서 쓰는 칸 */

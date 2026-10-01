@@ -27,9 +27,9 @@ export interface QuestKill {
  * 퀘스트 모듈이 보는 오브젝트 InitFn (Game.createObject 가 initObject 를 부르는 것).
  * 출처: objects.txt InitFn — Act 1: 4 TowerTome, 6 CairnStone, 7 CainGibbet, 9 InifussTree, 13 InvisibleObject, 15 MalusStand, 47 CountessChest /
  *       Act 2: 21 HoradricOrifice, 38 TyraelsDoor / Act 3: 25 Gidbinn, 39 GidbinnAltar, 41 SewerStairs, 42 SewerLever, 44 HellGate, 45 MephistoBridge,
- *       53 StairsR, 60 CompellingOrb / Act 4: 48 HellForge
+ *       53 StairsR, 60 CompellingOrb / Act 4: 48 HellForge, 78 LastLastPortal (확장팩)
  */
-export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48]);
+export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48, 78]);
 
 /** 한 막의 퀘스트 모듈 (원작 막별 A{n}Q{m}.cpp 콜백 묶음) */
 export interface ActQuestModule {

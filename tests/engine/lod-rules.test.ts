@@ -10,6 +10,7 @@ import type { GameData } from '../../src/engine/game';
 import { rollMonsterStats } from '../../src/engine/monster';
 import { Rng } from '../../src/engine/rng';
 import { applyUModInit, UMOD, type UModTarget } from '../../src/engine/uniques';
+import { difficultyRules } from '../../src/engine/difficulty';
 
 let tables: GameTables;
 let classic: GameData;
@@ -108,6 +109,32 @@ describe.skipIf(!hasGameData)('확장팩 공통 규칙', () => {
       expect(b.stats.maxHp).toBeLessThan(hpb);
       expect(b.bonus.damagepercent).toBe(270);
       expect(b.stats.level).toBe(lvl);
+    });
+  });
+  describe('플레이어·아이템 규칙', () => {
+    it('저항 페널티: 확장팩은 DifficultyLevels ResistPenalty (0/−40/−100), 클래식은 0/−20/−50', () => {
+      const rows = tables.table('DifficultyLevels');
+      expect([0, 1, 2].map((d) => difficultyRules(rows, d as 0 | 1 | 2, true).playerResistPenalty)).toEqual([0, -40, -100]);
+      expect([0, 1, 2].map((d) => difficultyRules(rows, d as 0 | 1 | 2, false).playerResistPenalty)).toEqual([0, -20, -50]);
+    });
+    it('Static Field 최소: 확장팩만 (악몽 33 · 지옥 50), 클래식 0', () => {
+      const rows = tables.table('DifficultyLevels');
+      expect(difficultyRules(rows, 2, true).staticFieldMin).toBe(n(rows[2]!.StaticFieldMin));
+      expect(difficultyRules(rows, 2, true).staticFieldMin).toBeGreaterThan(0);
+      expect(difficultyRules(rows, 2, false).staticFieldMin).toBe(0);
+    });
+    it('ItemRatio: 보통 무기는 기본 행, 고급·엘리트 무기는 Uber 행, 직업 전용 (아마존 활) 은 Class Specific 행', () => {
+      const tr = lod.treasure;
+      const base = tr.ratioFor(lod.items.base('axe')!);
+      expect([base.unique, base.rare, base.magic]).toEqual([400, 100, 34]);
+      const elite = [...lod.items.bases.values()].find((b) => b.type === 'axe' && b.ultraCode === b.code && b.code !== b.normCode)!;
+      expect(elite, 'elite axe').toBeTruthy();
+      const u = tr.ratioFor(elite);
+      expect([u.unique, u.rare, u.magic]).toEqual([400, 100, 34]);
+      const exc = [...lod.items.bases.values()].find((b) => b.type === 'axe' && b.uberCode === b.code && b.code !== b.normCode)!;
+      expect(tr.ratioFor(exc)).toBe(u);
+      const cls = tr.ratioFor(lod.items.base('am1')!);
+      expect([cls.unique, cls.rare, cls.magic]).toEqual([240, 80, 17]);
     });
   });
 });

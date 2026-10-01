@@ -75,7 +75,8 @@ interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare
 export class TreasureDb {
   private readonly tcs = new Map<string, Tc>();
   private readonly order: Tc[] = [];
-  private readonly ratio: ItemRatio;
+  /** ItemRatio.txt 행 (판본 Version · Uber · Class Specific 별) */
+  private readonly ratios: { version: number; uber: boolean; cls: boolean; ratio: ItemRatio }[] = [];
   private readonly items: ItemDb;
   private nextId = 1;
   /** 품질·접사 생성기 (없으면 기본 아이템만) */
@@ -109,16 +110,35 @@ export class TreasureDb {
     }
     this.buildAutoTcs();
     for (const tc of this.order) for (const e of tc.entries) e.isTc = this.tcs.has(e.name);
-    // 출처: D2MOO DATATBLS_GetItemRatioTxtRecord — 드롭 경로는 wVersion=100 으로 호출 → Version 1 행, Uber 0, Class Specific 0
-    const row = itemRatio.filter((x) => n(x.Uber) === 0 && n(x['Class Specific']) === 0).sort((a, b) => n(b.Version) - n(a.Version))[0];
-    if (!row) throw new Error('itemratio: no base row');
-    this.ratio = {
-      unique: n(row.Unique), uniqueDiv: n(row.UniqueDivisor) || 1, uniqueMin: n(row.UniqueMin),
-      rare: n(row.Rare), rareDiv: n(row.RareDivisor) || 1, rareMin: n(row.RareMin),
-      set: n(row.Set), setDiv: n(row.SetDivisor) || 1, setMin: n(row.SetMin),
-      magic: n(row.Magic), magicDiv: n(row.MagicDivisor) || 1, magicMin: n(row.MagicMin),
-      hiQ: n(row.HiQuality), hiQDiv: n(row.HiQualityDivisor) || 1, normal: n(row.Normal), normalDiv: n(row.NormalDivisor) || 1,
-    };
+    // 출처: D2MOO DATATBLS_GetItemRatioTxtRecord — 아이템마다 행: Class Specific·Uber 가 맞고 Version ≤ 판본 중 가장 큰 Version (드롭 경로는 wVersion=100)
+    for (const row of itemRatio) {
+      if (row.Function === undefined && row.Version === undefined) continue;
+      this.ratios.push({
+        version: n(row.Version), uber: n(row.Uber) === 1, cls: n(row['Class Specific']) === 1,
+        ratio: {
+          unique: n(row.Unique), uniqueDiv: n(row.UniqueDivisor) || 1, uniqueMin: n(row.UniqueMin),
+          rare: n(row.Rare), rareDiv: n(row.RareDivisor) || 1, rareMin: n(row.RareMin),
+          set: n(row.Set), setDiv: n(row.SetDivisor) || 1, setMin: n(row.SetMin),
+          magic: n(row.Magic), magicDiv: n(row.MagicDivisor) || 1, magicMin: n(row.MagicMin),
+          hiQ: n(row.HiQuality), hiQDiv: n(row.HiQualityDivisor) || 1, normal: n(row.Normal), normalDiv: n(row.NormalDivisor) || 1,
+        },
+      });
+    }
+    if (!this.ratios.some((r) => !r.uber && !r.cls)) throw new Error('itemratio: no base row');
+  }
+
+  /**
+   * 그 아이템의 ItemRatio 행. 출처: DATATBLS_GetItemRatioTxtRecord(nItemId, nDifficulty, 100) —
+   *   Class Specific = ITEMS_IsClassValidByItemId (itemtypes Class 가 있음), Uber = ITEMS_GetQuestFromItemId
+   *   (방어구·무기이고 code 가 ubercode 또는 ultracode, 투척 물약 아님, 퀘스트 아님), Version ≤ 100 중 가장 큰 것
+   */
+  ratioFor(base: ItemBase): ItemRatio {
+    const cls = !!this.items.types.get(base.type)?.classCode;
+    const gear = this.items.isType(base, 'armo') || this.items.isType(base, 'weap');
+    const uber = gear && (base.uberCode === base.code || base.ultraCode === base.code) && base.type !== 'tpot' && !base.quest;
+    let best: (typeof this.ratios)[number] | undefined;
+    for (const r of this.ratios) if (r.cls === cls && r.uber === uber && r.version <= 100 && (!best || r.version >= best.version)) best = r;
+    return (best ?? this.ratios.find((r) => !r.uber && !r.cls)!).ratio;
   }
 
   /** 자동 TC: TreasureClass=1 타입마다 <code>3, <code>6 … <code>99 (클래식: version < 100, spawnable, rarity > 0 — 확장팩은 version 무관) */
@@ -258,7 +278,7 @@ export class TreasureDb {
     const typeDef = this.items.types.get(base.type);
     if (typeDef?.normal) return QUALITY.NORMAL;
     if (base.unique || (typeDef?.magic && base.quest)) return QUALITY.UNIQUE;
-    const R = this.ratio;
+    const R = this.ratioFor(base);
     const diff = ilvl - base.level;
     const roll = (chance: number) => chance <= 0 || rng.pick(chance) < 128;
     const withMf = (ratio: number, div: number, min: number, factor: (d: number) => number, mod: number): number => {

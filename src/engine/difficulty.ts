@@ -67,12 +67,13 @@ function num(row: TxtRow | undefined, key: keyof typeof NORMAL_DEFAULT, nonZero 
  * 난이도 규칙. rows = DifficultyLevels.txt 전체 (GameData.difficultyRows), 이름(Name) 대신 행 순서로 고른다
  * (원작 DATATBLS_GetDifficultyLevelsTxtRecord(nDifficulty) 도 행 번호).
  */
-export function difficultyRules(rows: readonly TxtRow[] | undefined, difficulty: Difficulty = 0): DifficultyRules {
+export function difficultyRules(rows: readonly TxtRow[] | undefined, difficulty: Difficulty = 0, expansion = false): DifficultyRules {
   const row = rows?.[difficulty];
   return {
     difficulty,
     resistPenalty: num(row, 'ResistPenalty'),
-    playerResistPenalty: CLASSIC_RESIST_PENALTY[difficulty],
+    // 출처: SUnitDmg.cpp 저항 계산 — 확장팩 게임은 DifficultyLevels ResistPenalty (0/−40/−100), 클래식은 코드 상수 −20/−50
+    playerResistPenalty: expansion ? num(row, 'ResistPenalty') : CLASSIC_RESIST_PENALTY[difficulty],
     deathExpPenalty: num(row, 'DeathExpPenalty'),
     monsterSkillBonus: num(row, 'MonsterSkillBonus'),
     monsterFreezeDivisor: num(row, 'MonsterFreezeDivisor', true),
@@ -84,7 +85,8 @@ export function difficultyRules(rows: readonly TxtRow[] | undefined, difficulty:
     championDamageBonus: num(row, 'ChampionDamageBonus', true),
     hireableBossDamagePercent: num(row, 'HireableBossDamagePercent', true),
     monsterCEDamagePercent: num(row, 'MonsterCEDamagePercent', true),
-    staticFieldMin: num(row, 'StaticFieldMin'),
+    // 출처: SKILLS_SrvDo… StaticField — 확장팩 게임에서만 (클래식 0)
+    staticFieldMin: expansion ? num(row, 'StaticFieldMin') : 0,
     gambleRare: num(row, 'GambleRare'),
     gambleSet: num(row, 'GambleSet'),
     gambleUnique: num(row, 'GambleUnique'),

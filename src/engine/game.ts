@@ -595,7 +595,7 @@ export class Game {
     this.difficulty = init.difficulty ?? 0;
     this.difficultyUnlocked = Math.max(init.difficultyUnlocked ?? 0, this.difficulty) as 0 | 1 | 2;
     this.progression = init.progression ?? 0;
-    this.rules = difficultyRules(init.data?.difficultyRows, this.difficulty);
+    this.rules = difficultyRules(init.data?.difficultyRows, this.difficulty, !!init.data?.expansion);
     const p = init.player;
     this.player = {
       id: 1, x: p.x, y: p.y, mode: 'NU', dir: 0, path: [], running: false,
@@ -3415,6 +3415,8 @@ export class Game {
         for (const m of this.monstersNear(this.player.x, this.player.y, range)) {
           const hp = Math.floor(m.hp);
           if (hp < 1) continue;
+          // 확장팩: 최대 생명의 StaticFieldMin % 이하면 맞지 않는다 (악몽 33 · 지옥 50 — SKILLS_AuraCallback_StaticField)
+          if (this.rules.staticFieldMin && hp <= calcPercentage(Math.floor(m.stats.maxHp), this.rules.staticFieldMin, 100)) continue;
           let dmg = Math.min(Math.trunc((hp * pct) / 100), hp - 1) * 256;
           if (dmg < minDmg) dmg = minDmg;
           // 음수 저항이면 저항 적용 후 같은 비율이 되도록 미리 나눈다

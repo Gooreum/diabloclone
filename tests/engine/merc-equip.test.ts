@@ -137,14 +137,14 @@ d('Phase 1: 장비 능력치', () => {
 
 const rogue = (level = 10): MercSave => ({ name: 'merc05', seed: 99, hirelingId: 0, level, experience: hirelingExp(level, 100), dead: false });
 
-function game(opts: { data?: GameData; tables?: GameTables; merc?: MercSave; gold?: number } = {}): Game {
+function game(opts: { data?: GameData; tables?: GameTables; merc?: MercSave; gold?: number; inTown?: boolean } = {}): Game {
   const t = opts.tables ?? tables, data = opts.data ?? lod;
   const cs = classStats(t.table('charstats'), 'Amazon');
   const ch = createCharacter(cs);
   ch.level = 30;
   const g = new Game({
     map: new CollisionMap(80, 80), player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
-    seed: 7, data, character: ch, classStats: cs, expTable: expTable(t.table('experience'), 'Amazon'), inTown: true,
+    seed: 7, data, character: ch, classStats: cs, expTable: expTable(t.table('experience'), 'Amazon'), inTown: opts.inTown ?? true,
     merc: opts.merc ?? rogue(), gold: opts.gold ?? 0,
   });
   g.tick();
@@ -249,5 +249,83 @@ d('Phase 2: 엔진 흐름', () => {
     give(g, bow);
     expect(g.store.cursor?.id).toBe(bow.id);
     expect(g.merc!.items).toBeUndefined();
+  });
+});
+
+const S = (name: string) => lod.skills!.byNameOf(name)!;
+const withLayered = (it: ItemInstance, stat: string, param: number, value: number) => {
+  it.stats.push({ stat, param, value });
+  return it;
+};
+interface Priv {
+  damageMonster(m: MonsterUnit, d: Record<string, number>, source: string, attackerId?: number): void;
+  startMonsterMode(m: MonsterUnit, mode: string): void;
+  tickCount: number;
+}
+const pkt = (phys: number) => ({ phys: phys * 256, fire: 0, ltng: 0, cold: 0, pois: 0, mag: 0, stunLen: 0, coldLen: 0, freezeLen: 0, poisLen: 0, hitClass: 0 });
+
+d('Phase 2: +스킬·흡수·공격 속도·아이템 오라', () => {
+  it('+1 모든 스킬 투구: Act 2 용병이 켠 오라 레벨 = 배운 레벨 + 1', () => {
+    const lvl = 20;
+    const g = game({ merc: { name: 'merca201', seed: 3, hirelingId: 6, level: lvl, experience: hirelingExp(lvl, 0), dead: false }, inTown: false });
+    const learned = mercStats(lod.hirelings!, 6, lvl)!.skills.find((x) => x.name === 'Prayer')!.level;
+    give(g, item('cap', [['item_allskills', 1]]));
+    const u = g.mercUnit()!;
+    const z = g.spawnMonster('zombie1', u.x + 3, u.y) as unknown as MonsterUnit;
+    z.hp = z.stats.maxHp = 1e6;
+    let ev: { type: string; [k: string]: unknown } | undefined;
+    for (let i = 0; i < 1500 && !ev; i++) {
+      g.tick();
+      ev = events(g).find((e) => e.type === 'mercAura');
+    }
+    expect(ev?.lvl).toBe(learned + 1);
+  });
+
+  it('생명 흡수 투구: 용병이 준 물리 피해의 % 만큼 회복, 흡수가 없으면 회복 없음', () => {
+    for (const ll of [50, 0]) {
+      const g = game({ inTown: false });
+      if (ll) give(g, item('cap', [['lifedrainmindam', ll]]));
+      const u = g.mercUnit()!;
+      const m = g.spawnMonster('zombie1', u.x + 10, u.y) as unknown as MonsterUnit;
+      m.hp = 1000;
+      u.hp = 5;
+      (g as unknown as Priv).damageMonster(m, pkt(40), 'pet', u.id);
+      if (ll) expect(u.hp).toBeCloseTo(5 + (40 * ll) / 100, 3);
+      else expect(u.hp).toBe(5);
+    }
+  });
+
+  it('공격 속도 갑옷: 용병 A1 공격 시간이 짧아진다', () => {
+    const len = (ias: number) => {
+      const g = game({ inTown: false });
+      if (ias) give(g, item('lea', [['item_fasterattackrate', ias]]));
+      const u = g.mercUnit()!;
+      const pr = g as unknown as Priv;
+      pr.startMonsterMode(u, 'A1');
+      return u.modeEnd - pr.tickCount;
+    };
+    expect(len(40)).toBeLessThan(len(0));
+  });
+
+  it('아이템 오라 (Meditation): 용병과 곁의 플레이어에게 오라 상태', () => {
+    const g = game();
+    const med = S('Meditation');
+    give(g, withLayered(item('cap'), 'item_aura', med.id, 5));
+    for (let i = 0; i < 30; i++) g.tick();
+    expect(g.mercUnit()!.states.has(med.auraState)).toBe(true);
+    expect((g as unknown as { player: { states: { has(s: string): boolean } } }).player.states.has(med.auraState)).toBe(true);
+  });
+
+  it('아이템 오라 (Conviction): 마을 밖 범위 안 몬스터에 auratargetstate', () => {
+    const g = game({ inTown: false });
+    const conv = S('Conviction');
+    give(g, withLayered(item('lea'), 'item_aura', conv.id, 12));
+    const u = g.mercUnit()!;
+    const m = g.spawnMonster('zombie1', u.x + 2, u.y) as unknown as MonsterUnit;
+    m.hp = m.stats.maxHp = 1e6;
+    // 오라 주기 perdelay 50
+    for (let i = 0; i < 60; i++) g.tick();
+    expect(m.states.has(conv.auraTargetState)).toBe(true);
+    expect(u.states.get(conv.auraState)?.stats.fireresist ?? 0).toBe(0);
   });
 });

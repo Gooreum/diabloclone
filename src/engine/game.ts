@@ -54,7 +54,7 @@ import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { LEVEL } from './drlg/types';
-import { mercCanEquip, mercDerived, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
+import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
 
 /**
  * 원작 플레이어 애니메이션 모드 토큰: NU 대기, WL 걷기, RN 달리기, TN/TW 마을, A1/A2 공격, SC 시전, TH 던지기,
@@ -541,6 +541,8 @@ export class Game {
   private mercDv: MercDerived | null = null;
   /** 용병이 켠 오라 (D2GAME_AssignSkill — 유닛이 새로 생기면 꺼진다) */
   private mercAura: { skill: SkillRecord; lvl: number; next: number } | null = null;
+  /** 용병 장비의 아이템 오라 (item_aura — param 스킬, 값 레벨). 출처: SKILLITEM_ActivateAura (용병도 STAT_ITEM_AURA 콜백) */
+  private mercItemAuras = new Map<number, { skill: SkillRecord; lvl: number; next: number }>();
 
   constructor(init: GameInit) {
     const defs = init.levels ?? [{ id: 'main', map: init.map, inTown: init.inTown ?? false, exits: [] }];
@@ -5206,8 +5208,13 @@ export class Game {
     // 피해를 주는 사건 (domeleedamage / domissiledamage): 생명 감소 전 (출처: SUNITDMG_ExecuteEvents)
     const knock = proc && source === 'player' && !m.pet ? this.itemDamageEvents(m, proc === 'missile') : false;
     const total = totalDamage(d);
+    const hpBefore = m.hp;
     m.hp -= total / 256;
     m.aggro = true;
+    // 용병 생명 흡수 (장비 lifedrainmindam): 준 물리 피해(대상 생명 이하)의 % / LifeStealDivisor. 출처: SUnitDmg.cpp:484 (용병은 플레이어처럼 아이템 % 흡수)
+    const mu = source === 'pet' && attackerId !== undefined && attackerId === this.merc?.unitId ? this.mercUnit() : undefined;
+    const mll = mu ? mu.states.stat('lifedrainmindam') : 0;
+    if (mu && mll > 0) mu.hp = Math.min(mu.stats.maxHp, mu.hp + (Math.min(d.phys / 256, Math.max(0, hpBefore)) * mll) / 100 / this.rules.lifeStealDivisor);
     // 출처: SUnitDmg.cpp — 피격 경직 없이 맞으면 AI 상태 19 (방금 맞음)
     m.aiState = 19;
     if (m.hp > 0) this.onMonsterDamaged(m);
@@ -6187,7 +6194,10 @@ export class Game {
     m.path = [];
     const action = mode === 'A1' || mode === 'A2' || mode === 'S1' || mode === 'S2' || mode === 'S3' || mode === 'S4' || mode === 'SC' || mode === 'SQ';
     // 냉기: attackrate / other_animrate 감소 → 애니메이션이 느려진다 (출처: SUNITDMG_ApplyColdState)
-    const rate = action ? m.states.stat('attackrate') : m.states.stat('other_animrate');
+    let rate = action ? m.states.stat('attackrate') : m.states.stat('other_animrate');
+    // 용병 장비 공격 속도 (item_fasterattackrate). 근사(원작 미확인): 몬스터 IAS 공식 대신 EIAS = 120·IAS/(120+IAS) 를 애니메이션 속도 % 에
+    const ias = action && m.id === this.merc?.unitId ? m.states.stat('item_fasterattackrate') : 0;
+    if (ias > 0) rate += Math.trunc((120 * ias) / (120 + ias));
     if (cast?.seq) {
       // 몬스터 시퀀스 (monseq.txt): 한 줄 = 한 프레임, SQ 애니메이션 속도로 진행. 근사(원작 미확인): 원작 시퀀스 프레임 진행 세부
       const r = this.data.anim.get(`${m.type.code}SQ${m.type.baseW}`) ?? this.data.anim.get(`${m.type.code}${cast.seq[0]?.mode ?? 'A1'}${m.type.baseW}`);
@@ -9595,6 +9605,7 @@ export class Game {
     u.leaderId = this.player.id;
     this.mercInfo = st;
     this.mercAura = null;
+    this.mercItemAuras.clear();
     rec.unitId = id;
     rec.dead = false;
     this.pets.push(u);
@@ -9614,6 +9625,7 @@ export class Game {
     const rec = this.merc, u = this.mercUnit(), st = this.mercInfo, data = this.data;
     if (!rec || !u || !st || !data?.expansion) {
       this.mercDv = null;
+      this.mercItemAuras.clear();
       return;
     }
     const dv = mercDerived(st, u.type.id, u.type.a1, rec.items ?? {}, data.items, data.treasure.gen);
@@ -9623,6 +9635,17 @@ export class Game {
     u.stats = { ...u.stats, level: rec.level, maxHp: dv.maxHp, defense: dv.defense, a1: atk, a2: { ...atk }, s1: { ...atk } };
     u.hp = full ? dv.maxHp : Math.max(1, Math.min(dv.maxHp, ratio * dv.maxHp));
     u.resist = { dm: dv.stat('damageresist'), ma: dv.stat('magicresist'), fi: dv.resist.fi, li: dv.resist.li, co: dv.resist.co, po: dv.resist.po };
+    const want = new Map<number, number>();
+    for (const l of dv.layered) if (l.stat === 'item_aura' && l.value > 0) want.set(l.param, (want.get(l.param) ?? 0) + l.value);
+    for (const [id, run] of this.mercItemAuras) {
+      if (want.get(id) === run.lvl) continue;
+      u.states.remove(run.skill.auraState);
+      this.mercItemAuras.delete(id);
+    }
+    for (const [id, lvl] of want) {
+      const sk = this.skillRecord(id);
+      if (sk?.aura && sk.auraState && !this.mercItemAuras.has(id)) this.mercItemAuras.set(id, { skill: sk, lvl, next: this.tickCount });
+    }
     const SKIP = new Set(['damagepercent', 'item_mindamage_percent', 'item_maxdamage_percent', 'mindamage', 'maxdamage', 'secondary_mindamage', 'secondary_maxdamage',
       'strength', 'dexterity', 'maxhp', 'item_maxhp_percent', 'armorclass', 'tohit', 'fireresist', 'coldresist', 'lightresist', 'poisonresist', 'magicresist', 'damageresist',
       'maxfireresist', 'maxcoldresist', 'maxlightresist', 'maxpoisonresist', 'item_allskills']);
@@ -9843,7 +9866,8 @@ export class Game {
       if (rec.aiType === 1 && rec.auraState && pet.states.has(rec.auraState)) continue;
       if (rec.name === 'Inferno' && aiDistance(pet.x, pet.y, t.x, t.y) > Math.trunc(learned.level / 2) + 4) continue;
       total += s.chance + Math.trunc((diff * s.chancePerLvl) / 4);
-      cum.push({ name: s.name, lvl: learned.level, mode: s.mode, upto: total, rec });
+      // 장비 +모든 스킬·oskill (확장팩). 출처: SKILLS_GetBonusSkillLevel
+      cum.push({ name: s.name, lvl: learned.level + mercSkillBonus(this.mercDv, rec.id), mode: s.mode, upto: total, rec });
     }
     const roll = pet.rng.pick(total + 1);
     if (roll >= row.defaultChance) {
@@ -10019,8 +10043,15 @@ export class Game {
    * 근사(원작 미확인): 플레이어의 같은 오라 상태와 겹치면 나중 것이 덮어쓴다 (원작 오라 상태 중첩 규칙 미확인)
    */
   private updateMercAura(): void {
-    const a = this.mercAura, u = this.mercUnit(), calc = this.data?.skillCalc;
-    if (!a || !u || !calc || u.mode === 'DT' || u.mode === 'DD') return;
+    if (this.mercAura) this.runMercAura(this.mercAura);
+    // 아이템 오라: 같은 오라를 용병 스킬이 같거나 높은 레벨로 켜 두었으면 그쪽만 (출처: sub_6FD10EC0 — 낮은 레벨은 무시)
+    for (const run of this.mercItemAuras.values()) if (!(this.mercAura?.skill.id === run.skill.id && this.mercAura.lvl >= run.lvl)) this.runMercAura(run);
+  }
+
+  /** 용병 오라 한 주기 (고용 스킬 오라·아이템 오라 공통) */
+  private runMercAura(a: { skill: SkillRecord; lvl: number; next: number }): void {
+    const u = this.mercUnit(), calc = this.data?.skillCalc;
+    if (!u || !calc || u.mode === 'DT' || u.mode === 'DD') return;
     if (this.tickCount < a.next) return;
     const s = a.skill, lvl = a.lvl;
     const own: SkillOwner = { baseLevel: (id) => (id === s.id ? lvl : 0), skillLevel: (id) => (id === s.id ? lvl : 0), unitLevel: u.stats.level };
@@ -10032,7 +10063,8 @@ export class Game {
     let heal = 0;
     if (s.srvDoFunc === 81) {
       for (const ps of s.passiveStats) stats[ps.stat] = calc.eval(s, ps.calc, lvl, own);
-    } else {
+    } else if (s.srvDoFunc !== 66) {
+      // 66 (Conviction 류): aurastat 은 몬스터 쪽 (아래)
       for (const x of s.auraStats) {
         const v = calc.eval(s, x.calc, lvl, own);
         if (x.stat === 'hitpoints') heal = v;
@@ -10061,6 +10093,12 @@ export class Game {
         d.hitClass = 0x0d;
         this.damageMonster(m, d, 'pet', u.id);
       }
+    }
+    // Conviction 류 (srvdofunc 66): 범위 안 몬스터에 auratargetstate + aurastat (출처: SKILLS_SrvDo066 → SKILLS_AuraCallback_BasicAura)
+    if (s.srvDoFunc === 66 && s.auraTargetState && !this.inTown) {
+      const target: Record<string, number> = {};
+      for (const x of s.auraStats) target[x.stat] = calc.eval(s, x.calc, lvl, own);
+      for (const m of this.monstersNear(u.x, u.y, range)) if (!m.pet) m.states.set(s.auraTargetState, until, target, { id: s.id, lvl });
     }
   }
 

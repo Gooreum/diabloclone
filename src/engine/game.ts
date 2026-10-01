@@ -30,7 +30,7 @@ import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
 import { diminishing, levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
 import { cobraLeech, kickDamage, linearPct, MAX_CHARGES, PROGRESSIVE_STATES, progressiveCalc, progressiveMissile } from './skills/assassin';
-import { boulderKnockChance } from './skills/druid';
+import { boulderKnockChance, nextFrenzy, shapeAllowed, shapeMode } from './skills/druid';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addDamage, addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
@@ -223,6 +223,8 @@ export interface PlayerSnapshot {
   id: number; x: number; y: number; mode: PlayerMode; dir: number; modeTick: number;
   /** 시퀀스(SQ) 스킬 중이면 지금 그릴 모드·프레임 */
   anim?: { mode: string; frame: number };
+  /** 변신 (늑대·곰): 그릴 몬스터 (monstats Id) — states.txt gfxtype 1 · gfxclass */
+  shape?: { typeId: string };
   life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number;
   /** 스태미나 (장비·Increased Stamina·신전 포함 최대치). 달리기 중(running) — 스태미나가 다하면 false 로 바뀐다 */
   stamina: number; maxStamina: number; running: boolean;
@@ -403,6 +405,8 @@ interface Missile {
   procs?: boolean;
   /** 이미 터짐 (Immolation Arrow 가 적중과 소멸에서 두 번 터지지 않게) */
   exploded?: boolean;
+  /** Rabies 옮김 미사일: 독이 끝나는 프레임 (MISSMODE_SrvDmg11 — 남은 길이) */
+  until?: number;
   /** CollideKill 미사일이 이 유닛은 지나간다 (Molten Boulder: 큰 몬스터가 아니면 — MISSMODE_SrvHit47 반환 2) */
   pass?: (m: MonsterUnit) => boolean;
   /** NextHit 미사일 (Shock Web 가시·Blade Sentinel): 맞힌 유닛을 NextDelay 프레임 뒤 다시 맞힌다 — id → 다시 맞힐 수 있는 age */
@@ -977,6 +981,7 @@ export class Game {
       corpse: cp && cp.levelId === this.level.def.id ? { x: cp.x, y: cp.y, dir: cp.dir, items: Object.values(cp.items).filter((x): x is ItemInstance => !!x) } : null,
       player: {
         id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir, modeTick: this.tickCount - p.modeStart, anim: this.seqAnim(),
+        ...(this.shapeType() ? { shape: { typeId: (this.shapeType() as MonsterType).id } } : {}),
         life: c?.life ?? 0, maxLife: this.maxLife(), mana: c?.mana ?? 0, maxMana: this.maxMana(),
         stamina: Math.min(c?.stamina ?? 0, this.maxStamina()), maxStamina: this.maxStamina(), running: p.running,
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
@@ -1805,6 +1810,39 @@ export class Game {
     return this.character ? CLASS_TOKEN[this.character.cls] : 'BA';
   }
 
+  /** 변신 상태 (states.txt transform — wolf·bear) */
+  shapeState(): string | undefined {
+    const info = this.data?.stateInfo;
+    if (!info) return undefined;
+    for (const st of this.player.states.names()) if (info.get(st)?.transform) return st;
+    return undefined;
+  }
+
+  /** 변신해 그릴 몬스터: states.txt gfxtype 1 → gfxclass = monstats hcIdx. 출처: D2COMMON_11013_ConvertMode */
+  private shapeType(): MonsterType | undefined {
+    const st = this.shapeState(), info = st ? this.data?.stateInfo?.get(st) : undefined;
+    if (!info || info.gfxType !== 1 || !this.data) return undefined;
+    for (const t of this.data.monsters.types.values()) if (t.hcIdx === info.gfxClass) return t;
+    return undefined;
+  }
+
+  /** 변신 제한 상태 (states.txt restrict — 늑대·곰) 가 걸려 있나 */
+  private shapeRestricted(): boolean {
+    const info = this.data?.stateInfo;
+    return !!info && this.player.states.names().some((st) => info.get(st)?.restrict);
+  }
+
+  /**
+   * 애니메이션 토큰·모드·무기 클래스: 변신 중이면 몬스터 COF (모드는 원작 표로 바꾸고 없으면 대체, 무기 클래스 = monstats2 BaseW).
+   * 출처: D2COMMON_11013_ConvertMode / D2Common_11014_ConvertShapeShiftedMode
+   * 근사(원작 미확인): 변신 공격 속도는 원작 wereform 공식 대신 몬스터 AnimData 속도 × 공격 속도 %
+   */
+  private animLook(mode: string, wclass: string = this.weaponWclass()): { token: string; mode: string; wclass: string } {
+    const t = this.shapeType();
+    if (!t) return { token: this.playerToken(), mode, wclass };
+    return { token: t.code, mode: shapeMode(mode, (m) => t.modes.has(m as MonMode)), wclass: t.baseW };
+  }
+
   /**
    * 스킬 공식의 사용자: 유효 레벨 = effectiveSkillLevel (하드 + 아이템 +스킬 + Battle Command item_allskills + 스킬 신전),
    * 원소 마스터리 = passive_<원소>_mastery (Fire/Lightning Mastery). 출처: SUNITDMG_FillDamageValues (STAT_PASSIVE_FIRE_MASTERY …)
@@ -2071,7 +2109,10 @@ export class Game {
     if (mode === 'GH' || mode === 'BL' || mode === 'DT') {
       if (!this.data) p.modeEnd = this.tickCount + 10;
       // 피격·막기는 프레임 수 − 1 (원작 breakpoint: 바바리안 GH 5 프레임 × 50% = 9 프레임)
-      else p.modeEnd = this.tickCount + modeTiming(this.data.anim, this.playerToken(), mode, this.weaponWclass(), speedPercent, mode !== 'DT').duration;
+      else {
+        const look = this.animLook(mode);
+        p.modeEnd = this.tickCount + modeTiming(this.data.anim, look.token, look.mode, look.wclass, speedPercent, mode !== 'DT').duration;
+      }
     }
   }
 
@@ -2726,7 +2767,8 @@ export class Game {
     // Dragon Tail(St27): 공격 속도 + par4 (출처: SKILLS_SrvSt27_DragonTail — sub_6FD15470)
     const speedPct = (s.useAttackRate ? this.attackSpeedPct() : s.anim === 'SC' ? 100 + Math.trunc((120 * fcr) / (120 + fcr)) : 100) + (s.srvStFunc === 27 ? (s.params[3] ?? 0) : 0);
     const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0, targetItem };
-    const seq = s.seqNum > 0 ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
+    // 변신 중에는 플레이어 시퀀스 대신 몬스터 COF 한 동작
+    const seq = s.seqNum > 0 && !this.shapeType() ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
     if (seq && seq.length) {
       // 시퀀스는 seqtrans 모드의 AnimData 속도로 진행한다
       // 근사(원작 미확인): 원작 시퀀스 진행 속도 세부(UNITS_GetFrameBonus) — seqtrans 애니메이션 속도 × 공격 속도% 로 근사
@@ -2740,8 +2782,9 @@ export class Game {
       p.mode = 'SQ';
     } else {
       const mode = s.anim || 'A1';
-      const r = data.anim.get(`${token}${mode}${wclass}`);
-      const t = modeTiming(data.anim, token, mode, wclass, speedPct, true);
+      const look = this.animLook(mode, wclass);
+      const r = data.anim.get(`${look.token}${look.mode}${look.wclass}`);
+      const t = modeTiming(data.anim, look.token, look.mode, look.wclass, speedPct, true);
       const af = r ? actionFrame(r) : -1;
       cast.hitTicks.push(af >= 0 ? t.hitTick : Math.max(0, t.duration - 1));
       cast.end = this.tickCount + Math.max(1, t.duration);
@@ -2785,6 +2828,11 @@ export class Game {
 
   /** 시작 함수 조건 (srvstfunc): 대상 필요, 던질 무기·화살 수량 등 */
   private startCheck(s: SkillRecord, targetId: number | undefined, targetItem?: number): boolean {
+    // 변신 제한 (skills.txt restrict / State1~3). 출처: SKILLS_GetUseState → D2Common_SKILLS_CheckShapeRestriction
+    if (this.data?.stateInfo && !shapeAllowed(s, (st) => this.player.states.has(st), this.shapeRestricted())) {
+      this.events.push({ type: 'skillUnusable', skill: s.id, reason: 'shape' });
+      return false;
+    }
     // Strafe(St08): 화살 필요 (출처: SKILLS_SrvSt08_Strafe — sub_6FD119C0)
     if (s.srvStFunc === 8 && this.isBowWeapon() && !this.ammo()) {
       this.events.push({ type: 'skillUnusable', skill: s.id, reason: 'ammo' });
@@ -3038,7 +3086,8 @@ export class Game {
     switch (s.srvDoFunc || s.srvStFunc) {
       case 1: {
         // Attack: 활이면 화살, 아니면 근접. 출처: SKILLS_SrvDo001_Attack
-        if (this.isBowWeapon()) {
+        // 변신 중에는 근접만 (states.txt meleeonly)
+        if (this.isBowWeapon() && !this.shapeState()) {
           this.launchWeaponMissile(s, lvl, cast.tx, cast.ty, live?.id);
           if (!this.specialArrow()?.noAmmo) this.decQuantity('larm');
         } else if (live && this.meleeHit(live, this.withCharges({ toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 }))) {
@@ -3624,6 +3673,25 @@ export class Game {
       }
       case 76: return; // Whirlwind 판정은 updateCast (회전 이동 중 시퀀스 이벤트마다)
       // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
+      case 116: return this.shapeShift(s, lvl);
+      case 120: {
+        // Feral Rage·Maul: 명중(St56: 스킬 명중, 피해 +calc1)하면 aurastate 차지 +1 (상한 calc2), 지속은 다시 auralencalc,
+        // aurastat 는 차지 수를 레벨로 계산. 출처: SKILLS_SrvSt56_FeralRage_Maul / SKILLS_SrvDo120_FeralRage_Maul
+        if (!live || !this.meleeHit(live, this.meleeSpecFor(s, lvl))) return;
+        const p = this.player, st = p.states.get(s.auraState);
+        const n = nextFrenzy(st?.stats.skill_frenzy ?? 0, calc.calc(s, 2, lvl, o));
+        const stats: Record<string, number> = { skill_frenzy: n };
+        for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, n, o);
+        p.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), stats, { id: s.id, lvl });
+        this.statsDirty = true;
+        return;
+      }
+      case 121: return this.rabies(s, lvl, live);
+      case 122: {
+        // Hunger: 물리 +calc1 % (−75), 원소, 생명 흡수 calc2 %, 마나 흡수 calc3 %. 출처: SKILLS_SrvDo122_Hunger
+        if (live) this.meleeHit(live, { ...this.meleeSpecFor(s, lvl), enDmgPct: 0, physPct: calc.calc(s, 1, lvl, o), leech: { life: calc.calc(s, 2, lvl, o), mana: calc.calc(s, 3, lvl, o) } });
+        return;
+      }
       case 117:
       case 118: return this.druidMissiles(s, lvl, cast.tx, cast.ty, live?.id);
       case 114: return this.druidSummon(s, lvl, this.player.x, this.player.y);
@@ -5012,6 +5080,10 @@ export class Game {
       d.crit = true;
     }
     d.phys += spec.flat256;
+    if (spec.physPct) d.phys = Math.max(0, d.phys + Math.trunc((d.phys * spec.physPct) / 100));
+    // Maul 상태: 기절 (aurastat stunlength)
+    const stunSt = this.player.states.stat('stunlength');
+    if (stunSt > 0) d.stunLen += stunSt;
     if (spec.convPct && spec.convPct > 0 && spec.convType) {
       // 물리 피해의 convPct % 를 원소로 (Berserk calc4 = 100 → 전부 마법). 출처: SUNITDMG_FillDamageValues (dwConvPct)
       const conv = Math.trunc((d.phys * Math.min(100, spec.convPct)) / 100);
@@ -5039,7 +5111,9 @@ export class Game {
     const dvl = this.derived();
     if (dvl) {
       const phys = Math.min(applyMonsterResists(d, this.monsterResists(m)).phys / 256, Math.max(0, hpBefore));
-      const ll = dvl.stat('lifedrainmindam') + (spec.leech?.life ?? 0), ml = dvl.stat('manadrainmindam') + (spec.leech?.mana ?? 0);
+      // 상태 흡수 (Feral Rage aurastat lifedrainmindam) 포함
+      const ll = dvl.stat('lifedrainmindam') + this.player.states.stat('lifedrainmindam') + (spec.leech?.life ?? 0);
+      const ml = dvl.stat('manadrainmindam') + this.player.states.stat('manadrainmindam') + (spec.leech?.mana ?? 0);
       if (ll > 0) c.life = Math.min(this.maxLife(), c.life + (phys * ll) / 100 / this.rules.lifeStealDivisor);
       if (ml > 0) c.mana = Math.min(this.maxMana(), c.mana + (phys * ml) / 100 / this.rules.manaStealDivisor);
     }
@@ -5840,6 +5914,72 @@ export class Game {
       if (s.auraState) pet.states.set(s.auraState, Infinity, {});
       if (pet.type.modes.has('S1')) this.startMonsterMode(pet, 'S1');
     }
+  }
+
+  /**
+   * Werewolf·Werebear: 같은 states.txt group 의 상태(늑대·곰·Feral Rage·Maul)가 하나라도 있으면 모두 풀고 사람으로 (스킬 지연은 시작 때 걸림),
+   * 없으면 aurastate 를 auralencalc 프레임 동안 + aurastat. 출처: SKILLS_SrvDo116_Wearwolf_Wearbear (sub_6FD11C90, sub_6FD11BA0)
+   */
+  private shapeShift(s: SkillRecord, lvl: number): void {
+    const data = this.data, calc = data?.skillCalc, p = this.player;
+    if (!calc || !s.auraState) return;
+    const group = data?.stateGroups?.get(s.auraState);
+    const on = group ? p.states.names().filter((st) => data?.stateGroups?.get(st) === group) : [];
+    if (on.length) {
+      for (const st of on) p.states.remove(st);
+      this.statsDirty = true;
+      this.events.push({ type: 'shapeShift', state: null });
+      return;
+    }
+    const o = this.owner();
+    const stats: Record<string, number> = {};
+    for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+    p.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), stats, { id: s.id, lvl });
+    this.statsDirty = true;
+    this.events.push({ type: 'shapeShift', state: s.auraState });
+  }
+
+  /**
+   * Rabies: 근접 명중이면 스킬 독 피해 + 대상에게 rabies (독 길이), 대상에 붙은 rabiesplague 가 Param1 프레임마다 rabiescontagion 을 퍼뜨린다.
+   * 옮은 적은 남은 독 길이(10 이상)만큼 같은 독과 rabies 를 받고 다시 퍼뜨린다.
+   * 출처: SKILLS_SrvSt57_Rabies / SKILLS_SrvDo121_Rabies, MISSMODE_SrvDo30_RabiesPlague / SrvHit53_RabiesContagion / SrvDmg11_RabiesContagion
+   * 근사(원작 미확인): 퍼지는 방향은 무작위
+   */
+  private rabies(s: SkillRecord, lvl: number, t: MonsterUnit | undefined): void {
+    if (!t) return;
+    const spec = this.meleeSpecFor(s, lvl);
+    if (!this.meleeHit(t, spec)) return;
+    const len = Math.max(10, spec.elem?.len ?? 0);
+    this.infectRabies(s, lvl, t, this.tickCount + len);
+  }
+
+  private infectRabies(s: SkillRecord, lvl: number, t: MonsterUnit, until: number): void {
+    const data = this.data;
+    if (!data || t.states.has(s.auraTargetState) || t.mode === 'DT' || t.mode === 'DD') return;
+    t.states.set(s.auraTargetState, until, {});
+    const plague = data.missiles.get(s.srvMissileA);
+    const contagion = plague?.subMissile1 ? data.missiles.get(plague.subMissile1) : undefined;
+    if (!plague || !contagion) return;
+    const every = Math.max(plague.params[0] ?? 1, 1);
+    this.missiles.push({
+      id: this.nextUnitId++, def: plague, x: t.x, y: t.y, dx: 0, dy: 0, left: until - this.tickCount, age: 0, owner: 'player', ownerId: this.player.id,
+      ownerLevel: this.character?.level ?? 1, hitClass: 0, hit: new Set(), lvl, skill: s, noCollide: true,
+      onTick: (ms) => {
+        if (t.mode === 'DT' || t.mode === 'DD') {
+          ms.left = 0;
+          return;
+        }
+        ms.x = t.x;
+        ms.y = t.y;
+        if (ms.left % every !== 0) return;
+        const a = this.rng.pick(64) * (Math.PI / 32);
+        const c = this.spawnPlayerMissile(contagion, s, lvl, t.x + Math.cos(a) * 10, t.y + Math.sin(a) * 10, undefined, { srcDam: 0, useSkillDamage: true, from: { x: t.x, y: t.y } });
+        if (c) {
+          c.hit.add(t.id);
+          c.until = until;
+        }
+      },
+    });
   }
 
   /** Volcano: 목표 지점에 화산 미사일. 출처: SKILLS_SrvDo123_Volcano */
@@ -10089,6 +10229,16 @@ export class Game {
       this.immolationHit(ms);
       return;
     }
+    if (def.srvHitFunc === 53) {
+      // Rabies 옮김: 이미 rabies 면 지나가고, 남은 독 길이가 10 이상이면 그 길이로 독 + rabies (출처: MISSMODE_SrvHit53 / SrvDmg11)
+      const left = (ms.until ?? 0) - this.tickCount;
+      if (!s || !ms.roll || m.states.has(s.auraTargetState) || left < 10) return;
+      const d = ms.roll();
+      d.poisLen = left;
+      this.damageMonster(m, d, 'player');
+      this.infectRabies(s, ms.lvl, m, ms.until ?? 0);
+      return;
+    }
     if (def.srvHitFunc === 47 && m.type.large) {
       this.boulderBurst(ms);
       return;
@@ -11285,6 +11435,8 @@ interface MeleeSpec {
   kick?: { s: SkillRecord; lvl: number };
   /** 명중하면 밀쳐내기 */
   knockback?: boolean;
+  /** 물리 피해 % 가감 (Hunger calc1 = −75). 출처: SKILLS_SrvDo122_Hunger (dwPhysDamage += % calc1) */
+  physPct?: number;
 }
 
 /** 소환 선택 사항: 정확한 칸(뼈 감옥), 기본 생명(Decoy·Hydra), 펫 레벨(Decoy·Revive) */

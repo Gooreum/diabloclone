@@ -350,3 +350,138 @@ describe.skipIf(!hasLod)('Phase 2 — 소환', () => {
     expect(inner.player.states.has('wolverine')).toBe(false);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 3 — 변신', () => {
+  const shape = (g: Game) => g.snapshot().player.shape?.typeId;
+  const evs = (g: Game, name: string, x: number, y: number, targetId?: number, ticks = 30) => {
+    const out: { type: string; reason?: unknown }[] = [];
+    g.enqueue({ type: 'useSkill', skill: S(name).id, hand: 'right', x, y, ...(targetId !== undefined ? { targetId } : {}) });
+    for (let i = 0; i < ticks; i++) { g.tick(); out.push(...(g as unknown as Inner).events); }
+    return out;
+  };
+
+  it('Werewolf: wolf 상태 + 최대 생명 %, 몬스터 그림 wolf(40) — 다시 쓰면 사람으로', () => {
+    const { g, inner } = game({ skills: { Wearwolf: 5, 'Shape Shifting': 3 } });
+    const base = (g as unknown as { maxLife(): number }).maxLife();
+    cast(g, 'Wearwolf', 20.5, 20.5);
+    expect(inner.player.states.has('wolf')).toBe(true);
+    expect((g as unknown as { maxLife(): number }).maxLife()).toBeGreaterThan(base);
+    expect(lod.monsters.get(shape(g)!).code).toBe('40');
+    for (let i = 0; i < 30; i++) g.tick();
+    cast(g, 'Wearwolf', 20.5, 20.5);
+    expect(inner.player.states.has('wolf')).toBe(false);
+    expect(shape(g)).toBeUndefined();
+  });
+
+  it('Werebear: bear 상태, 그림 TG', () => {
+    const { g, inner } = game({ skills: { Wearbear: 1 } });
+    cast(g, 'Wearbear', 20.5, 20.5);
+    expect(inner.player.states.has('bear')).toBe(true);
+    expect(lod.monsters.get(shape(g)!).code).toBe('TG');
+  });
+
+  it('스킬 제한: 늑대는 Firestorm(restrict 0) 을 못 쓰고, 사람은 Feral Rage(restrict 2) 를 못 쓴다', () => {
+    const { g, inner } = game({ skills: { Wearwolf: 1, Firestorm: 1, 'Feral Rage': 1 } });
+    const z = dummy(g, 21.5, 20.5);
+    expect(evs(g, 'Feral Rage', z.x, z.y, z.id).some((e) => e.type === 'skillUnusable' && e.reason === 'shape')).toBe(true);
+    cast(g, 'Wearwolf', 20.5, 20.5);
+    for (let i = 0; i < 30; i++) g.tick();
+    expect(evs(g, 'Firestorm', 25.5, 20.5).some((e) => e.type === 'skillUnusable' && e.reason === 'shape')).toBe(true);
+    expect(inner.missiles.some((m) => m.def.name === 'firestormmaker')).toBe(false);
+    expect(evs(g, 'Feral Rage', z.x, z.y, z.id).some((e) => e.type === 'skillUnusable')).toBe(false);
+  });
+
+  it('변신 시간(auralencalc)이 끝나면 사람으로', () => {
+    const { g, inner } = game({ skills: { Wearwolf: 1 } });
+    cast(g, 'Wearwolf', 20.5, 20.5);
+    const until = inner.player.states.get('wolf')!.until;
+    expect(until - (g as unknown as { tickCount: number }).tickCount).toBeGreaterThan(900);
+    while ((g as unknown as { tickCount: number }).tickCount <= until + 1) g.tick();
+    expect(inner.player.states.has('wolf')).toBe(false);
+  });
+
+  it('늑대 일반 공격: 몬스터 피해, 공격 시간은 늑대 AnimData (40A1HTH)', () => {
+    const { g, inner } = game({ skills: { Wearwolf: 1 } });
+    cast(g, 'Wearwolf', 20.5, 20.5);
+    for (let i = 0; i < 30; i++) g.tick();
+    const z = dummy(g, 21.5, 20.5);
+    for (let k = 0; k < 10 && z.hp === 100000; k++) {
+      g.enqueue({ type: 'attack', targetId: z.id, standStill: true });
+      for (let i = 0; i < 30; i++) g.tick();
+    }
+    expect(z.hp).toBeLessThan(100000);
+    expect(lod.anim.get('40A1HTH')).toBeDefined();
+    expect(inner.player.states.has('wolf')).toBe(true);
+  });
+
+  /** 변신하고 바로 옆에 튼튼한 몬스터 */
+  function shaped(form: 'Wearwolf' | 'Wearbear', skills: Record<string, number>) {
+    const r = game({ skills: { [form]: 1, ...skills } });
+    cast(r.g, form, 20.5, 20.5);
+    for (let i = 0; i < 30; i++) r.g.tick();
+    return { ...r, z: dummy(r.g, 21.5, 20.5) };
+  }
+  const hitUntil = (g: Game, name: string, z: MonsterUnit, ok: () => boolean, tries = 20) => {
+    for (let k = 0; k < tries && !ok(); k++) cast(g, name, z.x, z.y, z.id, 30);
+  };
+
+  it('Feral Rage: 명중마다 차지 +1 (상한 calc2), 이동 속도·생명 흡수', () => {
+    const { g, inner, z } = shaped('Wearwolf', { 'Feral Rage': 5 });
+    const cap = lod.skillCalc!.calc(S('Feral Rage'), 2, 5, { baseLevel: () => 5, skillLevel: () => 5, unitLevel: 30 });
+    const n = () => inner.player.states.get('feralrage')?.stats.skill_frenzy ?? 0;
+    hitUntil(g, 'Feral Rage', z, () => n() >= 1);
+    expect(n()).toBe(1);
+    hitUntil(g, 'Feral Rage', z, () => n() >= cap, 60);
+    expect(n()).toBe(cap);
+    cast(g, 'Feral Rage', z.x, z.y, z.id, 30);
+    expect(n()).toBe(cap);
+    expect(inner.player.states.stat('velocitypercent')).toBeGreaterThan(0);
+    expect(inner.player.states.stat('lifedrainmindam')).toBeGreaterThan(0);
+  });
+
+  it('Maul: 2차지 피해 % > 1차지', () => {
+    const { g, inner, z } = shaped('Wearbear', { Maul: 5 });
+    const n = () => inner.player.states.get('maul')?.stats.skill_frenzy ?? 0;
+    hitUntil(g, 'Maul', z, () => n() >= 1);
+    const one = inner.player.states.stat('damagepercent');
+    hitUntil(g, 'Maul', z, () => n() >= 2);
+    expect(n()).toBe(2);
+    expect(inner.player.states.stat('damagepercent')).toBeGreaterThan(one);
+  });
+
+  it('Rabies: 대상 rabies·독, 옆 몬스터에게 옮는다', () => {
+    const { g, z } = shaped('Wearwolf', { Rabies: 10 });
+    const b = dummy(g, 21.5, 22.5);
+    hitUntil(g, 'Rabies', z, () => z.states.has('rabies'));
+    expect(z.states.has('rabies')).toBe(true);
+    expect(z.states.has('poison')).toBe(true);
+    for (let i = 0; i < 200 && !b.states.has('rabies'); i++) g.tick();
+    expect(b.states.has('rabies')).toBe(true);
+  });
+
+  it('Hunger: 피해 + 생명 흡수', () => {
+    const { g, z } = shaped('Wearwolf', { Hunger: 5 });
+    const c = g.character!;
+    c.life = 10;
+    hitUntil(g, 'Hunger', z, () => z.hp < 100000);
+    expect(z.hp).toBeLessThan(100000);
+    expect(c.life).toBeGreaterThan(10);
+  });
+
+  it('Fire Claws: 화염 피해 / Fury: 여러 번 타격 / Shock Wave: 기절', () => {
+    const fc = shaped('Wearwolf', { 'Fire Claws': 5, Fury: 5 });
+    hitUntil(fc.g, 'Fire Claws', fc.z, () => fc.z.hp < 100000);
+    expect(fc.z.hp).toBeLessThan(100000);
+    const z2 = dummy(fc.g, 20.5, 21.5);
+    let hits = 0;
+    fc.g.enqueue({ type: 'useSkill', skill: S('Fury').id, hand: 'right', x: z2.x, y: z2.y, targetId: z2.id });
+    let last = z2.hp;
+    for (let i = 0; i < 120; i++) { fc.g.tick(); if (z2.hp < last) { hits++; last = z2.hp; } }
+    expect(hits).toBeGreaterThan(1);
+    const sw = shaped('Wearbear', { 'Shock Wave': 5 });
+    let stunned = false;
+    sw.g.enqueue({ type: 'useSkill', skill: S('Shock Wave').id, hand: 'right', x: 24.5, y: 20.5 });
+    for (let i = 0; i < 40; i++) { sw.g.tick(); stunned ||= sw.z.states.has('stunned'); }
+    expect(stunned).toBe(true);
+  });
+});

@@ -6,6 +6,7 @@ import { OBJMODE_TOKENS, type ObjectDb } from '../engine/objects';
 import type { WorldSnapshot } from '../engine/game';
 import type { PickBox } from '../input/dom';
 import { toCanvas, type Camera } from './iso';
+import { shapeMode } from '../engine/skills/druid';
 import type { CompositeSpec, ItemGfx, MissileGfx, UnitGfx } from './units';
 import type { DepthSprite } from './world';
 
@@ -202,6 +203,28 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   }
 
   const pm = s.player;
+  // 변신(늑대·곰): 몬스터 COF 로 그린다 — 모드는 원작 표로 바꾸고 몬스터에 없는 모드는 대체 (D2COMMON_11013_ConvertMode)
+  const shapeT = pm.shape ? d.monsters?.types.get(pm.shape.typeId) : undefined;
+  if (shapeT) {
+    const smode = shapeMode(pm.mode === 'SQ' ? 'A1' : pm.mode, (m) => shapeT.modes.has(m as never));
+    const equip: Record<string, string> = {};
+    for (const [layer, variants] of Object.entries(shapeT.layers)) {
+      const v = variants[0] ?? 'lit';
+      if (v !== 'nil') equip[layer] = v;
+    }
+    const spec: CompositeSpec = { root: 'MONSTERS', token: shapeT.code, mode: smode, wclass: shapeT.baseW, equip };
+    const shown = d.units.getFor('player', spec, pm.dir);
+    const looping = ['NU', 'WL', 'RN'].includes(smode);
+    const frame = animFrame(d.anim, `${shapeT.code}${smode}${shapeT.baseW}`, pm.modeTick, looping);
+    out.push({
+      depth: pm.x + pm.y,
+      draw: (sink, cm) => {
+        const p = toCanvas(cm, pm.x, pm.y);
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, false, !!d.shadowOf);
+      },
+    });
+    return out;
+  }
   // 시퀀스(SQ) 스킬은 엔진이 알려준 모드·프레임을 그대로 그린다 (Jab, Leap 등)
   const baseMode = pm.anim?.mode ?? (pm.mode === 'SQ' ? 'A1' : pm.mode);
   const mode = d.inTown ? ({ NU: 'TN', WL: 'TW' } as Record<string, string>)[baseMode] ?? baseMode : baseMode;

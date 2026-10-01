@@ -89,6 +89,8 @@ export interface MonsterType {
   /** monstats 플래그 */
   isMelee: boolean; rangedType: boolean; noMultishot: boolean; flying: boolean; boss: boolean; primeEvil: boolean;
   npc: boolean; isSpawn: boolean; killable: boolean; inTown: boolean; neverCount: boolean;
+  /** AI 를 바꿀 수 있다 (공포·전향 대상 — monstats switchai) */
+  switchAi: boolean;
   /** monstats interact (말을 걸 수 있는 NPC) */
   interact: boolean;
   /** monstats2: 유니크 색 (Utrans, Normal), 유니크 색 바꿈 없음 (noUniqueShift), 부활 모드·스킬, 스폰 충돌, 움직이지 않음 (inert) */
@@ -172,7 +174,7 @@ export class MonsterDb {
         modes, layers, undead: n(r.lUndead) === 1 || n(r.hUndead) === 1, demon: n(r.demon) === 1,
         isMelee: n(r.isMelee) === 1, rangedType: n(r.rangedtype) === 1, noMultishot: n(r.nomultishot) === 1, flying: n(r.flying) === 1,
         boss: n(r.boss) === 1, primeEvil: n(r.primeevil) === 1, npc: n(r.npc) === 1, isSpawn: n(r.isSpawn) === 1, killable: n(r.killable) === 1,
-        inTown: n(r.inTown) === 1, neverCount: n(r.neverCount) === 1, interact: n(r.interact) === 1,
+        inTown: n(r.inTown) === 1, neverCount: n(r.neverCount) === 1, switchAi: n(r.switchai) === 1, interact: n(r.interact) === 1,
         utrans: n(c(r2, 'Utrans')), noUniqueShift: n(r2.noUniqueShift) === 1, resurrectMode: r2.ResurrectMode ?? 'NU', resurrectSkill: r2.ResurrectSkill ?? '',
         spawnCol: n(r2.spawnCol), inert: n(r2.inert) === 1, critter: n(r2.critter) === 1, corpseSel: n(r2.corpseSel) === 1,
         soft: n(r2.soft) === 1, infernoLen: n(r2.InfernoLen), infernoAnim: n(r2.InfernoAnim), infernoRollback: n(r2.InfernoRollback), threat: n(r.threat),

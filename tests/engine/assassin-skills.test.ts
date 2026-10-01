@@ -49,7 +49,7 @@ function game(opts: { cls?: ClassName; skills?: Record<string, number>; level?: 
   const cs = classStats(tables.table('charstats'), cls);
   const ch = createCharacter(cs);
   ch.level = opts.level ?? 30;
-  ch.mana = 1000;
+  ch.maxMana = ch.mana = 1000;
   for (const [n, l] of Object.entries(opts.skills ?? {})) ch.skills[S(n).id] = l;
   const g = new Game({
     map: new CollisionMap(80, 80), player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
@@ -62,7 +62,9 @@ function game(opts: { cls?: ClassName; skills?: Record<string, number>; level?: 
 
 function cast(g: Game, name: string, x: number, y: number, targetId?: number, ticks = 40): void {
   g.enqueue({ type: 'useSkill', skill: S(name).id, hand: 'right', x, y, ...(targetId !== undefined ? { targetId } : {}) });
-  for (let i = 0; i < ticks; i++) g.tick();
+  const evs: string[] = [];
+  for (let i = 0; i < ticks; i++) { g.tick(); for (const e of (g as unknown as Inner).events) evs.push(e.type + (e.reason ? ':' + e.reason : '')); }
+  if (process.env.DBG) console.log('CAST', name, [...new Set(evs)].join(','));
 }
 
 /** 일반 공격 한 번 (attack 명령) */
@@ -76,6 +78,7 @@ function dummy(g: Game, x = 22.5, y = 20.5, id = 'zombie1'): MonsterUnit {
   const m = g.spawnMonster(id, x, y) as unknown as MonsterUnit;
   m.hp = m.stats.maxHp = 100000;
   m.nextThink = Number.POSITIVE_INFINITY;
+  m.hpRegen = false;
   return m;
 }
 
@@ -135,5 +138,80 @@ describe.skipIf(!hasLod)('Phase 1 — 시퀀스·버프·지연', () => {
     expect(inner.events.some((e) => e.type === 'skillUnusable' && e.reason === 'delay')).toBe(true);
     for (let i = 0; i < 60; i++) g.tick();
     expect(inner.player.states.has('skilldelay')).toBe(false);
+  });
+});
+
+describe.skipIf(!hasLod)('Phase 1 — 단발 스킬', () => {
+  it('Psychic Hammer: 대상 생명 감소 (명중 굴림 없음), 마을에서는 쓸 수 없다', () => {
+    const { g } = game({ skills: { 'Psychic Hammer': 10 } });
+    const z = dummy(g, 26.5, 20.5);
+    const hp = z.hp;
+    cast(g, 'Psychic Hammer', z.x, z.y, z.id);
+    expect(z.hp).toBeLessThan(hp);
+    const town = game({ skills: { 'Psychic Hammer': 10 }, inTown: true });
+    const t = dummy(town.g, 26.5, 20.5);
+    const mana = town.g.character!.mana;
+    cast(town.g, 'Psychic Hammer', t.x, t.y, t.id);
+    expect([t.hp, town.g.character!.mana]).toEqual([100000, mana]);
+  });
+
+  it('Cloak of Shadows: 자신 cloak_of_shadows, 반경 안 몬스터 cloaked (방어 −%), 걸린 동안 다시 쓰면 그대로', () => {
+    const { g, inner } = game({ skills: { 'Cloak of Shadows': 5 } });
+    const near = dummy(g, 24.5, 20.5), far = dummy(g, 70.5, 70.5);
+    cast(g, 'Cloak of Shadows', 20.5, 20.5);
+    expect(inner.player.states.has('cloak_of_shadows')).toBe(true);
+    expect(near.states.has('cloaked')).toBe(true);
+    expect(near.states.stat('skill_armor_percent')).toBeLessThan(0);
+    expect(far.states.has('cloaked')).toBe(false);
+    const until = inner.player.states.get('cloak_of_shadows')!.until;
+    cast(g, 'Cloak of Shadows', 20.5, 20.5);
+    expect(inner.player.states.get('cloak_of_shadows')!.until).toBe(until);
+  });
+
+  it('Mind Blast: 높은 레벨이면 Fallen 일부가 편(conversion), 유니크·switchai 0 몬스터는 전향되지 않는다', () => {
+    const { g } = game({ skills: { 'Mind Blast': 20 } });
+    const fallen = [0, 1, 2, 3, 4, 5].map((i) => dummy(g, 26.5 + (i % 3), 20.5 + Math.floor(i / 3), 'fallen1'));
+    const uniq = dummy(g, 27.5, 22.5, 'fallen1');
+    uniq.flags |= 8;
+    for (let k = 0; k < 6; k++) cast(g, 'Mind Blast', 27.5, 21.5, undefined, 60);
+    expect(fallen.some((m) => m.states.has('conversion'))).toBe(true);
+    expect(uniq.states.has('conversion')).toBe(false);
+    expect(uniq.hp).toBeLessThan(100000);
+    expect(lod.monsters.get('fallen1').switchAi).toBe(true);
+  });
+
+  it('Blade Fury: 누르고 있는 동안 prgcalc1 프레임 간격으로 bladefragment1, 발사마다 마나', () => {
+    const { g, inner } = game({ skills: { 'Blade Fury': 5 } });
+    const bf = S('Blade Fury');
+    const c = g.character!;
+    const seen = new Set<unknown>();
+    const cost = lod.skillCalc!.manaCost256(bf, 5) / 256;
+    const fireTicks: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      g.enqueue({ type: 'useSkill', skill: bf.id, hand: 'right', x: 40.5, y: 20.5 });
+      const before = c.mana, n = seen.size;
+      g.tick();
+      for (const m of inner.missiles) if (m.def.name === 'bladefragment1') seen.add(m);
+      // 발사한 프레임에만 마나 (재생 한 프레임 오차), 쏘지 않은 프레임은 줄지 않는다
+      if (seen.size > n) {
+        fireTicks.push(i);
+        expect(before - c.mana).toBeGreaterThan(cost - 0.5);
+      } else expect(c.mana).toBeGreaterThanOrEqual(before - 1e-9);
+    }
+    expect(seen.size).toBeGreaterThan(3);
+    // 발사 간격 = prgcalc1 (par4 = 5) 프레임
+    const gaps = fireTicks.slice(1).map((t, i) => t - (fireTicks[i] as number));
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(4);
+  });
+
+  it('Blade Shield: bladeshield 상태, 곁의 몬스터가 주기마다 피해', () => {
+    const { g, inner } = game({ skills: { 'Blade Shield': 10 } });
+    const z = dummy(g, 22.5, 20.5);
+    z.stats.defense = 0;
+    cast(g, 'Blade Shield', 20.5, 20.5);
+    expect(inner.player.states.has('bladeshield')).toBe(true);
+    const hp = z.hp;
+    for (let i = 0; i < 200; i++) g.tick();
+    expect(z.hp).toBeLessThan(hp);
   });
 });

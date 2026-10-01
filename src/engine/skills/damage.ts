@@ -32,6 +32,13 @@ export function addElemental(d: DamagePacket, eType: string, amount256: number, 
   }
 }
 
+/** 피해 묶음 더하기 (지속은 긴 쪽). 무기 피해에 스킬 피해를 얹을 때 */
+export function addDamage(d: DamagePacket, x: DamagePacket): void {
+  d.phys += x.phys; d.fire += x.fire; d.ltng += x.ltng; d.cold += x.cold; d.pois += x.pois; d.mag += x.mag;
+  d.coldLen = Math.max(d.coldLen, x.coldLen); d.freezeLen = Math.max(d.freezeLen, x.freezeLen);
+  d.poisLen = Math.max(d.poisLen, x.poisLen); d.stunLen += x.stunLen;
+}
+
 export interface Resists { dm: number; fi: number; li: number; co: number; ma: number; po: number }
 
 const applyRes = (v: number, res: number): number => {

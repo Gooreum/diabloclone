@@ -28,9 +28,10 @@ import { playerWclass, type Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
-import { levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
+import { diminishing, levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
+import { progressiveCalc, progressiveMissile } from './skills/assassin';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
-import { addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
+import { addDamage, addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
 import { PLAYER_SEQUENCES, type SeqFrame } from './skills/sequences';
 import { evalCalc } from './skills/calc';
@@ -308,6 +309,8 @@ interface Cast {
   whirl?: { tx: number; ty: number; speed: number; last: number; frame: number };
   /** Strafe / Fend: 이번 사용의 남은 대상 (이미 친 대상은 뒤로) */
   hitIds?: number[];
+  /** Blade Fury: 다음 발사 가능 프레임 (원작 skill param1) */
+  nextFire?: number;
 }
 
 interface PlayerState {
@@ -934,6 +937,7 @@ export class Game {
     this.updatePets();
     this.updatePetAuras();
     this.updateThunderStorm();
+    this.updateBladeShield();
     this.updateMissiles();
     this.regen();
     // 출처: QUESTS_QuestUpdater (퀘스트 타이머)
@@ -2660,6 +2664,9 @@ export class Game {
   // ---------------------------------------------------------------- skills: 시작·진행
 
   /** 스킬 사용 시작: 마나 소모, 방향, 애니메이션(시퀀스 포함) 길이와 판정 시점 결정 */
+  /** Blade Shield 다음 피해 프레임 */
+  private bladeShieldNext = 0;
+
   private startCast(s: SkillRecord, targetId: number | undefined, tx: number, ty: number, targetItem?: number): boolean {
     const p = this.player, c = this.character, data = this.data;
     if (!data) return false;
@@ -2725,6 +2732,10 @@ export class Game {
     if ((s.srvStFunc === 8 || s.srvStFunc === 9) && data.skillCalc) this.prepareMultiShot(cast);
     if (s.srvStFunc === 38) this.prepareWhirlwind(cast);
     if (s.srvStFunc === 31) this.prepareCharge(cast);
+    if (s.srvStFunc === 28 && data.skillCalc) {
+      // Blade Shield: 자신에게 aurastate (지속 auralencalc). 출처: SKILLS_SrvSt28_BladeShield
+      p.states.set(s.auraState, this.tickCount + data.skillCalc.eval(s, s.auraLenCalc, lvl, this.owner()), {}, { id: s.id, lvl });
+    }
     // Concentrate 등: 스킬 사용 중 자신에게 붙는 상태 (aurastate, 공격이 끝나면 해제)
     if (s.auraState && (s.srvDoFunc === 2 || s.srvStFunc === 32) && data.skillCalc) {
       const stats: Record<string, number> = {};
@@ -2763,6 +2774,10 @@ export class Game {
       if (!w || w.quantity <= 0) return false;
     }
     if ((s.srvStFunc === 5 || s.srvStFunc === 6 || s.srvStFunc === 7 || s.srvStFunc === 32) && targetId === undefined) return false;
+    // Psychic Hammer(St22): 대상이 있고 마을이 아니어야 (출처: SKILLS_SrvSt22_PsychicHammer)
+    if (s.srvStFunc === 22 && (targetId === undefined || this.inTown)) return false;
+    // Blade Shield(St28): 지속 공식 > 0 (출처: SKILLS_SrvSt28_BladeShield)
+    if (s.srvStFunc === 28 && !(this.data?.skillCalc && this.data.skillCalc.eval(s, s.auraLenCalc, this.skillLevel(s), this.owner()) > 0)) return false;
     return true;
   }
 
@@ -2914,7 +2929,7 @@ export class Game {
       p.y = L.fy + (L.ty - L.fy) * k;
     }
     while (cast.fired < cast.hitTicks.length && t >= (cast.hitTicks[cast.fired] as number)) {
-      if (cast.skill.repeat) this.payRepeatMana(cast);
+      if (cast.skill.repeat && cast.skill.srvDoFunc !== 48) this.payRepeatMana(cast);
       this.skillEvent(cast, cast.fired);
       cast.fired++;
       if (cast.skill.repeat) cast.repeatAt = this.tickCount + 2;
@@ -2925,7 +2940,7 @@ export class Game {
     if (cast.skill.repeat && cast.repeatAt !== undefined && this.tickCount >= cast.repeatAt) {
       const c = this.character, calc = this.data?.skillCalc;
       if (p.holdUntil >= this.tickCount && c && calc && calc.manaCost256(cast.skill, cast.lvl) <= c.mana * 256) {
-        this.payRepeatMana(cast);
+        if (cast.skill.srvDoFunc !== 48) this.payRepeatMana(cast);
         this.skillEvent(cast, cast.fired);
         cast.repeatAt = this.tickCount + 2;
         cast.end = Math.max(cast.end, this.tickCount + 3);
@@ -3571,6 +3586,17 @@ export class Game {
         return;
       }
       case 76: return; // Whirlwind 판정은 updateCast (회전 이동 중 시퀀스 이벤트마다)
+      // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
+      case 33: return this.psychicHammer(s, lvl, live);
+      case 47: return this.cloakOfShadows(s, lvl);
+      case 48: return this.bladeFury(cast);
+      case 51: return this.mindBlast(s, lvl, cast.tx, cast.ty);
+      case 54: {
+        // Blade Shield: 시작(St28)에 상태, 판정 프레임에 한 번 + 상태가 있는 동안 주기마다 (updateBladeShield)
+        this.bladeShieldNext = this.tickCount;
+        this.updateBladeShield();
+        return;
+      }
       // ------------------------------------------------ 24·30 레벨 스킬 끝
       default:
         void index;
@@ -3635,6 +3661,119 @@ export class Game {
     const len = calc.elemLength(s, lvl, o);
     if (max <= 0 && len <= 0) return null;
     return { eType: s.eType, amount: min + this.rng.pick(Math.max(0, max - min)), len };
+  }
+
+  /** 스킬 물리 + 원소 피해 굴림 (D2GAME_RollPhysicalDamage + RollElementalDamage) */
+  private skillDamage(s: SkillRecord, lvl: number): DamagePacket {
+    const calc = this.data?.skillCalc, d = emptyDamage();
+    if (!calc) return d;
+    const o = this.owner();
+    const pmin = calc.minPhys256(s, lvl, o), pmax = calc.maxPhys256(s, lvl, o);
+    if (pmax > 0) d.phys = pmin + this.rng.pick(Math.max(0, pmax - pmin));
+    const el = this.skillElemental(s, lvl);
+    if (el) addElemental(d, el.eType, el.amount, el.len);
+    if (s.hitClass) d.hitClass = s.hitClass;
+    return d;
+  }
+
+  /**
+   * Psychic Hammer: 대상에게 스킬 피해(물리 + 마법), 명중 굴림 없음. 넉백 확률 calc1 (보통) · calc2 (유니크) · calc3 (보스).
+   * 출처: SkillAss.cpp SKILLS_SrvSt22 / SrvDo033_PsychicHammer
+   */
+  private psychicHammer(s: SkillRecord, lvl: number, t: MonsterUnit | undefined): void {
+    const calc = this.data?.skillCalc;
+    if (!t || !calc || this.inTown) return;
+    const d = this.skillDamage(s, lvl);
+    const chance = calc.calc(s, t.type.boss ? 3 : t.flags & 8 ? 2 : 1, lvl, this.owner());
+    this.damageMonster(t, d);
+    if (t.mode !== 'DT' && t.mode !== 'DD' && chance > 0 && this.rng.pick(100) < chance) this.knockBack(t);
+  }
+
+  /**
+   * Cloak of Shadows: 이미 걸려 있으면 실패. 자신에게 aurastate (passivestat), 반경 aurarange 안 적에게 auratargetstate (aurastat — 방어 −%), 지속 auralen.
+   * 출처: SkillAss.cpp SKILLS_SrvDo047_CloakOfShadows / AuraCallback_CloakOfShadows
+   */
+  private cloakOfShadows(s: SkillRecord, lvl: number): void {
+    const calc = this.data?.skillCalc, p = this.player;
+    if (!calc || p.states.has(s.auraState)) return;
+    const o = this.owner();
+    const len = calc.eval(s, s.auraLenCalc, lvl, o);
+    const self: Record<string, number> = {};
+    for (const ps of s.passiveStats) self[ps.stat] = calc.eval(s, ps.calc, lvl, o);
+    p.states.set(s.auraState, this.tickCount + len, self, { id: s.id, lvl });
+    const stats: Record<string, number> = {};
+    for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+    for (const m of this.monstersNear(p.x, p.y, calc.eval(s, s.auraRangeCalc, lvl, o))) {
+      m.states.set(s.auraTargetState, this.tickCount + len, stats, { id: s.id, lvl });
+      m.nextThink = this.tickCount;
+    }
+    this.statsDirty = true;
+  }
+
+  /**
+   * Blade Fury: 누르고 있는 동안 prgcalc1 프레임마다 칼날 1개 (무기 피해 × SrcDam + 스킬 피해), 발사할 때만 마나.
+   * 출처: SkillAss.cpp SKILLS_SrvSt26 / SrvDo048_BladeFury (param1 = 다음 발사 프레임, 지연 = prgcalc − 1)
+   */
+  private bladeFury(cast: Cast): void {
+    const s = cast.skill, data = this.data, calc = data?.skillCalc;
+    if (!data || !calc) return;
+    const period = calc.eval(s, progressiveCalc(s, 0), cast.lvl, this.owner());
+    if (period - 1 <= 0 || this.tickCount <= (cast.nextFire ?? -1)) return;
+    const def = data.missiles.get(progressiveMissile(s, 0));
+    if (!def) return;
+    const c = this.character;
+    if (c) {
+      const cost = calc.manaCost256(s, cast.lvl) / 256;
+      if (c.mana < cost) return;
+      c.mana -= cost;
+    }
+    this.spawnPlayerMissile(def, s, cast.lvl, cast.tx, cast.ty, cast.targetId, { srcDam: s.srcDam, useSkillDamage: true });
+    cast.nextFire = this.tickCount + period - 1;
+  }
+
+  /**
+   * Mind Blast: 대상 지점 반경 aurarange 안 — 전향 가능한 몬스터는 확률 dm56 (D2COMMON_11036) 로 par3 + rand(par4) 프레임 동안 편,
+   * 나머지는 스킬 피해 (물리 + 기절). 출처: SkillAss.cpp SKILLS_SrvDo051_MindBlast / AuraCallback_MindBlast
+   */
+  private mindBlast(s: SkillRecord, lvl: number, x: number, y: number): void {
+    const calc = this.data?.skillCalc;
+    if (!calc) return;
+    const o = this.owner();
+    const radius = calc.eval(s, progressiveCalc(s, 0), lvl, o) || calc.eval(s, s.auraRangeCalc, lvl, o);
+    const chance = diminishing(lvl, s.params[4] ?? 0, s.params[5] ?? 0);
+    const d = this.skillDamage(s, lvl);
+    for (const m of this.monstersNear(x, y, radius)) {
+      // 출처: AIUTIL_CanUnitSwitchAi — monstats switchai, 유니크·슈퍼유니크 제외, 용병·소환수·NPC 제외
+      const convertible = m.type.switchAi && !m.pet && !m.npc && !(m.flags & (2 | 8)) && !m.states.has('uninterruptable');
+      if (convertible && this.rng.pick(100) <= chance) {
+        m.states.set('conversion', this.tickCount + (s.params[2] ?? 0) + this.rng.pick(Math.max(1, s.params[3] ?? 1)), {}, { id: s.id, lvl });
+        m.nextThink = this.tickCount;
+        m.targetId = undefined;
+        this.convertLevel(m);
+        this.events.push({ type: 'converted', targetId: m.id });
+        continue;
+      }
+      this.damageMonster(m, { ...d });
+    }
+  }
+
+  /**
+   * Blade Shield: 상태(bladeshield)가 있는 동안 par3 프레임마다 반경 par4 안 적에게 명중 굴림 후 무기 피해 × SrcDam + 스킬 피해 (마을 제외).
+   * 출처: SkillAss.cpp SKILLS_SrvSt28 / SrvDo054 → SrvDo142 (AuraCallback_SrvDo142 — sub_6FD15650 명중, FillDamageValues(srcdam))
+   * 근사(원작 미확인): 발동 주기 = par3 (25 프레임) — 원작 상태 이벤트 주기 미확인
+   */
+  private updateBladeShield(): void {
+    const st = this.player.states.get('bladeshield');
+    const s = st?.skill ? this.skillRecord(st.skill.id) : undefined;
+    const calc = this.data?.skillCalc;
+    if (!st?.skill || !s || !calc || this.inTown || this.isDead) return;
+    if (this.tickCount < this.bladeShieldNext) return;
+    this.bladeShieldNext = this.tickCount + Math.max(1, s.params[2] ?? 25);
+    const lvl = st.skill.lvl, o = this.owner(), p = this.player;
+    const radius = calc.eval(s, progressiveCalc(s, 0), lvl, o) || calc.eval(s, s.auraRangeCalc, lvl, o);
+    for (const m of this.monstersNear(p.x, p.y, radius)) {
+      this.meleeHit(m, { toHitPct: calc.toHit(s, lvl, o), enDmgPct: 0, flat256: 0, elem: null, hitClass: s.hitClass, srcDam: s.srcDam, reach: radius, extra: this.skillDamage(s, lvl) });
+    }
   }
 
   /** 반경 안 살아있는 적 (Conversion 으로 편이 된 몬스터는 제외), 가까운 순 */
@@ -4103,6 +4242,7 @@ export class Game {
     }
     d.hitClass = spec.hitClass || (w ? (data.hitClassIndex.get(w.hitClass) ?? 1) : 1);
     if (spec.elem) addElemental(d, spec.elem.eType, spec.elem.amount, spec.elem.len);
+    if (spec.extra) addDamage(d, spec.extra);
     this.addStatElemental(d);
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
@@ -9851,6 +9991,8 @@ interface MeleeSpec {
   /** 물리 → 원소 변환 % (Berserk·Frenzy: 마법). 출처: D2DamageStrc dwConvPct / nConvType */
   convPct?: number;
   convType?: string;
+  /** 무기 피해에 더하는 스킬 피해 (Blade Shield: 스킬 물리·원소) */
+  extra?: DamagePacket;
 }
 
 /** 소환 선택 사항: 정확한 칸(뼈 감옥), 기본 생명(Decoy·Hydra), 펫 레벨(Decoy·Revive) */

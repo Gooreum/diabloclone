@@ -215,3 +215,126 @@ describe.skipIf(!hasLod)('Phase 1 — 단발 스킬', () => {
     expect(z.hp).toBeLessThan(hp);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 2 — 무술 차지', () => {
+  /** 차지 스킬로 n번 명중시킨다 (방어 0 몬스터) */
+  function charge(g: Game, name: string, m: MonsterUnit, n: number): void {
+    for (let i = 0; i < n; i++) cast(g, name, m.x, m.y, m.id, 40);
+  }
+  const target = (g: Game) => {
+    const z = dummy(g, 21.5, 20.5);
+    z.stats.defense = 0;
+    z.stats.level = 1;
+    return z;
+  };
+  const chargesOf = (g: Game, state: string) => (g as unknown as { chargeCount(s: string): number }).chargeCount(state);
+  const missilesNamed = (inner: Inner, name: string) => inner.missiles.filter((m) => m.def.name === name).length;
+
+  it('Tiger Strike: 명중마다 차지 +1, 최대 3', () => {
+    const { g } = game({ skills: { 'Tiger Strike': 5 } });
+    const z = target(g);
+    const seen: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      charge(g, 'Tiger Strike', z, 1);
+      seen.push(chargesOf(g, 'progressive_damage'));
+    }
+    expect(seen).toEqual([1, 2, 3, 3]);
+  });
+
+  it('Tiger 3차지 뒤 일반 공격: 피해 % 가 3 × calc1 늘고 차지가 풀린다, 차지 없는 공격은 그대로', () => {
+    const run = (n: number) => {
+      const { g, inner } = game({ skills: { 'Tiger Strike': 5 } });
+      const z = target(g);
+      charge(g, 'Tiger Strike', z, n);
+      const spec = (g as unknown as { withCharges(s: object): { enDmgPct: number } }).withCharges({ toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 });
+      const evs: string[] = [];
+      for (let k = 0; k < 5 && chargesOf(g, 'progressive_damage') > 0; k++) {
+        g.enqueue({ type: 'attack', targetId: z.id, standStill: true });
+        for (let i = 0; i < 30; i++) {
+          g.tick();
+          for (const e of inner.events) evs.push(e.type);
+        }
+      }
+      return { pct: spec.enDmgPct, left: chargesOf(g, 'progressive_damage'), released: evs.includes('chargeRelease') };
+    };
+    const calc1 = lod.skillCalc!.calc(S('Tiger Strike'), 1, 5, { baseLevel: () => 5, skillLevel: () => 5, unitLevel: 30 });
+    expect(run(3)).toEqual({ pct: 3 * calc1, left: 0, released: true });
+    expect(run(0)).toEqual({ pct: 0, left: 0, released: false });
+  });
+
+  it('Cobra Strike: 1차지 생명 흡수만, 2차지 생명·마나 (par1 + (lvl−1)·par2)', () => {
+    const { g } = game({ skills: { 'Cobra Strike': 3 } });
+    const z = target(g);
+    const leech = () => (g as unknown as { withCharges(s: object): { leech?: { life: number; mana: number } } }).withCharges({ toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 }).leech;
+    const cb = S('Cobra Strike'), v = cb.params[0]! + 2 * cb.params[1]!;
+    charge(g, 'Cobra Strike', z, 1);
+    expect(leech()).toEqual({ life: v, mana: 0 });
+    charge(g, 'Cobra Strike', z, 1);
+    expect(leech()).toEqual({ life: v, mana: v });
+  });
+
+  it('Fists of Fire 3차지 풀기: prgstack 이라 2차지 범위 피해 + 3차지 불길 미사일', () => {
+    const { g, inner } = game({ skills: { 'Fists of Fire': 5 } });
+    const z = target(g);
+    const other = dummy(g, 22.5, 21.5);
+    charge(g, 'Fists of Fire', z, 3);
+    expect(chargesOf(g, 'progressive_fire')).toBe(3);
+    const hp = other.hp;
+    g.enqueue({ type: 'attack', targetId: z.id, standStill: true });
+    let walls = 0;
+    for (let i = 0; i < 30; i++) {
+      g.tick();
+      walls = Math.max(walls, missilesNamed(inner, 'fistsoffirefirewall'));
+    }
+    expect(chargesOf(g, 'progressive_fire')).toBe(0);
+    expect(walls).toBeGreaterThan(0);
+    expect(other.hp).toBeLessThan(hp);
+  });
+
+  it('Claws of Thunder 2차지: 노바 미사일, Blades of Ice 3차지: 얼음 조각', () => {
+    const release = (skill: string, state: string, n: number, missile: string) => {
+      const { g, inner } = game({ skills: { [skill]: 5 } });
+      const z = target(g);
+      charge(g, skill, z, n);
+      expect(chargesOf(g, state)).toBe(n);
+      g.enqueue({ type: 'attack', targetId: z.id, standStill: true });
+      let seen = 0;
+      for (let i = 0; i < 30; i++) {
+        g.tick();
+        seen = Math.max(seen, missilesNamed(inner, missile));
+      }
+      return seen;
+    };
+    expect(release('Claws of Thunder', 'progressive_lightning', 2, 'clawsofthundernova')).toBeGreaterThan(0);
+    expect(release('Blades of Ice', 'progressive_cold', 3, 'bladesoficecubes')).toBeGreaterThan(0);
+  });
+
+  it('Phoenix Strike: 1차지 운석 표적, 2차지 연쇄 번개, 3차지 얼음 조각 prgcalc3 개', () => {
+    const release = (n: number) => {
+      const { g, inner } = game({ skills: { 'Royal Strike': 5 } });
+      const z = target(g);
+      charge(g, 'Royal Strike', z, n);
+      g.enqueue({ type: 'attack', targetId: z.id, standStill: true });
+      const names = new Map<string, number>();
+      for (let i = 0; i < 30; i++) {
+        g.tick();
+        for (const m of inner.missiles) names.set(m.def.name, Math.max(names.get(m.def.name) ?? 0, inner.missiles.filter((x) => x.def.name === m.def.name).length));
+      }
+      return names;
+    };
+    expect(release(1).has('royalstrikemeteorcenter')).toBe(true);
+    expect(release(2).get('royalstrikechainlightning')).toBeGreaterThan(0);
+    const rs = S('Royal Strike');
+    expect(release(3).get('royalstrikechaosice')).toBe(lod.skillCalc!.eval(rs, rs.prgCalc[2]!, 5, { baseLevel: () => 5, skillLevel: () => 5, unitLevel: 30 }));
+  });
+
+  it('차지는 auralencalc 프레임(375) 뒤 사라진다', () => {
+    const { g } = game({ skills: { 'Tiger Strike': 5 } });
+    const z = target(g);
+    charge(g, 'Tiger Strike', z, 2);
+    for (let i = 0; i < 340; i++) g.tick();
+    expect(chargesOf(g, 'progressive_damage')).toBe(2);
+    for (let i = 0; i < 40; i++) g.tick();
+    expect(chargesOf(g, 'progressive_damage')).toBe(0);
+  });
+});

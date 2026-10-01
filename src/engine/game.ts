@@ -29,7 +29,7 @@ import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
 import { diminishing, levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
-import { progressiveCalc, progressiveMissile } from './skills/assassin';
+import { cobraLeech, MAX_CHARGES, PROGRESSIVE_STATES, progressiveCalc, progressiveMissile } from './skills/assassin';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addDamage, addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
@@ -2774,6 +2774,8 @@ export class Game {
       if (!w || w.quantity <= 0) return false;
     }
     if ((s.srvStFunc === 5 || s.srvStFunc === 6 || s.srvStFunc === 7 || s.srvStFunc === 32) && targetId === undefined) return false;
+    // 무술 (St23 차지·St24 Dragon Talon·St25 Dragon Claw·St27 Dragon Tail): 대상 필요 (출처: SkillAss.cpp SrvSt23~27)
+    if ((s.srvStFunc === 23 || s.srvStFunc === 24 || s.srvStFunc === 25 || s.srvStFunc === 27) && targetId === undefined) return false;
     // Psychic Hammer(St22): 대상이 있고 마을이 아니어야 (출처: SKILLS_SrvSt22_PsychicHammer)
     if (s.srvStFunc === 22 && (targetId === undefined || this.inTown)) return false;
     // Blade Shield(St28): 지속 공식 > 0 (출처: SKILLS_SrvSt28_BladeShield)
@@ -2997,7 +2999,10 @@ export class Game {
         if (this.isBowWeapon()) {
           this.launchWeaponMissile(s, lvl, cast.tx, cast.ty, live?.id);
           if (!this.specialArrow()?.noAmmo) this.decQuantity('larm');
-        } else if (live) this.meleeHit(live, { toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 });
+        } else if (live && this.meleeHit(live, this.withCharges({ toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 }))) {
+          // 무술 차지가 있으면 일반 공격이 명중할 때 풀린다 (출처: Skills.cpp SKILLS_SrvDo001_Attack — sub_6FCF5680/5870 후 sub_6FCF77E0)
+          this.releaseCharges(live);
+        }
         return;
       }
       case 2: {
@@ -3588,6 +3593,8 @@ export class Game {
       case 76: return; // Whirlwind 판정은 updateCast (회전 이동 중 시퀀스 이벤트마다)
       // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
       case 33: return this.psychicHammer(s, lvl, live);
+      case 34:
+      case 35: return this.chargeUp(cast, live, index);
       case 47: return this.cloakOfShadows(s, lvl);
       case 48: return this.bladeFury(cast);
       case 51: return this.mindBlast(s, lvl, cast.tx, cast.ty);
@@ -3661,6 +3668,185 @@ export class Game {
     const len = calc.elemLength(s, lvl, o);
     if (max <= 0 && len <= 0) return null;
     return { eType: s.eType, amount: min + this.rng.pick(Math.max(0, max - min)), len };
+  }
+
+  /** 무술 차지 상태 목록 (states.txt progressive_*): 상태, 스킬, 레벨 (= 건 레벨과 지금 레벨 중 큰 쪽), 차지 수 */
+  private chargeStates(): { state: string; s: SkillRecord; lvl: number; n: number }[] {
+    const out: { state: string; s: SkillRecord; lvl: number; n: number }[] = [];
+    for (const state of PROGRESSIVE_STATES) {
+      const st = this.player.states.get(state);
+      const s = st?.skill ? this.skillRecord(st.skill.id) : undefined;
+      const stat = s?.auraStats[0]?.stat;
+      if (!st?.skill || !s || !stat) continue;
+      out.push({ state, s, lvl: Math.max(st.skill.lvl, this.skillLevel(s)), n: st.stats[stat] ?? 0 });
+    }
+    return out;
+  }
+
+  /** 지금 차지 수 (상태 이름 → 수) — 테스트·HUD */
+  chargeCount(state: string): number {
+    return this.chargeStates().find((c) => c.state === state)?.n ?? 0;
+  }
+
+  /**
+   * 차지 쌓기 (Tiger·Cobra·Phoenix = Do034, 속성 3종 = Do035): 근접이 명중하면 aurastate 의 aurastat1 차지 +1 (최대 3),
+   * 차지가 늘면 aurastat2 += aurastatcalc2 (Tiger 명중 %), 지속은 마지막 명중부터 auralencalc. 이 타격에는 쌓인 차지가 붙지 않는다.
+   * 출처: SkillAss.cpp SKILLS_SrvDo034 / SrvDo035 (손톱 두 개면 시퀀스 프레임 홀짝으로 손을 번갈아)
+   * 근사(원작 미확인): 손톱 두 개의 Do035 — 짝수 번째 판정은 차지 없이 일반 근접 (왼손 손톱 피해 대신 오른손)
+   */
+  private chargeUp(cast: Cast, live: MonsterUnit | undefined, index: number): void {
+    const s = cast.skill, lvl = cast.lvl, calc = this.data?.skillCalc, p = this.player;
+    if (!live || !calc) return;
+    const o = this.owner();
+    const spec: MeleeSpec = { toHitPct: calc.toHit(s, lvl, o), enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: s.srcDam || 128 };
+    const dual = s.srvDoFunc === 35 && this.weaponWclass() === 'HT2';
+    if (dual && index % 2 === 1) {
+      this.meleeHit(live, spec);
+      return;
+    }
+    if (!this.meleeHit(live, spec)) return;
+    const [a1, a2] = s.auraStats;
+    if (!a1) return;
+    const cur = p.states.get(s.auraState);
+    const old = cur?.stats[a1.stat] ?? 0, n = Math.min(old + 1, MAX_CHARGES);
+    const stats: Record<string, number> = { ...(cur?.stats ?? {}), [a1.stat]: n };
+    if (n !== old && a2) stats[a2.stat] = (stats[a2.stat] ?? 0) + calc.eval(s, a2.calc, lvl, o);
+    p.states.remove(s.auraState);
+    p.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), stats, { id: s.id, lvl: Math.max(cur?.skill?.lvl ?? 0, lvl) });
+    if (n !== old) this.events.push({ type: 'chargeUp', skill: s.id, charges: n, sound: s.prgSound });
+  }
+
+  /**
+   * 차지 보너스를 근접 판정에 싣는다. 모든 차지: 명중 + progressive_tohit %.
+   * prgdam 1 (Tiger): 피해 + 차지 × calc1 %, prgdam 2 (Cobra): 생명·마나 흡수, prgdam 4 (속성 3종): 스킬 원소 피해, 냉기 3차지 빙결 += 냉기 길이 / par5,
+   * 물리의 min(calc1, 100) % 를 원소로. 출처: SkillAss.cpp sub_6FCF5680 / sub_6FCF5870 / sub_6FCF5BC0
+   */
+  private withCharges(spec: MeleeSpec): MeleeSpec {
+    const calc = this.data?.skillCalc;
+    if (!calc) return spec;
+    const o = this.owner();
+    spec.toHitPct += this.player.states.stat('progressive_tohit');
+    for (const { s, lvl, n } of this.chargeStates()) {
+      if (n <= 0) continue;
+      if (s.prgDam === 1) spec.enDmgPct += n * calc.calc(s, 1, lvl, o);
+      else if (s.prgDam === 2) {
+        const l = cobraLeech(s.params[0] ?? 0, s.params[1] ?? 0, lvl, n);
+        spec.leech = { life: (spec.leech?.life ?? 0) + l.life, mana: (spec.leech?.mana ?? 0) + l.mana };
+      } else if (s.prgDam === 3 || s.prgDam === 4) {
+        const el = this.skillElemental(s, lvl);
+        if (el) {
+          const x = emptyDamage();
+          addElemental(x, el.eType, el.amount, el.len);
+          if (spec.extra) addDamage(spec.extra, x);
+          else spec.extra = x;
+        }
+        const div = s.prgDam === 3 ? (n >= 2 ? s.params[1] : 0) : n === 3 ? s.params[4] : 0;
+        if (s.eType === 'cold' && div) spec.freezeDiv = div;
+        if (s.prgDam === 4) {
+          const pct = calc.calc(s, 1, lvl, o);
+          if (pct > 0 && s.eType) (spec.prgConv ??= []).push({ pct: Math.min(pct, 100), eType: s.eType });
+        }
+      }
+    }
+    return spec;
+  }
+
+  /**
+   * 차지 풀기: 명중한 대상이 근접 거리 안이면 차지마다 srvprgfunc[n−1] (prgstack 스킬은 1..n−1 함수도 먼저, 그때 차지 수 = i+1), 차지는 모두 사라진다.
+   * 출처: SkillAss.cpp sub_6FCF77E0
+   */
+  private releaseCharges(target: MonsterUnit): void {
+    const p = this.player;
+    if (!isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, target.x, target.y, target.type.sizeX, 1)) return;
+    for (const c of this.chargeStates()) {
+      const n = Math.max(1, Math.min(MAX_CHARGES, c.n));
+      if (c.s.prgStack) for (let i = 0; i < n - 1; i++) this.progressiveFn(c.s.srvPrgFunc[i] ?? 0, c.s, c.lvl, i + 1, target);
+      this.progressiveFn(c.s.srvPrgFunc[n - 1] ?? 0, c.s, c.lvl, n, target);
+      p.states.remove(c.state);
+      this.events.push({ type: 'chargeRelease', skill: c.s.id, charges: n });
+    }
+  }
+
+  /** 차지 풀기 함수 (srvprgfunc 번호 = srvdofunc). 출처: SkillAss.cpp SrvDo036~041 · 143 */
+  private progressiveFn(fn: number, s: SkillRecord, lvl: number, n: number, t: MonsterUnit): void {
+    const data = this.data, calc = data?.skillCalc;
+    if (!data || !calc || fn <= 0) return;
+    const o = this.owner(), p = this.player;
+    const def = data.missiles.get(progressiveMissile(s, n));
+    const amount = calc.eval(s, progressiveCalc(s, n), lvl, o) || calc.eval(s, s.auraRangeCalc, lvl, o);
+    const ownOpts = { srcDam: 0, useSkillDamage: false, ownDamage: true };
+    switch (fn) {
+      case 36: {
+        // Claws of Thunder 2차지: 대상에게 미사일 (속도 = calc1 + 미사일 속도)
+        if (def) this.spawnPlayerMissile(def, s, lvl, t.x, t.y, t.id, { ...ownOpts, velocity: calc.calc(s, 1, lvl, o) + def.vel });
+        return;
+      }
+      case 37:
+      case 143: {
+        // 대상 둘레 64방향 표에서 amount 간격으로 휘는 볼트 (37: Claws of Thunder 3차지, 143: Fists of Fire 1차지·Phoenix 2차지 연쇄 번개)
+        // 근사(원작 미확인): 원작 경로(PATHTYPE_CHARGEDBOLT · sub_6FCF7390 물결) 대신 기존 Charged Bolt 의 흔들리는 경로
+        if (!def || amount <= 0) return;
+        const chain = def.name === 'royalstrikechainlightning' ? { left: (s.params[1] ?? 0) + 1, range: 8 } : undefined;
+        for (let i = 0; i < 64; i += amount) {
+          const a = (i / 64) * Math.PI * 2;
+          this.spawnPlayerMissile(def, s, lvl, t.x + Math.cos(a) * 30, t.y + Math.sin(a) * 30, undefined, { ...ownOpts, from: { x: t.x, y: t.y }, wander: true, ...(chain ? { chain } : {}), skipIds: [t.id] });
+        }
+        return;
+      }
+      case 38: {
+        // Fists of Fire·Blades of Ice 2차지: 대상 반경 amount 안 적에게 스킬 물리 + 원소
+        const d = this.skillDamage(s, lvl);
+        for (const m of this.monstersNear(t.x, t.y, amount)) this.damageMonster(m, { ...d });
+        return;
+      }
+      case 39: {
+        // 3차지: 반경 amount 원 안 무작위 지점 (amount² 번 시도) 에 미사일 (불길·얼음 조각)
+        if (!def || amount <= 0) return;
+        for (let i = 0; i < amount * amount; i++) {
+          const x = amount - this.rng.pick(2 * amount), y = amount - this.rng.pick(2 * amount);
+          if (x * x + y * y > amount * amount) continue;
+          const px = t.x + x, py = t.y + y;
+          if (!this.map.walkable(Math.floor(px), Math.floor(py))) continue;
+          this.spawnPlayerMissile(def, s, lvl, px, py, undefined, { ...ownOpts, from: { x: px, y: py }, velocity: 0 });
+        }
+        return;
+      }
+      case 40: {
+        // Phoenix 1차지: 대상에 운석 (royalstrikemeteorcenter → 떨어지면 royalstrikemeteor 폭발)
+        if (def) this.phoenixMeteor(def, s, lvl, t.x, t.y);
+        return;
+      }
+      case 41: {
+        // Phoenix 3차지: amount 개의 얼음 조각이 대상에서 ±20 무작위 방향으로
+        if (!def) return;
+        for (let i = 0; i < amount; i++) {
+          let dx = (this.rng.pick(40) - 20), dy = (this.rng.pick(40) - 20);
+          if (!dx && !dy) dx = 20;
+          this.spawnPlayerMissile(def, s, lvl, t.x + dx, t.y + dy, undefined, { ...ownOpts, from: { x: t.x, y: t.y }, skipIds: [t.id] });
+        }
+        return;
+      }
+      default:
+        void p;
+    }
+  }
+
+  /** Phoenix Strike 운석: 표적 Range 프레임 뒤 HitSubMissile 반경 sHitPar1 화염. 출처: royalstrikemeteorcenter (pSrvHitFunc 4) → royalstrikemeteor (pSrvHitFunc 14) */
+  private phoenixMeteor(def: MissileDef, s: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const data = this.data;
+    const boom = def.hitSubMissile1 ? data?.missiles.get(def.hitSubMissile1) : undefined;
+    if (!data || !boom) return;
+    const roll = this.missileOwnRoller(boom, s, lvl);
+    this.spawnVisual('meteor', tx - 14, ty - 14, { life: def.range, to: { x: tx, y: ty } });
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: tx, y: ty, dx: 0, dy: 0, left: def.range, age: 0, owner: 'player', ownerId: this.player.id, ownerLevel: this.character?.level ?? 1,
+      hitClass: 0x20, roll, hit: new Set(), lvl, skill: s, noCollide: true,
+      onEnd: (ms) => {
+        for (const m of this.monstersNear(ms.x, ms.y, Math.max(1, boom.hitParams[0] ?? 3))) this.damageMonster(m, roll());
+        this.spawnVisual('meteorexplode', ms.x, ms.y);
+        this.events.push({ type: 'meteorImpact', x: ms.x, y: ms.y });
+      },
+    });
   }
 
   /** 스킬 물리 + 원소 피해 굴림 (D2GAME_RollPhysicalDamage + RollElementalDamage) */
@@ -4240,9 +4426,15 @@ export class Game {
       d.phys -= conv;
       addElemental(d, spec.convType, conv, 0);
     }
+    for (const pc of spec.prgConv ?? []) {
+      const conv = Math.min(Math.trunc((d.phys * Math.min(100, pc.pct)) / 100), d.phys);
+      d.phys -= conv;
+      addElemental(d, pc.eType, conv, 0);
+    }
     d.hitClass = spec.hitClass || (w ? (data.hitClassIndex.get(w.hitClass) ?? 1) : 1);
     if (spec.elem) addElemental(d, spec.elem.eType, spec.elem.amount, spec.elem.len);
     if (spec.extra) addDamage(d, spec.extra);
+    if (spec.freezeDiv) d.freezeLen += Math.trunc(d.coldLen / spec.freezeDiv);
     this.addStatElemental(d);
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
@@ -4253,7 +4445,7 @@ export class Game {
     const dvl = this.derived();
     if (dvl) {
       const phys = Math.min(applyMonsterResists(d, this.monsterResists(m)).phys / 256, Math.max(0, hpBefore));
-      const ll = dvl.stat('lifedrainmindam'), ml = dvl.stat('manadrainmindam');
+      const ll = dvl.stat('lifedrainmindam') + (spec.leech?.life ?? 0), ml = dvl.stat('manadrainmindam') + (spec.leech?.mana ?? 0);
       if (ll > 0) c.life = Math.min(this.maxLife(), c.life + (phys * ll) / 100 / this.rules.lifeStealDivisor);
       if (ml > 0) c.mana = Math.min(this.maxMana(), c.mana + (phys * ml) / 100 / this.rules.manaStealDivisor);
     }
@@ -4812,7 +5004,7 @@ export class Game {
     const len = Math.hypot(dx, dy) || 1;
     dx = (dx / len) * speed;
     dy = (dy / len) * speed;
-    const roll = this.missileDamageRoller(def, s, lvl, o);
+    const roll = o.ownDamage ? this.missileOwnRoller(def, s, lvl) : this.missileDamageRoller(def, s, lvl, o);
     const passives = this.passives();
     const w = this.weaponBase();
     let ar: number | undefined;
@@ -9993,6 +10185,10 @@ interface MeleeSpec {
   convType?: string;
   /** 무기 피해에 더하는 스킬 피해 (Blade Shield: 스킬 물리·원소) */
   extra?: DamagePacket;
+  /** 무술 차지 보너스: Cobra 흡수 %, 속성 차지의 물리 → 원소 변환·빙결 (출처: SkillAss.cpp sub_6FCF5870 / sub_6FCF5BC0) */
+  leech?: { life: number; mana: number };
+  prgConv?: { pct: number; eType: string }[];
+  freezeDiv?: number;
 }
 
 /** 소환 선택 사항: 정확한 칸(뼈 감옥), 기본 생명(Decoy·Hydra), 펫 레벨(Decoy·Revive) */
@@ -10030,6 +10226,8 @@ interface PlayerMissileOpts {
   seek?: { tx: number; ty: number; radius: number };
   /** 이미 맞힌 것으로 칠 유닛 (연쇄 번개가 방금 맞은 대상 안에서 생겨 다시 맞히지 않게) */
   skipIds?: number[];
+  /** 미사일 자신의 피해 (missiles.txt EMin~EMax + 레벨·시너지) — 무술 차지 풀기 미사일 */
+  ownDamage?: boolean;
 }
 
 /** 미사일이 유닛에 닿는 거리 */

@@ -44,7 +44,8 @@ import { UiArt } from './ui/art';
 import { d2text, drawText } from './ui/text';
 import { ItemText } from './ui/itemtext';
 import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
-import { playerWclass, requirements } from './engine/inventory';
+import { itemClassCode, playerWclass, requirements } from './engine/inventory';
+import { CLASS_CODE } from './engine/skills/db';
 import { playerLayers } from './render/appearance';
 import type { Placed } from './engine/inventory';
 import { AutomapTable } from './engine/automap';
@@ -520,7 +521,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 요구치를 못 채운 아이템은 빨간 바탕 (원작)
   invPanel.usable = (it) => {
     const r = requirements(data.items, it), c = game.character;
-    return !c || (c.level >= r.level && game.effStat('str') >= r.str && game.effStat('dex') >= r.dex);
+    const b = data.items.base(it.code), cc = b ? itemClassCode(data.items, b) : '';
+    // 다른 직업 전용 아이템도 빨간 바탕 (itemtypes Class)
+    return !c || ((!cc || cc === CLASS_CODE[c.cls]) && c.level >= r.level && game.effStat('str') >= r.str && game.effStat('dex') >= r.dex);
   };
   // 원작 DC6 컨트롤 패널 (HUD)·보관함
   const hud = new ControlPanel(art, icons, data.skills, sh.edition);

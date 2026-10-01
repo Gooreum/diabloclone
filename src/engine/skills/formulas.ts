@@ -78,6 +78,14 @@ export class SkillCalc {
       case 'exms': return this.maxElem256(s, lvl, o, true);
       case 'clc1': case 'clc2': case 'clc3': case 'clc4':
         return this.eval(s, s.calcs[Number(name.slice(3)) - 1] ?? null, lvl, o);
+      // 마스터리 (skillcalc math · madm · macr): 그 스킬 passivestat 중 근접·던지기 마스터리 명중/피해/치명 칸의 passivecalc
+      // 출처: D2MOO D2Common_11032 (SKILLS_GetSpecialParamValue 23~25)
+      case 'math': case 'madm': case 'macr': {
+        if (lvl <= 0) return 0;
+        const kind = name === 'math' ? 'th' : name === 'madm' ? 'dmg' : 'crit';
+        const ps = s.passiveStats.find((x) => x.stat === `passive_mastery_melee_${kind}` || x.stat === `passive_mastery_throw_${kind}`);
+        return ps ? this.eval(s, ps.calc, lvl, o) : 0;
+      }
       case 'len': return this.eval(s, s.auraLenCalc, lvl, o);
       case 'rng': return this.eval(s, s.auraRangeCalc, lvl, o);
       default:

@@ -25,7 +25,8 @@ const TAB = { x: 230, w: 90, h: 107 } as const;
 /** 닫기 칸 (탭별 그림 위치가 다르다: 원작 그림 측정) */
 const CLOSE: Record<number, { x: number; y: number }> = { 1: { x: 171, y: 385 }, 2: { x: 15, y: 385 }, 3: { x: 171, y: 385 } };
 
-const TREE_LETTER: Record<string, string> = { ama: 'a', sor: 's', nec: 'n', pal: 'p', bar: 'b' };
+/** 트리 배경 skltree_<글자>_back.dc6 (확장팩: 드루이드 d · 어쌔신 i — d2exp) */
+const TREE_LETTER: Record<string, string> = { ama: 'a', sor: 's', nec: 'n', pal: 'p', bar: 'b', dru: 'd', ass: 'i' };
 /** 탭 이름 (string.tbl StrSklTreeN) — 쪽 번호 순 */
 const TAB_STR: Record<string, [string[], string[], string[]]> = {
   ama: [['StrSklTree10', 'StrSklTree11'], ['StrSklTree8', 'StrSklTree9'], ['StrSklTree6', 'StrSklTree7']],
@@ -33,6 +34,9 @@ const TAB_STR: Record<string, [string[], string[], string[]]> = {
   nec: [['StrSklTree19'], ['StrSklTree17', 'StrSklTree18'], ['StrSklTree16', 'StrSklTree5']],
   pal: [['StrSklTree15', 'StrSklTree4'], ['StrSklTree14', 'StrSklTree13'], ['StrSklTree12', 'StrSklTree13']],
   bar: [['StrSklTree21', 'StrSklTree4'], ['StrSklTree21', 'StrSklTree22'], ['StrSklTree20']],
+  // 확장팩 (expansionstring.tbl): 드루이드 Summoning / Shape Shifting / Elemental, 어쌔신 Traps / Shadow Disciplines / Martial Arts
+  dru: [['StrSklTree26'], ['StrSklTree27', 'StrSklTree28'], ['StrSklTree29']],
+  ass: [['StrSklTree30'], ['StrSklTree31', 'StrSklTree32'], ['StrSklTree33', 'StrSklTree34']],
 };
 
 export interface SkillPanelDeps {

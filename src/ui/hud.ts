@@ -40,7 +40,8 @@ export const HUD_ART = [CTRL, GLOBE, OVERLAP, RUN, MENUBTN, MINI, MINIBTN, LEVEL
 
 /** 스킬 아이콘 파일 (skills.txt charclass → SPELLS\<접두>Skillicon.dc6, 일반 스킬 = Skillicon.dc6) */
 export function skillIconPath(charclass: string): string {
-  const pre: Record<string, string> = { ama: 'Am', sor: 'So', nec: 'Ne', pal: 'Pa', bar: 'Ba' };
+  // 확장팩: DrSkillicon · AsSkillicon (d2exp)
+  const pre: Record<string, string> = { ama: 'Am', sor: 'So', nec: 'Ne', pal: 'Pa', bar: 'Ba', dru: 'Dr', ass: 'As' };
   return `${UI}SPELLS\\${pre[charclass] ?? ''}Skillicon.dc6`;
 }
 

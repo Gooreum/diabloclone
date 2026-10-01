@@ -7,7 +7,9 @@ import type { ItemDb } from '../engine/items';
 import type { ItemGen } from '../engine/itemgen';
 import { statOf } from '../engine/itemgen';
 import { armorDefense, etherealBase, weaponDamage } from '../engine/charstats';
-import { requirements } from '../engine/inventory';
+import { itemClassCode, requirements } from '../engine/inventory';
+import { CLASS_CODE } from '../engine/skills/db';
+import type { ClassName } from '../engine/player';
 import { QUALITY, type ItemInstance } from '../engine/treasure';
 import type { RunewordDb } from '../engine/runewords';
 
@@ -195,6 +197,9 @@ export class ItemText {
     if (req.str) out.push({ text: `${this.str('ItemStats1e')} ${req.str}`, color: ctx.str >= req.str ? white : red });
     if (req.dex) out.push({ text: `${this.str('ItemStats1f')} ${req.dex}`, color: ctx.dex >= req.dex ? white : red });
     if (req.level > 1) out.push({ text: `${this.str('ItemStats1p')} ${req.level}`, color: ctx.level >= req.level ? white : red });
+    // 직업 전용 아이템 "(Assassin Only)" — 다른 직업이면 빨간 글자. 근사(원작 미확인): 줄 위치
+    const cc = itemClassCode(this.items, b);
+    if (cc && CLASS_ONLY[cc]) out.push({ text: this.str(CLASS_ONLY[cc] as string), color: CLASS_CODE[ctx.cls as ClassName] === cc ? white : red });
     if (!item.identified) {
       out.push({ text: this.str('ItemStats1b'), color: red });
       return out;

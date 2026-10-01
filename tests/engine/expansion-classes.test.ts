@@ -164,3 +164,13 @@ describe.skipIf(!hasLod)('3단계 — 손톱·직업 전용 장착·무기 막�
     expect(ps.some((p) => p.stat === 'passive_mastery_melee_dmg' && p.itype === 'h2h' && p.value > 0)).toBe(true);
   });
 });
+
+describe.skipIf(!hasLod)('3단계 — 마스터리 스킬 설명 수치 (skillcalc math·madm·macr)', () => {
+  it('Claw Mastery 1레벨: 명중 +30%, 피해 +35%, 치명 값 = passivecalc 와 같다', () => {
+    const s = lod.skills!.byNameOf('Claw Mastery')!, calc = lod.skillCalc!;
+    const o = { baseLevel: () => 1, skillLevel: () => 1, unitLevel: 1 };
+    const p = (name: string) => calc.eval(s, { k: 'param', name } as never, 1, o);
+    expect([p('math'), p('madm')]).toEqual([30, 35]);
+    expect(p('macr')).toBe(calc.eval(s, s.passiveStats[2]!.calc, 1, o));
+  });
+});

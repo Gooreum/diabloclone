@@ -14,7 +14,7 @@ import { HirelingDb } from '../engine/hireling';
 import { CubeDb } from '../engine/cube';
 import { RunewordDb } from '../engine/runewords';
 import { parseGamble } from '../engine/shop';
-import { parseStateOverlays } from '../engine/states';
+import { parseStateGroups, parseStateOverlays } from '../engine/states';
 import type { GameData } from '../engine/game';
 import type { Difficulty } from '../engine/difficulty';
 import { GameTables, type AssetSource } from './tables';
@@ -54,6 +54,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src), op
     runewords: new RunewordDb(tables.table('Runes')),
     gamble: parseGamble(items, tables.table('gamble')),
     stateOverlays: parseStateOverlays(tables.table('States'), tables.table('Overlay')),
+    stateGroups: parseStateGroups(tables.table('States')),
     uniques: new UniqueDb(monsters, {
       monUMod: tables.table('MonUMod'), superUniques: tables.table('SuperUniques'), monPreset: tables.table('MonPreset'), monPlace: tables.table('MonPlace'),
       prefix: tables.table('UniquePrefix'), suffix: tables.table('UniqueSuffix'), appellation: tables.table('UniqueAppellation'),

@@ -71,6 +71,7 @@ export class StateList {
     return gone;
   }
 
+  /** 상태 이름 목록 */
   names(): string[] {
     return this.list.map((s) => s.name);
   }
@@ -100,5 +101,12 @@ export function parseStateOverlays(states: Record<string, string | undefined>[],
     const list = ['overlay1', 'overlay2', 'overlay3', 'overlay4'].map((k) => ov.get((r[k] ?? '').toLowerCase())).filter((x): x is StateOverlayDef => !!x);
     if (list.length) out.set(r.state, list);
   }
+  return out;
+}
+
+/** states.txt group (같은 group 의 상태는 하나만 — SrvDo018 DefensiveBuff 가 지운다). 0 이면 없음 */
+export function parseStateGroups(states: Record<string, string | undefined>[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of states) if (r.state && Number(r.group)) out.set(r.state, Number(r.group));
   return out;
 }

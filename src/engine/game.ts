@@ -104,6 +104,8 @@ export interface GameData {
   gamble?: GambleTable;
   /** states.txt 상태 → overlay.txt 그림 (상태 오버레이). 출처: states.txt overlay1~4, overlay.txt Filename/Frames */
   stateOverlays?: Map<string, StateOverlayDef[]>;
+  /** states.txt group (같은 group 상태는 서로 지운다 — Fade·Burst of Speed, 아머 3종) */
+  stateGroups?: Map<string, number>;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -2663,6 +2665,16 @@ export class Game {
     if (!data) return false;
     const lvl = this.skillLevel(s);
     if (!this.startCheck(s, targetId, targetItem)) return false;
+    // 스킬 지연 (skills.txt delay): 지연 스킬을 쓰면 그 프레임 동안 지연 있는 스킬을 쓸 수 없다 (상태 skilldelay).
+    // 출처: D2MOO SKILLS_CanUseSkill (STATE_SKILLDELAY) / D2GAME_SKILLS_SetDelay
+    const delay = s.delay && data.skillCalc ? data.skillCalc.eval(s, s.delay, lvl, this.owner()) : 0;
+    if (delay > 0) {
+      if (p.states.has('skilldelay')) {
+        this.events.push({ type: 'skillUnusable', skill: s.id, reason: 'delay' });
+        return false;
+      }
+      p.states.set('skilldelay', this.tickCount + delay);
+    }
     // 충전 스킬: 마나 대신 그 아이템 충전 1 (출처: D2GAME_SKILLMANA_Consume_6FD10A50)
     const charge = this.activeCharge(s.id);
     if (charge) {
@@ -3137,10 +3149,13 @@ export class Game {
         return;
       }
       case 18: {
-        // Frozen Armor / Shiver Armor (Bone Armor 도 같은 함수): 자신에게 방어 버프, 다른 아머는 해제. 출처: SKILLS_SrvDo018_DefensiveBuff
-        for (const other of ['frozenarmor', 'shiverarmor', 'chillingarmor']) if (other !== s.auraState) this.player.states.remove(other);
+        // 자신에게 버프 (Frozen/Shiver/Chilling·Bone Armor, Fade·Burst of Speed·Venom): 같은 states.txt group 의 상태를 먼저 지운다.
+        // 상태 스탯 = aurastat1~6 + passivestat1~5. 출처: SKILLS_SrvDo018_DefensiveBuff (SkillSor.cpp:338)
+        const group = data.stateGroups?.get(s.auraState);
+        for (const st of this.player.states.names()) if (st === s.auraState || (group && data.stateGroups?.get(st) === group)) this.player.states.remove(st);
         const stats: Record<string, number> = {};
-        for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+        for (const a of s.auraStats) stats[a.stat] = (stats[a.stat] ?? 0) + calc.eval(s, a.calc, lvl, o);
+        for (const ps of s.passiveStats) stats[ps.stat] = (stats[ps.stat] ?? 0) + calc.eval(s, ps.calc, lvl, o);
         // 지속 공식이 없으면(Bone Armor) 흡수량이 다할 때까지 (원작 curse.nDuration 0 = 만료 없음)
         const len = calc.eval(s, s.auraLenCalc, lvl, o);
         this.player.states.set(s.auraState, len > 0 ? this.tickCount + len : Infinity, stats, { id: s.id, lvl });
@@ -4126,6 +4141,14 @@ export class Game {
     d.ltng += roll('lightmindam', 'lightmaxdam');
     d.cold += roll('coldmindam', 'coldmaxdam');
     d.mag += roll('magicmindam', 'magicmaxdam');
+    // 독 (Venom 상태): 스탯 값이 이미 프레임당 1/256 (skills.txt enms·exms) — << 8 하지 않는다.
+    // 길이 = skill_poison_override_length 가 있으면 그 값, 아니면 poisonlength. 출처: SUNITDMG_FillDamageValues
+    const pmin = this.playerStat('poisonmindam'), pmax = this.playerStat('poisonmaxdam');
+    const pois = pmax > 0 ? pmin + (pmax > pmin ? this.rng.pick(pmax - pmin) : 0) : 0;
+    if (pois > 0) {
+      d.pois += pois;
+      d.poisLen = Math.max(d.poisLen, this.playerStat('skill_poison_override_length') || this.playerStat('poisonlength'));
+    }
   }
 
   /** 몬스터 방어력 (상태 반영): (기본 + armorclass) × (100 + skill_armor_percent) / 100 */

@@ -22,13 +22,13 @@ const table = [...src.match(/gPlayerWeaponsSequenceTable\[24\] =\s*\{([\s\S]*?)\
 const WCLASS = ['HTH', '1HT', '2HT', '1HS', '2HS', 'BOW', 'XBW', 'STF', '1JS', '1JT', '1SS', '1ST', 'HT1', 'HT2'];
 const used = new Set();
 const out = {};
-table.slice(0, 16).forEach((name, seq) => {
+table.forEach((name, seq) => {
   if (!name) return;
   const recs = weap[name];
   out[seq] = Object.fromEntries(WCLASS.map((w, i) => [w, recs[i]]).filter(([, n]) => n && n !== '0' && arrays[n]));
   for (const n of Object.values(out[seq])) used.add(n);
 });
-let ts = `// 플레이어 스킬 애니메이션 시퀀스 (skills.txt seqnum 1~15). scripts/gen-sequences.mjs 로 생성.
+let ts = `// 플레이어 스킬 애니메이션 시퀀스 (skills.txt seqnum 1~23, 16~ 은 확장팩). scripts/gen-sequences.mjs 로 생성.
 // 출처: D2MOO source/D2Common/src/DataTbls/SequenceTbls.cpp — gPlayerSequence* 배열, gPlayerWeaponsSequenceTable,
 //       gWeaponIndexToClassMap (무기 클래스 순서 HTH 1HT 2HT 1HS 2HS BOW XBW STF 1JS 1JT 1SS 1ST HT1 HT2)
 // 각 프레임 = [플레이어 모드 토큰, 그 모드 애니메이션의 프레임, 이벤트(0 없음, 1 근접 타격, 2 소리)]

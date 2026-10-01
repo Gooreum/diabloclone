@@ -68,7 +68,8 @@ export function actWorldPaths(src: AssetSource, tables: GameTables, act: number)
   const set = new Set<string>();
   const prefix = `Act ${act + 1}`;
   for (const r of tables.table('LvlPrest')) {
-    if (!(r.Name ?? '').startsWith(prefix)) continue;
+    // 확장팩 Act 5 지옥 구덩이는 빈 자리를 Act 4 용암 방으로 채운다 (DRLGMAZE_PlaceAct5LavaPresets → FillBlankMazeSpaces(LVLPREST_ACT4_LAVA_X))
+    if (!(r.Name ?? '').startsWith(prefix) && !(act === 4 && r.Name === 'Act 4 - Lava X')) continue;
     for (let i = 1; i <= 6; i++) {
       const f = r[`File${i}`];
       if (f && f !== '0') set.add(tilePath(f));
@@ -79,8 +80,10 @@ export function actWorldPaths(src: AssetSource, tables: GameTables, act: number)
     if (p) for (const f of p.file) if (f) set.add(tilePath(f));
   }
   // LvlSub: 테두리 규칙 0~3 (DRLGOUTDOORS_AddAct124SecondaryBorder) + 이 막 레벨의 SubType/SubWaypoint/SubShrine 행만
-  // (클래식 MPQ 에 없는 확장팩 LvlSub 파일 — Expansion/Siege — 은 넣지 않는다)
+  // (Act 1~4 에는 클래식 MPQ 에 없는 확장팩 LvlSub 파일 — Expansion/Siege — 을 넣지 않는다)
   const subTypes = new Set<number>([0, 1, 2, 3]);
+  // 확장팩 Act 5: Barricade 치환 규칙 (LVLSUB_ACT5_BARRICADE 12, DRLGOUTSIEGE_AddACt5SecondaryBorder)
+  if (act === 4) subTypes.add(12);
   for (const id of drlg.levels) {
     const r = data.level(id);
     for (const t of [r.subType, r.subWaypoint, r.subShrine]) if (t >= 0) subTypes.add(t);

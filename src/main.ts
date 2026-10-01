@@ -681,6 +681,11 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       return true;
     }
     // 인벤토리 금화 단추: 보관함이 열려 있으면 넣기(보관함 한도까지), 아니면 떨어뜨리기
+    // 무기 바꾸기 탭 (확장팩 캐릭터): 지금 세트가 아닌 탭을 누르면 바꾼다
+    if (hit?.kind === 'weaponTab') {
+      if (button === 0 && hit.set !== store.weaponSet) game.swapWeapons();
+      return true;
+    }
     if (hit?.kind === 'gold') {
       if (button === 0 && !store.cursor && game.gold > 0) {
         if (stashPanel.open) goldPopup.show('deposit', Math.min(game.gold, game.stashGoldMax() - game.stashGold), 400);

@@ -90,3 +90,51 @@ test('확장팩 화면: 원작 800 조작판, 확장팩 캐릭터 인벤토리 (
   await page.locator('#game').screenshot({ path: 'test-results/expansion-inv.png' });
   expect(errors).toEqual([]);
 });
+
+test('무기 바꾸기: W 로 바꾸고 되돌리기, II 탭 클릭, 저장 후 다시 불러와도 유지 · 클래식 캐릭터는 안 바뀜', async ({ page }) => {
+  test.setTimeout(400_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const name = uniqueName('Sw');
+  await create(page, name, true);
+  const rarm = () => page.evaluate(() => window.__game!.game.equipment.rarm?.code ?? null);
+  const set = () => page.evaluate(() => window.__game!.game.store.weaponSet);
+  const staff = await rarm();
+  expect(staff).not.toBeNull();
+  // W: 빈 II 세트로 → 오른손 비고, 다시 W 로 지팡이
+  await page.mouse.move(400, 250);
+  await page.keyboard.press('w');
+  await expect.poll(rarm).toBeNull();
+  expect(await set()).toBe(1);
+  expect(await page.evaluate(() => window.__game!.game.store.altWeapons.rarm?.code)).toBe(staff);
+  await page.keyboard.press('w');
+  await expect.poll(rarm).toBe(staff);
+  // 인벤토리의 II 탭 (오른손 칸 위) 클릭 → II 세트
+  await page.keyboard.press('i');
+  const tab = await page.evaluate(() => {
+    const P = window.__game!.ui!.inventory.layout.panel;
+    return { x: P.l + 52 + 15, y: P.t + 23 + 10 };
+  });
+  const box = (await page.locator('#game').boundingBox())!;
+  await page.mouse.click(box.x + tab.x, box.y + tab.y);
+  await expect.poll(set).toBe(1);
+  await page.locator('#game').screenshot({ path: 'test-results/expansion-swap-tab2.png' });
+  // 저장 → 다시 불러오기: II 세트·쉬는 지팡이 그대로
+  await saveExit(page);
+  await page.click('#btn-single');
+  await page.click(`#hero-${name}`, { clickCount: 2 });
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
+  expect(await set()).toBe(1);
+  expect(await page.evaluate(() => window.__game!.game.store.altWeapons.rarm?.code)).toBe(staff);
+  expect(errors).toEqual([]);
+});
+
+test('클래식 캐릭터는 W 를 눌러도 무기가 그대로', async ({ page }) => {
+  test.setTimeout(300_000);
+  await create(page, uniqueName('Cw'), false);
+  const before = await page.evaluate(() => window.__game!.game.equipment.rarm?.code);
+  await page.keyboard.press('w');
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__game!.game.equipment.rarm?.code)).toBe(before);
+  expect(await page.evaluate(() => window.__game!.game.store.weaponSet)).toBe(0);
+});

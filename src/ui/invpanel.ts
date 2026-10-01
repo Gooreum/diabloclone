@@ -24,6 +24,16 @@ const GOLDBTN = `${UI}PANEL\\goldcoinbtn.dc6`;
 const CLOSEBTN = `${UI}PANEL\\buysellbtn.dc6`;
 const GOLD = { btnX: 84, btnY: 392, x: 106, y: 392, w: 91, h: 18 } as const;
 const CLOSE = { x: 18, y: 385, w: 32, h: 32 } as const;
+/**
+ * 무기 바꾸기 탭 (invchar6). 출처(좌표): invchar6 프레임 4~7 을 이어 그린 픽셀 직접 측정 — 패널 기준
+ *   오른손(왼쪽) 무기 칸 위 I x 17~46 · II x 52~81, 왼손(오른쪽) 무기 칸 위 I x 248~277 · II x 283~312, y 23~44.
+ *   그림에는 I 탭이 밝게(지금 세트) 그려져 있다.
+ * 근사(원작 미확인): 지금 세트가 아닌 탭을 어둡게 덮어 표시 (원작이 II 를 밝게 그리는 방법 미확인)
+ */
+const WEAPON_TABS: readonly { x: number; w: number; set: 0 | 1 }[] = [
+  { x: 17, w: 30, set: 0 }, { x: 52, w: 30, set: 1 }, { x: 248, w: 30, set: 0 }, { x: 283, w: 30, set: 1 },
+];
+const TAB_Y = 23, TAB_H = 21;
 
 export interface Rect { l: number; t: number; r: number; b: number }
 export interface InvLayout {
@@ -93,7 +103,7 @@ export class ItemIcons {
   }
 }
 
-export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'close' } | { kind: 'gold' } | { kind: 'panel' } | null;
+export type PanelHit = { kind: 'inventory'; x: number; y: number } | { kind: 'equip'; slot: BodyLoc } | { kind: 'close' } | { kind: 'gold' } | { kind: 'weaponTab'; set: 0 | 1 } | { kind: 'panel' } | null;
 
 export class InventoryPanel {
   readonly layout: InvLayout;
@@ -124,6 +134,9 @@ export class InventoryPanel {
     if (inR({ l: L.panel.l + CLOSE.x, t: L.panel.t + CLOSE.y, r: L.panel.l + CLOSE.x + CLOSE.w, b: L.panel.t + CLOSE.y + CLOSE.h })) return { kind: 'close' };
     // 금화 단추 (원작: 누르면 금화 창 — 떨어뜨리기, 보관함이 열려 있으면 넣기)
     if (inR({ l: L.panel.l + GOLD.btnX, t: L.panel.t + GOLD.btnY, r: L.panel.l + GOLD.btnX + 20, b: L.panel.t + GOLD.btnY + 18 })) return { kind: 'gold' };
+    if (this.expansion) {
+      for (const t of WEAPON_TABS) if (inR({ l: L.panel.l + t.x, t: L.panel.t + TAB_Y, r: L.panel.l + t.x + t.w, b: L.panel.t + TAB_Y + TAB_H })) return { kind: 'weaponTab', set: t.set };
+    }
     const g = L.grid;
     if (x >= g.l && y >= g.t && x < g.l + g.cols * g.box && y < g.t + g.rows * g.box) {
       return { kind: 'inventory', x: Math.floor((x - g.l) / g.box), y: Math.floor((y - g.t) / g.box) };
@@ -164,6 +177,10 @@ export class InventoryPanel {
     if (!this.art?.drawPanel(ctx, this.expansion ? INVCHAR6 : INVCHAR, P.l, P.t, 4)) {
       ctx.fillStyle = 'rgba(12,10,8,0.94)';
       ctx.fillRect(P.l, P.t, P.r - P.l, P.b - P.t);
+    }
+    if (this.expansion) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      for (const t of WEAPON_TABS) if (t.set !== store.weaponSet) ctx.fillRect(P.l + t.x, P.t + TAB_Y, t.w, TAB_H);
     }
     const back = (it: ItemInstance, x: number, y: number, w: number, h: number) => {
       ctx.fillStyle = this.usable && !this.usable(it) ? 'rgba(160,20,20,0.35)' : 'rgba(20,40,120,0.3)';

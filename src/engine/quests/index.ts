@@ -8,6 +8,7 @@ import type { ActsQuestHost } from './acts-base';
 import { Act2Quests } from './act2';
 import { Act3Quests } from './act3';
 import { Act4Quests } from './act4';
+import { Act5Quests } from './act5';
 
 export type { QuestHost, QuestLogEntry, QuestSpeech } from './act1';
 export type { ActsQuestHost, ChaosView } from './acts-base';
@@ -27,9 +28,9 @@ export interface QuestKill {
  * 퀘스트 모듈이 보는 오브젝트 InitFn (Game.createObject 가 initObject 를 부르는 것).
  * 출처: objects.txt InitFn — Act 1: 4 TowerTome, 6 CairnStone, 7 CainGibbet, 9 InifussTree, 13 InvisibleObject, 15 MalusStand, 47 CountessChest /
  *       Act 2: 21 HoradricOrifice, 38 TyraelsDoor / Act 3: 25 Gidbinn, 39 GidbinnAltar, 41 SewerStairs, 42 SewerLever, 44 HellGate, 45 MephistoBridge,
- *       53 StairsR, 60 CompellingOrb / Act 4: 48 HellForge, 78 LastLastPortal (확장팩)
+ *       53 StairsR, 60 CompellingOrb / Act 4: 48 HellForge, 78 LastLastPortal (확장팩) / Act 5: 71 LarzukStandard
  */
-export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48, 78]);
+export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48, 78, 71]);
 
 /** 한 막의 퀘스트 모듈 (원작 막별 A{n}Q{m}.cpp 콜백 묶음) */
 export interface ActQuestModule {
@@ -70,6 +71,9 @@ export const ACT_QUESTS: Readonly<Record<number, ActQuestFactory>> = {
   2: (h) => new Act3Quests(h),
   3: (h) => new Act4Quests(h),
 };
+
+/** 확장팩: Act 5 (Harrogath) 퀘스트까지 (원작 gpQuestInitTable 의 nVersion — 확장팩 게임에서만 A5Q1~A5Q6) */
+export const ACT_QUESTS_LOD: Readonly<Record<number, ActQuestFactory>> = { ...ACT_QUESTS, 4: (h) => new Act5Quests(h) };
 
 /** 모든 막 퀘스트를 합친 제어 — 게임 사건을 모든 막 모듈에 차례로 알린다 (원작 콜백 순서: 퀘스트 번호 순) */
 export class QuestControl {
@@ -154,4 +158,4 @@ export class QuestControl {
 }
 
 /** 퀘스트가 듣는 게임 사건 */
-const QUEST_EVENT_TYPES = new Set(['bossActivated', 'cubeQuestItem', 'sealOperated', 'diabloSpawned', 'sealBossKilled', 'chaosCleared']);
+const QUEST_EVENT_TYPES = new Set(['bossActivated', 'cubeQuestItem', 'sealOperated', 'diabloSpawned', 'sealBossKilled', 'chaosCleared', 'npcTalk']);

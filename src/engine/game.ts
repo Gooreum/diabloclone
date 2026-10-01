@@ -50,12 +50,14 @@ import { ACT_TOWN_KEYS, NPC_DEFS, NpcServices, QUESTFLAG_A2Q0, QUESTFLAG_A2Q4, Q
 import type { StoreItem } from './shop';
 import type { GambleTable } from './shop';
 import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from './quests/act1';
-import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index';
+import { ACT_QUESTS, ACT_QUESTS_LOD, QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index';
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { QW, questOfWord } from './quests/messages-acts';
 import { LEVEL } from './drlg/types';
 import { actCount } from './drlg/acts';
+import { isSocketable, larzukSockets } from './sockets';
+import type { Act5Quests } from './quests/act5';
 import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
 
 /**
@@ -256,7 +258,8 @@ export interface MonsterSnapshot {
 /** NPC 와 대화 중 (메뉴·상점·도박·고용 목록) */
 export interface InteractionSnapshot {
   npcId: number; typeId: string;
-  mode: 'menu' | 'trade' | 'gamble' | 'hire' | 'imbue';
+  /** imbue = Charsi 담금질, socket = Larzuk 소켓 (A5Q1), personalize = Anya 이름 새기기 (A5Q4) — 아이템 하나를 맡기는 창 */
+  mode: 'menu' | 'trade' | 'gamble' | 'hire' | 'imbue' | 'socket' | 'personalize';
   options: NpcOption[];
   /** 메뉴의 퀘스트 항목 (option 'quest:<퀘스트>:<문자열 번호>' → 퀘스트 번호) */
   topics: { option: NpcOption; quest: number; key: string }[];
@@ -600,7 +603,8 @@ export class Game {
     if (!init.questFlags) for (const f of init.quests ?? []) this.legacyQuest(f);
     // 원작 퀘스트 전역 시드 (QUESTS_QuestInit: SEED_InitLowSeed(ITEMS_RollRandomNumber(pGameSeed))). 근사: 게임 시드에서 고정 변환
     this.questRng = new Rng((init.seed ^ 0x51e57) >>> 0 || 1);
-    this.questControl = new QuestControl(this.questHost());
+    // 확장팩 게임은 Act 5 퀘스트까지 (원작 gpQuestInitTable nVersion)
+    this.questControl = new QuestControl(this.questHost(), this.expansion ? ACT_QUESTS_LOD : ACT_QUESTS);
     this.quests = this.questControl.get(0) as Act1Quests;
     // 저장된 용병: 게임을 시작하면 플레이어 곁에 (죽은 용병은 기록만 — 부활 대상). 출처: D2GAME_MERCS_Create_6FCC8630
     if (init.merc) {
@@ -1753,7 +1757,9 @@ export class Game {
         return;
       }
       case 'imbue': {
-        this.imbue(cmd.itemId);
+        // 아이템 하나를 맡기는 NPC 창 (담금질·소켓·이름 새기기)
+        if (this.talk?.mode === 'socket') this.socketItem(cmd.itemId);
+        else this.imbue(cmd.itemId);
         return;
       }
       case 'waypoint': {
@@ -9260,6 +9266,8 @@ export class Game {
     for (const o of def.menu) {
       if (o === 'cancel') {
         if (n.type.id === 'charsi' && this.quests.canImbue()) out.push('imbue');
+        // 확장팩: Larzuk 소켓 (A5Q1 REWARDPENDING)
+        if (n.type.id === 'larzuk' && this.act5Quests()?.canSocket()) out.push('socket');
         // 막 이동 (출처: NPC_HandleDialogMessage — WARRIV1 A1Q6 REWARDGRANTED, MESHIF1 A2Q6 REWARDGRANTED, WARRIV2·MESHIF2 조건 없음)
         for (const [opt, tr] of Object.entries(TRAVEL) as [NpcOption, { npc: string; to: number }][]) {
           if (tr.npc === n.type.id && this.canTravelAct(tr.to)) out.push(opt);
@@ -9448,6 +9456,11 @@ export class Game {
         // 출처: NPC_HandleDialogMessage (CHARSI) — 담금질 창: 아이템을 커서로 들어 Charsi 에게
         t.mode = 'imbue';
         this.events.push({ type: 'imbueOpened', npcId: n.id });
+        return;
+      case 'socket':
+        // 출처: NPC_HandleDialogMessage (LARZUK) — 소켓 창: 아이템을 커서로 들어 Larzuk 에게 (담금질과 같은 창)
+        t.mode = 'socket';
+        this.events.push({ type: 'imbueOpened', npcId: n.id, service: 'socket' });
         return;
       case 'goEast':
       case 'goWest':
@@ -9741,6 +9754,7 @@ export class Game {
       difficulty: () => g.difficulty,
       act: () => g.act,
       expansion: () => g.expansion,
+      superUniqueKey: (idx) => g.data?.uniques?.superUnique(idx)?.key,
       npcPos: (typeId) => {
         const n = g.level.npcs.find((x) => x.type.id === typeId);
         return n ? { x: Math.floor(n.x), y: Math.floor(n.y) } : null;
@@ -9832,6 +9846,41 @@ export class Game {
     this.quests.imbueDone();
     t.mode = 'menu';
     this.events.push({ type: 'imbued', itemId: out.id, code: out.code, quality: out.quality, ilvl });
+    return true;
+  }
+
+  /** 확장팩 Act 5 퀘스트 모듈 (클래식 게임이면 없음) */
+  private act5Quests(): Act5Quests | undefined {
+    return this.questControl.get(4) as Act5Quests | undefined;
+  }
+
+  /**
+   * Larzuk 소켓 (A5Q1 보상). 출처: SUnitNpc.cpp NPC_HandleDialogMessage (MONSTER_LARZUK) — A5Q1 REWARDPENDING, ITEMS_IsSocketable,
+   *   ITEMS_Duplicate 뒤 소켓 수 (larzukSockets), D2GAME_NPC_RepairItem, 인벤토리 (자리가 없으면 발밑), ACT5Q1_SetRewardGranted
+   */
+  socketItem(itemId: number): boolean {
+    const t = this.talk, n = this.talking(), data = this.data, q = this.act5Quests();
+    if (!t || !n || n.type.id !== 'larzuk' || !data || !q) return false;
+    if (!q.canSocket()) {
+      this.events.push({ type: 'socketFailed', reason: 'quest' });
+      return false;
+    }
+    const found = this.store.find(itemId);
+    if (!found || !(found.where.kind === 'cursor' || found.where.kind === 'inventory')) return false;
+    const it = found.item;
+    if (!isSocketable(data.items, it)) {
+      this.events.push({ type: 'socketFailed', reason: 'item', itemId });
+      return false;
+    }
+    this.store.consume(it.id);
+    const out = structuredClone(it);
+    out.sockets = larzukSockets(data.items, out, this.rng);
+    if (out.maxDurability > 0) out.durability = out.maxDurability;
+    if (!this.store.inv.autoAdd(out)) this.dropItem(out, this.player.x, this.player.y);
+    this.statsDirty = true;
+    q.socketDone();
+    t.mode = 'menu';
+    this.events.push({ type: 'socketed', itemId: out.id, code: out.code, sockets: out.sockets });
     return true;
   }
 

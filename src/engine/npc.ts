@@ -22,6 +22,8 @@ export type NpcOption =
   | 'goEast' | 'goWest' | 'sailEast' | 'sailWest'
   /** 확장팩: Tyrael (Act 4) → Harrogath */
   | 'goHarrogath'
+  /** 확장팩: Larzuk 소켓 (A5Q1), Anya 이름 새기기 (A5Q4) */
+  | 'socket' | 'personalize'
   | QuestTopic;
 /** 메뉴의 퀘스트 항목: quest:<퀘스트 번호>:<원작 문자열 번호> (원작 QUESTS_InitScrollTextChain nMenu 2 대사) */
 export type QuestTopic = `quest:${number}:${number}`;
@@ -123,7 +125,7 @@ export const NPC_DEFS: Record<string, NpcDef> = {
 export const NPC_MENU_STRING: Record<Exclude<NpcOption, QuestTopic>, string> = {
   talk: 'TalkMenu', trade: 'NPCMenuTrade', tradeRepair: 'NPCMenuTradeRepair', gamble: 'gamble', hire: 'NPCMenuHire', resurrect: '', identify: 'NPCIdentify1', cancel: 'lowercasecancel',
   imbue: 'Upgrade', goEast: 'WarrivMenu1b', goWest: 'WarrivMenu1c', sailEast: 'MeshifMenuEast', sailWest: 'MeshifMenuWest',
-  goHarrogath: 'Travel To Harrogath',
+  goHarrogath: 'Travel To Harrogath', socket: 'Addsocketsui', personalize: 'Personalizeui',
 };
 
 /** 메뉴 항목의 string.tbl 키 */

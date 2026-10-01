@@ -207,7 +207,7 @@ export const ACT_TOWN_NPCS = { 1: A2_ALL, 2: A3_ALL, 3: ['tyrael2', 'cain4'] } a
  * 퀘스트 패널 순서 (막 안의 번호).
  * 근사(원작 미확인): D2Client 퀘스트 패널 표 — 원작 화면 순서(Act 3: 황금새·기드빈·칼림·람 에센·검은 사원·수호자, Act 4: 타락 천사·지옥의 대장간·공포의 종말)
  */
-export const QUEST_LOG_ORDER_ACTS: Record<number, readonly number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [4, 3, 2, 1, 5, 6], 3: [1, 3, 2] };
+export const QUEST_LOG_ORDER_ACTS: Record<number, readonly number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [4, 3, 2, 1, 5, 6], 3: [1, 3, 2], 4: [1, 2, 3, 4, 5, 6] };
 
 /**
  * 퀘스트 로그 설명 (상태 바이트 → string.tbl 키). 12 = 다른 곳에서 끝남(qstsother), 13 = 완료(qstsComplete), 그 밖은 퀘스트별 표.
@@ -231,6 +231,8 @@ const LOG_KEYS: Record<number, Record<number, string>> = {
   [QW.A4Q1]: { 1: 'qstsa4q11', 2: 'qstsa4q12', 3: 'qstsa4q13a', 4: 'qstsa4q13' },
   [QW.A4Q2]: { 1: 'qstsa4q21', 2: 'qstsa4q22', 3: 'qstsa4q23', 4: 'qstsa4q24' },
   [QW.A4Q3]: { 1: 'qstsa4q31', 2: 'qstsa4q32', 3: 'qstsa4q33', 4: 'qstsa4q31', 5: 'qstsa4q34' },
+  // 확장팩 Act 5 (A5Q1 설명 키는 원작 철자 qsta5q1x — "s" 없음)
+  [QW.A5Q1]: { 1: 'qsta5q11', 2: 'qsta5q12', 3: 'qsta5q13', 4: 'qsta5q14' },
 };
 
 /** 퀘스트 로그 설명 키 (기록 워드·상태 바이트). 없으면 '' */

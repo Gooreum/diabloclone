@@ -657,8 +657,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     if (qp === 'panel') return true;
     // NPC 대화: 메뉴 → 고용 목록 → 상점 (원작: 대화 중 바깥 클릭 = 닫고 이동)
     const inter = game.snapshot().interaction;
-    if (inter?.mode === 'imbue') {
-      // Charsi 담금질: 인벤토리 아이템을 누르면 그 아이템을 맡긴다 (근사: 원작은 커서로 들어 Charsi 창에 놓는다)
+    if (inter?.mode === 'imbue' || inter?.mode === 'socket' || inter?.mode === 'personalize') {
+      // Charsi 담금질 · Larzuk 소켓 · Anya 이름 새기기: 인벤토리 아이템을 누르면 그 아이템을 맡긴다 (근사: 원작은 커서로 들어 NPC 창에 놓는다)
       const it = invPanel.itemAt(game.store, x, y) ?? (game.store.cursor && !invPanel.hit(x, y) ? game.store.cursor : null);
       if (it && button === 0) {
         game.enqueue({ type: 'imbue', itemId: it.id });

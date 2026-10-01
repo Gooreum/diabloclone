@@ -58,6 +58,8 @@ export interface ActsQuestHost extends QuestHost {
   expansion(): boolean;
   /** 지금 레벨의 NPC 자리 (UNITS_GetCoords(pQuestArg->pTarget)) — 없으면 null */
   npcPos(typeId: string): { x: number; y: number } | null;
+  /** SuperUniques.txt 행 → 이름 키 (MONSTERUNIQUE_GetBossHcIdx 비교용) */
+  superUniqueKey?(idx: number): string | undefined;
 }
 
 /** 원작 D2QuestDataStrc 에서 쓰는 칸 */

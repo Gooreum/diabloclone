@@ -20,15 +20,19 @@ import { GameTables, type AssetSource } from './tables';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
-export function buildGameData(src: AssetSource, tables = new GameTables(src)): GameData {
+/**
+ * @param opts.expansion 확장팩 캐릭터용 (원작 wVersion 100). 1.14d 는 클래식 patch_d2 에도 확장팩 표가 다 있다 — 표는 같고 생성 규칙만 다르다
+ */
+export function buildGameData(src: AssetSource, tables = new GameTables(src), opts: { expansion?: boolean } = {}): GameData {
+  const expansion = opts.expansion ?? false;
   const items = new ItemDb({ weapons: tables.table('weapons'), armor: tables.table('armor'), misc: tables.table('misc'), itemtypes: tables.table('ItemTypes') });
-  const treasure = new TreasureDb(items, tables.table('TreasureClassEx'), tables.table('ItemRatio'));
+  const treasure = new TreasureDb(items, tables.table('TreasureClassEx'), tables.table('ItemRatio'), expansion);
   treasure.gen = new ItemGen(items, {
     magicprefix: tables.table('MagicPrefix'), magicsuffix: tables.table('MagicSuffix'), rareprefix: tables.table('RarePrefix'), raresuffix: tables.table('RareSuffix'),
     uniqueitems: tables.table('UniqueItems'), setitems: tables.table('SetItems'), sets: tables.table('Sets'),
     qualityitems: tables.table('QualityItems'), lowqualityitems: tables.table('LowQualityItems'),
     properties: tables.table('Properties'), itemstatcost: tables.table('ItemStatCost'), skills: tables.table('skills'), gems: tables.table('Gems'),
-  });
+  }, expansion);
   const monsters = new MonsterDb(tables.table('MonStats'), tables.table('MonStats2'), tables.table('MonLvl'), tables.table('MonSeq'));
   const animBytes = src.read('data\\global\\AnimData.d2');
   if (!animBytes) throw new Error('AnimData.d2 not found');
@@ -39,11 +43,11 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src)): G
   // 출처: DifficultyLevels.txt Normal 행 — MonsterColdDivisor / MonsterFreezeDivisor
   const normal = tables.table('DifficultyLevels').find((r) => r.Name === 'Normal');
   return {
-    items, treasure, monsters, anim: AnimData.parse(animBytes), hitClassIndex, missiles,
+    expansion, items, treasure, monsters, anim: AnimData.parse(animBytes), hitClassIndex, missiles,
     skills, skillCalc: new SkillCalc(skills), coldDivisor: n(normal?.MonsterColdDivisor) || 1, freezeDivisor: n(normal?.MonsterFreezeDivisor) || 1,
     difficultyRows: tables.table('DifficultyLevels'), npcPrices: parseNpcPrices(tables.table('npc')), bookCharge: parseBookCharges(tables.table('books')),
     objects: new ObjectDb({ objects: tables.table('Objects'), objGroup: tables.table('ObjGroup'), shrines: tables.table('shrines'), levels: tables.table('Levels') }),
-    hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc')),
+    hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc'), expansion),
     // 호라드릭 큐브 조합 (cubemain.txt — 유니크·세트 이름 입력은 uniqueitems / setitems index)
     cube: new CubeDb(tables.table('CubeMain'), items, treasure.gen.uniques.map((u) => u.name), treasure.gen.setItems.map((u) => u.name)),
     gamble: parseGamble(items, tables.table('gamble')),

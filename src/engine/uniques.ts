@@ -78,7 +78,8 @@ export class UniqueDb {
       });
     }
     t.superUniques.forEach((r, i) => {
-      if (!r.Superunique) return;
+      // 'Expansion' 은 확장팩 행 앞 구분선 (몬스터 아님)
+      if (!r.Superunique || r.Superunique === 'Expansion') return;
       this.superUniques.push({
         idx: r.hcIdx === undefined || r.hcIdx === '' ? i : n(r.hcIdx), key: r.Superunique, name: r.Name ?? r.Superunique, cls: r.Class ?? '',
         mods: [n(r.Mod1), n(r.Mod2), n(r.Mod3)], minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp), autoPos: n(r.AutoPos) === 1, stacks: n(r.Stacks) === 1,

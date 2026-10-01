@@ -85,6 +85,8 @@ export interface StoreCtx {
   rng: Rng;
   /** 0 보통 1 악몽 2 지옥 */
   difficulty: number;
+  /** 확장팩 캐릭터 (확장팩 기본템도 진열·도박) */
+  expansion?: boolean;
 }
 
 /** 출처: D2GAME_NPC_GenerateStoreItem — 난이도 업그레이드 → 생성(“Cracked” 하급은 5회까지 재시도) → 상점 페이지 배치 → 감정 */
@@ -144,7 +146,7 @@ export function fillStore(ctx: StoreCtx, vendor: string, act: number, playerLeve
   const perms: ItemBase[] = [];
   for (const b of ctx.items.bases.values()) {
     // 클래식: 확장팩 전용(version ≥ 100) 은 제외 (출처: FillStoreInventory — wVersion < 100 || wItemFormat >= 100)
-    if (!b.spawnable || !b.vendors[vendor] || b.version >= 100) continue;
+    if (!b.spawnable || !b.vendors[vendor] || (!ctx.expansion && b.version >= 100)) continue;
     (b.permStore ? perms : cache).push(b);
   }
 
@@ -215,7 +217,7 @@ export function fillGamble(ctx: StoreCtx, table: GambleTable, difficultyRow: Txt
     let code = table.selection[ctx.rng.pick(table.chooseLimit[ilvl] ?? table.selection.length)] ?? '';
     const base = ctx.items.base(code);
     if (!base) return placed;
-    if (base.version >= 100) continue;
+    if (!ctx.expansion && base.version >= 100) continue;
     if (counter < 2) code = counter ? 'amu' : 'rin';
     counter++;
     const it = rollGambleItem(ctx, code, ilvl, difficultyRow);

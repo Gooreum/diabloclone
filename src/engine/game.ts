@@ -69,6 +69,8 @@ export const SKILL_ATTACK = 0;
 export const SKILL_THROW = 2;
 
 export interface GameData {
+  /** 확장팩 캐릭터용 데이터 (원작 wVersion 100 — 아이템 생성·상점·도박·큐브·용병 규칙). 표는 클래식과 같다 */
+  expansion?: boolean;
   monsters: MonsterDb;
   treasure: TreasureDb;
   items: ItemDb;
@@ -7393,7 +7395,7 @@ export class Game {
     if (!this.cubeOpen || !data || !db || !c) return false;
     const inCube = this.store.cube.items.map((p) => p.item);
     const cls = ({ Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar' } as Record<string, string>)[c.cls] ?? '';
-    const r = transmute(db, { items: data.items, treasure: data.treasure, rng: this.rng, playerLevel: c.level, difficulty: this.difficulty, cls }, inCube);
+    const r = transmute(db, { items: data.items, treasure: data.treasure, rng: this.rng, playerLevel: c.level, difficulty: this.difficulty, cls, expansion: data.expansion ?? false }, inCube);
     if (!r || r.special === 'cow') {
       this.events.push({ type: 'transmuteFailed', count: inCube.length, ...(r?.special ? { special: r.special } : {}) });
       return false;

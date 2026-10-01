@@ -15,7 +15,6 @@ import { QUALITY, type ItemInstance, type ItemStat, type Quality } from './treas
 import { MaxRng, Rng } from './rng';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
-const CLASSIC = (version: string | undefined) => n(version) < 100;
 
 export interface Mod { code: string; param: string; min: number; max: number }
 
@@ -88,7 +87,13 @@ export class ItemGen {
   private readonly skillRows: TxtRow[];
   readonly gems = new Map<string, GemDef>();
 
-  constructor(items: ItemDb, t: ItemTables) {
+  /** 확장팩 캐릭터용 (원작 wVersion 100): 확장팩 접사·유니크·세트, 소켓 규칙. 표는 클래식과 같다 */
+  readonly expansion: boolean;
+
+  constructor(items: ItemDb, t: ItemTables, expansion = false) {
+    this.expansion = expansion;
+    // 확장팩 전용 행 (version >= 100) 은 확장팩 캐릭터만
+    const CLASSIC = (version: string | undefined) => expansion || n(version) < 100;
     this.items = items;
     const affix = (rows: TxtRow[], prefix: boolean): MagicAffix[] =>
       rows.map((r, idx) => ({
@@ -308,8 +313,8 @@ export class ItemGen {
     if (!a.spawnable || !a.frequency) return false;
     if (a.level > alvl || (a.maxLevel && alvl > a.maxLevel)) return false;
     if (forRare && !a.rare) return false;
-    // 클래식: 겹치는·투척 아이템은 접사 불가, 소켓 속성 접사 제외
-    if (this.stackOrThrow(base)) return false;
+    // 클래식: 겹치는·투척 아이템은 접사 불가, 소켓 속성 접사 제외 (확장팩은 투척 무기도 접사가 붙는다)
+    if (!this.expansion && this.stackOrThrow(base)) return false;
     if (a.mods[0] && this.props.get(a.mods[0].code)?.[0]?.stat === 'item_numsockets') return false;
     if (a.etypes.some((t) => this.isType(base, t))) return false;
     if (!a.itypes.some((t) => this.isType(base, t))) return false;
@@ -497,10 +502,11 @@ export class ItemGen {
     const def = [...this.items.typeChain(base.type)].map((t) => this.items.types.get(t)).find((d) => d && (d.maxSock[0] || d.maxSock[1] || d.maxSock[2]));
     const tierIdx = item.ilvl <= 25 ? 0 : item.ilvl <= 40 ? 1 : 2;
     let maxS = Math.min(base.gemSockets, def?.maxSock[tierIdx] ?? 0);
-    maxS = Math.min(maxS, 3); // Normal 난이도 최대 3
+    // 클래식: 최대 3, 몸통 갑옷은 소켓 굴림 자체가 없다
+    // 근사(원작 미확인): 확장팩은 3 상한·몸통 갑옷 제외를 풀고 itemtypes MaxSock·기본템 gemsockets 만 따른다
+    if (!this.expansion) maxS = Math.min(maxS, 3);
     if (maxS <= 0) return;
-    // 클래식: 몸통 갑옷은 소켓 굴림 자체가 없다
-    if (this.isType(base, 'tors')) return;
+    if (!this.expansion && this.isType(base, 'tors')) return;
     if (Number(rng.next() & 0xffffffffn) % 100 >= 33) return;
     const cap = Math.min(6, base.invWidth * base.invHeight, maxS);
     item.sockets = Math.max(1, Math.min(cap, (startSeed >>> 0) % maxS + 1));

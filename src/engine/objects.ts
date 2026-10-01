@@ -81,6 +81,8 @@ export class ObjectDb {
 
   constructor(t: { objects: TxtRow[]; objGroup: TxtRow[]; shrines: TxtRow[]; levels: TxtRow[] }) {
     for (const r of t.objects) {
+      // 'Expansion' 구분선은 Id 가 비어 있다 (그대로 두면 0 번 Dummy 를 덮는다)
+      if (!r.Id) continue;
       const id = n(r.Id);
       const arr = (p: string) => Array.from({ length: 8 }, (_, i) => n(r[`${p}${i}`]));
       this.types[id] = {

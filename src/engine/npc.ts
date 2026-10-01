@@ -230,7 +230,7 @@ export class NpcServices {
   }
 
   private storeCtx(h: TradeHost): StoreCtx {
-    return { items: h.data.items, treasure: h.data.treasure, rng: this.seed, difficulty: h.difficulty };
+    return { items: h.data.items, treasure: h.data.treasure, rng: this.seed, difficulty: h.difficulty, expansion: h.data.expansion ?? false };
   }
 
   priceCtx(h: TradeHost, npc: string): PriceCtx | null {

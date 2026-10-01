@@ -73,8 +73,12 @@ export class TreasureDb {
   /** 이번 게임에서 이미 나온 유니크 (nolimit 제외, 게임마다 초기화). 출처: pGame->dwUniqueFlags */
   readonly droppedUniques = new Set<number>();
 
-  constructor(items: ItemDb, treasureClassEx: TxtRow[], itemRatio: TxtRow[]) {
+  /** 확장팩 캐릭터용: 확장팩 기본템(version 100)·투척 무기도 떨어진다 */
+  readonly expansion: boolean;
+
+  constructor(items: ItemDb, treasureClassEx: TxtRow[], itemRatio: TxtRow[], expansion = false) {
     this.items = items;
+    this.expansion = expansion;
     for (const r of treasureClassEx) {
       const name = r['Treasure Class'];
       if (!name) continue;
@@ -105,14 +109,14 @@ export class TreasureDb {
     };
   }
 
-  /** 자동 TC: TreasureClass=1 타입마다 <code>3, <code>6 … <code>99 (클래식: version < 100, spawnable, rarity > 0) */
+  /** 자동 TC: TreasureClass=1 타입마다 <code>3, <code>6 … <code>99 (클래식: version < 100, spawnable, rarity > 0 — 확장팩은 version 무관) */
   private buildAutoTcs(): void {
     for (const t of this.items.types.values()) {
       if (!t.treasureClass) continue;
       for (let lvl = 3; lvl <= 99; lvl += 3) {
         const entries: TcEntry[] = [];
         for (const b of this.items.bases.values()) {
-          if (b.version >= 100 || !b.spawnable || b.rarity <= 0) continue;
+          if (!this.allowed(b) || !b.spawnable || b.rarity <= 0) continue;
           if (b.level <= lvl - 3 || b.level > lvl) continue;
           if (!this.items.isType(b, t.code)) continue;
           entries.push({ name: b.code, prob: b.rarity, isTc: false });
@@ -170,7 +174,7 @@ export class TreasureDb {
     while (stack.length && out.length < 6) {
       const frame = stack[stack.length - 1] as { tc: Tc; picks: number; mods: QualityMods };
       const { tc } = frame;
-      const total = tc.entries.reduce((s, e) => s + (this.isClassic(e) ? e.prob : 0), 0);
+      const total = tc.entries.reduce((s, e) => s + (this.usable(e) ? e.prob : 0), 0);
       if (!total || frame.picks <= 0) {
         stack.pop();
         continue;
@@ -181,7 +185,7 @@ export class TreasureDb {
         let r = -tc.picks - frame.picks;
         frame.picks--;
         for (const e of tc.entries) {
-          if (!this.isClassic(e)) continue;
+          if (!this.usable(e)) continue;
           if (r < e.prob) { entry = e; break; }
           r -= e.prob;
         }
@@ -192,7 +196,7 @@ export class TreasureDb {
         if (r < tc.noDrop) continue;
         r -= tc.noDrop;
         for (const e of tc.entries) {
-          if (!this.isClassic(e)) continue;
+          if (!this.usable(e)) continue;
           if (r < e.prob) { entry = e; break; }
           r -= e.prob;
         }
@@ -208,10 +212,10 @@ export class TreasureDb {
         continue;
       }
       const base = this.items.base(entry.name);
-      if (!base || base.version >= 100) continue;
-      // 출처: D2MOO D2GAME_DropTC — 클래식은 투척 무기가 뽑히면 10번까지 픽을 되돌리고, 넘으면 Long Sword('lsd')로 바꾼다
+      if (!base || !this.allowed(base)) continue;
+      // 출처: D2MOO D2GAME_DropTC — 클래식은 투척 무기가 뽑히면 10번까지 픽을 되돌리고, 넘으면 Long Sword('lsd')로 바꾼다 (확장팩은 그대로 떨어진다)
       let dropBase = base;
-      if ([...this.items.typeChain(base.type)].some((t) => this.items.types.get(t)?.throwable)) {
+      if (!this.expansion && [...this.items.typeChain(base.type)].some((t) => this.items.types.get(t)?.throwable)) {
         if (++throwables <= 10) { frame.picks++; continue; }
         dropBase = this.items.base('lsd') ?? base;
       }
@@ -222,10 +226,16 @@ export class TreasureDb {
     return out;
   }
 
-  private isClassic(e: TcEntry): boolean {
+  /** 이 판본에서 떨어질 수 있는 기본템 (클래식: version < 100) */
+  private allowed(b: ItemBase): boolean {
+    return this.expansion || b.version < 100;
+  }
+
+  /** TC 항목을 고를 수 있나 (모르는 이름은 원래대로 둔다 — 고른 뒤 base 가 없어 건너뛴다) */
+  private usable(e: TcEntry): boolean {
     if (e.isTc) return true;
     const b = this.items.base(e.name);
-    return !b || b.version < 100;
+    return !b || this.allowed(b);
   }
 
   /** 출처: D2MOO DropTC 품질 롤 — (ratio − (ilvl − qlvl)/divisor) << 7, MF 보정, TC 품질 보정, rand(chance) < 128 */

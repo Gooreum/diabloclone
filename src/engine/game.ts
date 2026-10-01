@@ -54,6 +54,7 @@ import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { LEVEL } from './drlg/types';
+import { mercCanEquip, mercDerived, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
 
 /**
  * 원작 플레이어 애니메이션 모드 토큰: NU 대기, WL 걷기, RN 달리기, TN/TW 마을, A1/A2 공격, SC 시전, TH 던지기,
@@ -265,7 +266,12 @@ export interface InteractionSnapshot {
   hire: readonly HireCandidate[];
 }
 /** 용병 (왼쪽 위 생명 막대) */
-export interface MercSnapshot { id: number | null; name: string; level: number; hp: number; maxHp: number; dead: boolean; experience: number; nextExp: number; /** monstats 행 (roguehire·act2hire·act3hire) */ typeId?: string }
+export interface MercSnapshot {
+  id: number | null; name: string; level: number; hp: number; maxHp: number; dead: boolean; experience: number; nextExp: number; /** monstats 행 (roguehire·act2hire·act3hire) */ typeId?: string;
+  /** 확장팩 용병 장비 · 능력치 (용병 창) */
+  items?: Partial<Record<MercSlot, ItemInstance>>;
+  stats?: { str: number; dex: number; min: number; max: number; defense: number; resist: { fi: number; co: number; li: number; po: number }; hireDesc: number };
+}
 export interface GroundItemSnapshot { id: number; code: string; quality: number; quantity: number; x: number; y: number }
 export interface MissileSnapshot { id: number; name: string; x: number; y: number; dir: number; celFile: string; frame: number; /** 그리기 혼합 (missiles.txt / overlay.txt Trans, 0 이 아니면 빛 더하기) */ blend?: number }
 /** 플레이어 시체 (죽을 때 장착 아이템이 남는다) */
@@ -531,6 +537,8 @@ export class Game {
   /** 호라드릭 큐브 창이 열려 있음 (원작 SUNIT_SetInteractInfo(UNIT_ITEM, 큐브)) */
   cubeOpen = false;
   private mercInfo: MercStats | null = null;
+  /** 장비를 더한 용병 능력치 (확장팩, refreshMerc) */
+  private mercDv: MercDerived | null = null;
   /** 용병이 켠 오라 (D2GAME_AssignSkill — 유닛이 새로 생기면 꺼진다) */
   private mercAura: { skill: SkillRecord; lvl: number; next: number } | null = null;
 
@@ -1640,6 +1648,14 @@ export class Game {
         if (!t || this.talk?.mode !== 'hire') return;
         const r = this.npc.hire(this.tradeHost(), t.type.id, cmd.index);
         if (r) this.hireMerc(r.entry.name, r.entry.seed, r.init.id, r.init.level, r.init.experience, t.x, t.y);
+        return;
+      }
+      case 'mercItem': {
+        this.mercItem(cmd.slot);
+        return;
+      }
+      case 'mercPotion': {
+        this.mercPotion(cmd.itemId);
         return;
       }
       case 'closeNpc': {
@@ -9522,7 +9538,7 @@ export class Game {
   /** 저장용 용병 기록 */
   mercSave(): MercSave | null {
     const m = this.merc;
-    return m ? { name: m.name, seed: m.seed, hirelingId: m.hirelingId, level: m.level, experience: m.experience, dead: m.dead } : null;
+    return m ? { name: m.name, seed: m.seed, hirelingId: m.hirelingId, level: m.level, experience: m.experience, dead: m.dead, ...(m.items && Object.keys(m.items).length ? { items: { ...m.items } } : {}) } : null;
   }
 
   private mercSnapshot(): MercSnapshot | null {
@@ -9530,7 +9546,13 @@ export class Game {
     if (!m) return null;
     const u = this.mercUnit();
     const typeId = u?.type.id ?? (this.mercInfo ? this.data?.monsters.list.find((t) => t.hcIdx === this.mercInfo?.row.cls)?.id : undefined);
-    return { id: m.unitId, name: m.name, level: m.level, hp: u ? u.hp : 0, maxHp: u ? u.stats.maxHp : (this.mercInfo?.maxHp ?? 0), dead: m.dead, experience: m.experience, nextExp: this.mercInfo?.nextExp ?? 0, ...(typeId ? { typeId } : {}) };
+    const st = this.mercInfo, dv = this.mercDv;
+    const stats = st && this.data?.expansion
+      ? { str: dv?.str ?? st.str, dex: dv?.dex ?? st.dex, min: u?.stats.a1.min ?? st.minDamage, max: u?.stats.a1.max ?? st.maxDamage, defense: u?.stats.defense ?? st.defense,
+          resist: dv?.resist ?? { fi: st.resist, co: st.resist, li: st.resist, po: st.resist }, hireDesc: st.row.hireDesc }
+      : undefined;
+    return { id: m.unitId, name: m.name, level: m.level, hp: u ? u.hp : 0, maxHp: u ? u.stats.maxHp : (this.mercInfo?.maxHp ?? 0), dead: m.dead, experience: m.experience, nextExp: this.mercInfo?.nextExp ?? 0, ...(typeId ? { typeId } : {}),
+      ...(this.data?.expansion ? { items: { ...m.items } } : {}), ...(stats ? { stats } : {}) };
   }
 
   /**
@@ -9576,7 +9598,112 @@ export class Game {
     rec.unitId = id;
     rec.dead = false;
     this.pets.push(u);
+    this.refreshMerc(true);
     return u;
+  }
+
+  /**
+   * 장비를 더한 용병 능력치를 유닛에 넣는다 (확장팩). 장착·레벨업 때 다시 부른다.
+   * 출처: D2GAME_ITEMS_UpdateItemStatlist (장비 스탯을 용병 스탯에 합침) · STATREGEN 이벤트
+   * 피해 % (damagepercent·ED·Str/DexBonus)는 기본 피해에 넣었으므로 상태 스탯에서 뺀다. 그 밖의 장비 스탯(명중 %, 흡수 …)은
+   * 'mercitems' 상태로 붙여 기존 용병 공격 코드(pet.states.stat)가 읽는다.
+   * 근사(원작 미확인): 무기가 없으면 지금처럼 hireling 피해 (원작 맨손 용병 피해 경로 미확인)
+   * @param full 생명을 최대로 (새 유닛·레벨업), 아니면 생명 비율 유지
+   */
+  private refreshMerc(full = false): void {
+    const rec = this.merc, u = this.mercUnit(), st = this.mercInfo, data = this.data;
+    if (!rec || !u || !st || !data?.expansion) {
+      this.mercDv = null;
+      return;
+    }
+    const dv = mercDerived(st, u.type.id, u.type.a1, rec.items ?? {}, data.items, data.treasure.gen);
+    this.mercDv = dv;
+    const ratio = u.stats.maxHp > 0 ? u.hp / u.stats.maxHp : 1;
+    const atk = { min: dv.dmg?.min ?? st.minDamage, max: dv.dmg?.max ?? st.maxDamage, toHit: dv.toHit };
+    u.stats = { ...u.stats, level: rec.level, maxHp: dv.maxHp, defense: dv.defense, a1: atk, a2: { ...atk }, s1: { ...atk } };
+    u.hp = full ? dv.maxHp : Math.max(1, Math.min(dv.maxHp, ratio * dv.maxHp));
+    u.resist = { dm: dv.stat('damageresist'), ma: dv.stat('magicresist'), fi: dv.resist.fi, li: dv.resist.li, co: dv.resist.co, po: dv.resist.po };
+    const SKIP = new Set(['damagepercent', 'item_mindamage_percent', 'item_maxdamage_percent', 'mindamage', 'maxdamage', 'secondary_mindamage', 'secondary_maxdamage',
+      'strength', 'dexterity', 'maxhp', 'item_maxhp_percent', 'armorclass', 'tohit', 'fireresist', 'coldresist', 'lightresist', 'poisonresist', 'magicresist', 'damageresist',
+      'maxfireresist', 'maxcoldresist', 'maxlightresist', 'maxpoisonresist', 'item_allskills']);
+    const stats: Record<string, number> = {};
+    for (const it of dv.active) for (const x of [...it.stats, ...it.socketed.flatMap((g) => g.stats)]) if (!x.param && !SKIP.has(x.stat)) stats[x.stat] = (stats[x.stat] ?? 0) + x.value;
+    if (Object.keys(stats).length) u.states.set('mercitems', Infinity, stats);
+    else u.states.remove('mercitems');
+  }
+
+  /**
+   * 용병 장비 놓기·빼기 (확장팩). 출처: D2GAME_PACKETCALLBACK_Rcv0x61_DropPickupMercItem —
+   *   커서에 아이템: 치료·해동·해독 물약은 용병이 마시고, 아니면 종류 표·요구치 확인 뒤 D2GAME_MERCS_EquipItem
+   *   (칸 = 아이템 종류로, 차 있으면 원래 장비를 빼고 요구치를 다시 본 뒤 원래 장비를 커서로),
+   *   커서가 비었으면 그 칸 장비를 커서로.
+   * 근사(원작 미확인): 원작은 용병이 가까이 있어야 한다 — 여기서는 거리를 보지 않는다
+   */
+  private mercItem(slot?: MercSlot): void {
+    const rec = this.merc, u = this.mercUnit(), st = this.mercInfo, data = this.data;
+    if (!rec || !u || !st || !data?.expansion || rec.dead || this.isDead) return;
+    const cur = this.store.cursor;
+    const items = (rec.items ??= {});
+    if (!cur) {
+      const it = slot ? items[slot] : undefined;
+      if (!slot || !it) return;
+      delete items[slot];
+      this.store.cursor = it;
+      this.refreshMerc();
+      this.events.push({ type: 'mercUnequipped', slot, itemId: it.id });
+      return;
+    }
+    const b = data.items.base(cur.code);
+    if (b && this.isMercPotion(b)) {
+      this.mercPotion(cur.id);
+      return;
+    }
+    const target = b ? mercSlotFor(data.items, u.type.id, b) : null;
+    const old = target ? items[target] : undefined;
+    const without = { ...items };
+    if (target) delete without[target];
+    const dv = mercDerived(st, u.type.id, u.type.a1, without, data.items, data.treasure.gen);
+    const err = mercCanEquip(data.items, u.type.id, cur, { level: rec.level, str: dv.str, dex: dv.dex });
+    if (err || !target) {
+      this.events.push({ type: 'mercEquipFailed', reason: err ?? 'type', itemId: cur.id });
+      return;
+    }
+    items[target] = cur;
+    this.store.cursor = old ?? null;
+    this.refreshMerc();
+    this.events.push({ type: 'mercEquipped', slot: target, itemId: cur.id, ...(old ? { swapped: old.id } : {}) });
+  }
+
+  /** 용병이 마시는 물약: 치료(pSpell 3 생명)·회복(pSpell 5)·해독·해동 (출처: Rcv0x61 — SKILLITEM_pSpell_Handler 로 용병에게) */
+  private isMercPotion(b: ItemBase): boolean {
+    return (b.pSpell === 3 && b.useStats.some((u) => u.stat === 'hpregen' || u.stat === 'hitpoints')) || b.pSpell === 5 || (b.pSpell === 6 || b.pSpell === 9) && b.cureStates.length > 0;
+  }
+
+  /**
+   * 물약을 용병에게 (초상화에 놓기 · Shift+벨트 키). 출처: SKILLITEM_pSpell03_Potion / pSpell05_RejuvPotion / pSpell09_AntidoteThawingPotion —
+   *   용병은 플레이어가 아니라 직업 보너스·활력 두 배가 없다. 치료는 len 프레임에 나눠 회복 ('healthpot' 상태, regen 에서)
+   */
+  private mercPotion(itemId: number): void {
+    const u = this.mercUnit(), data = this.data, found = this.store.find(itemId);
+    if (!u || !data?.expansion || !found || this.isDead) return;
+    const b = data.items.base(found.item.code);
+    if (!b || !this.isMercPotion(b)) return;
+    if (b.pSpell === 3) {
+      for (const us of b.useStats) {
+        if (us.stat !== 'hpregen' && us.stat !== 'hitpoints') continue;
+        const cur = u.states.get('healthpot');
+        const remaining = cur && Number.isFinite(cur.until) ? Math.max(0, cur.until - this.tickCount) : 0;
+        const perFrame = ((us.calc << 8) + remaining * (cur?.stats.potion ?? 0)) / (remaining + b.useLen);
+        u.states.remove('healthpot');
+        u.states.set('healthpot', this.tickCount + remaining + b.useLen, { potion: perFrame });
+      }
+    } else if (b.pSpell === 5) {
+      for (const us of b.useStats) if (us.stat === 'hitpoints') u.hp = Math.min(u.stats.maxHp, u.hp + (u.stats.maxHp * us.calc) / 100);
+    } else {
+      for (const cs of b.cureStates) u.states.remove(cs);
+    }
+    this.store.consume(itemId);
+    this.events.push({ type: 'mercPotion', itemId, code: found.item.code });
   }
 
   /**
@@ -9959,6 +10086,7 @@ export class Game {
       s1: { min: next.minDamage, max: next.maxDamage, toHit: next.toHit } };
     u.hp = next.maxHp;
     u.resist = { dm: 0, ma: 0, fi: next.resist, li: next.resist, co: next.resist, po: next.resist };
+    this.refreshMerc(true);
     this.events.push({ type: 'mercLevelUp', level: lvl });
   }
 
@@ -11353,6 +11481,12 @@ export class Game {
     // 근사(원작 미확인): 재생 적용 주기 — 매 프레임
     const mu = this.mercUnit();
     if (mu && this.mercInfo && mu.hp < mu.stats.maxHp) mu.hp = Math.min(mu.stats.maxHp, mu.hp + this.mercInfo.hpRegen / 256);
+    // 용병이 마신 치료 물약 (mercPotion — 1/256 단위 매 프레임)
+    const pot = mu?.states.get('healthpot');
+    if (mu && pot) {
+      if (this.tickCount >= pot.until) mu.states.remove('healthpot');
+      else mu.hp = Math.min(mu.stats.maxHp, mu.hp + (pot.stats.potion ?? 0) / 256);
+    }
     for (const m of this.monsters) {
       if (m.mode === 'DT' || m.mode === 'DD') continue;
       const poison = m.states.stat('hpregen');

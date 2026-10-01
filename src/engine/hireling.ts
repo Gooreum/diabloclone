@@ -8,6 +8,7 @@
 // (https://github.com/ThePhrozenKeep/D2MOO)
 import type { TxtRow } from '../formats/txt';
 import { Rng } from './rng';
+import type { ItemInstance } from './treasure';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
@@ -126,8 +127,8 @@ export const MERC_MODES = ['DT', 'NU', 'WL', 'GH', 'A1', 'A2', 'BL', 'SC', 'S1',
 /** 용병 초상 (data\global\ui\HIREABLES) — monstats 행별. 출처: d2data.mpq rogueicon / act2hireableicon / act3hireableicon */
 export const MERC_ICONS: Record<string, string> = { roguehire: 'rogueicon', act2hire: 'act2hireableicon', act3hire: 'act3hireableicon' };
 
-/** 캐릭터 저장에 넣는 용병 (원작 .d2s 용병 기록: 이름·시드·종류·경험치 + 사망 여부) */
-export interface MercSave { name: string; seed: number; hirelingId: number; level: number; experience: number; dead: boolean }
+/** 캐릭터 저장에 넣는 용병 (원작 .d2s 용병 기록: 이름·시드·종류·경험치 + 사망 여부, 확장팩 jf 구역 = 용병 장비) */
+export interface MercSave { name: string; seed: number; hirelingId: number; level: number; experience: number; dead: boolean; items?: Partial<Record<'head' | 'tors' | 'rarm' | 'larm', ItemInstance>> }
 
 /** 고용 목록 한 칸 (원작 D2MercDataStrc: 이름·시드·고용됨·목록에 보임) */
 export interface MercEntry { name: string; seed: number; hired: boolean; available: boolean }

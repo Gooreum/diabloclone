@@ -9,9 +9,13 @@ import { mpqOrder } from '../../src/assets/edition';
 import { buildGameData } from '../../src/data/gamedata';
 import { GameTables } from '../../src/data/tables';
 import { MpqArchive, MpqChain } from '../../src/formats/mpq';
-import { GAME_DATA } from '../support/gamedata';
-import type { GameData } from '../../src/engine/game';
-import { mercStats } from '../../src/engine/hireling';
+import { GAME_DATA, gameChain, hasGameData } from '../support/gamedata';
+import { CollisionMap } from '../../src/engine/collision';
+import { Game, type GameData } from '../../src/engine/game';
+import { hirelingExp, mercStats, type MercSave } from '../../src/engine/hireling';
+import { classStats, createCharacter, expTable } from '../../src/engine/player';
+import { makeSave, parseSave, serializeSave } from '../../src/engine/save';
+import type { MonsterUnit } from '../../src/engine/ai/types';
 import { mercAllows, mercCanEquip, mercDerived, mercSlotFor } from '../../src/engine/mercequip';
 import { Rng } from '../../src/engine/rng';
 import { QUALITY, type ItemInstance } from '../../src/engine/treasure';
@@ -128,5 +132,122 @@ d('Phase 1: 장비 능력치', () => {
     expect(dv.defense).toBe(b.defense);
     expect(dv.resist.fi).toBe(b.resist);
     expect(dv.active.length).toBe(0);
+  });
+});
+
+const rogue = (level = 10): MercSave => ({ name: 'merc05', seed: 99, hirelingId: 0, level, experience: hirelingExp(level, 100), dead: false });
+
+function game(opts: { data?: GameData; tables?: GameTables; merc?: MercSave; gold?: number } = {}): Game {
+  const t = opts.tables ?? tables, data = opts.data ?? lod;
+  const cs = classStats(t.table('charstats'), 'Amazon');
+  const ch = createCharacter(cs);
+  ch.level = 30;
+  const g = new Game({
+    map: new CollisionMap(80, 80), player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
+    seed: 7, data, character: ch, classStats: cs, expTable: expTable(t.table('experience'), 'Amazon'), inTown: true,
+    merc: opts.merc ?? rogue(), gold: opts.gold ?? 0,
+  });
+  g.tick();
+  return g;
+}
+
+const events = (g: Game) => (g as unknown as { events: { type: string; [k: string]: unknown }[] }).events;
+const give = (g: Game, it: ItemInstance, slot?: 'head' | 'tors' | 'rarm' | 'larm') => {
+  g.store.cursor = it;
+  g.enqueue({ type: 'mercItem', ...(slot ? { slot } : {}) });
+  g.tick();
+};
+
+d('Phase 2: 엔진 흐름', () => {
+  it('커서의 단궁을 로그에게: rarm 에 들어가고 피해·스냅샷이 바뀐다', () => {
+    const g = game();
+    const u = g.mercUnit()!;
+    const before = { ...u.stats.a1 };
+    const bow = item('sbw');
+    give(g, bow);
+    expect(g.merc!.items?.rarm?.id).toBe(bow.id);
+    expect(g.store.cursor).toBeNull();
+    expect(u.stats.a1.max).toBeGreaterThan(before.max);
+    const snap = g.snapshot().merc!;
+    expect(snap.items?.rarm?.id).toBe(bow.id);
+    expect(snap.stats!.max).toBe(u.stats.a1.max);
+  });
+
+  it('찬 칸에 다른 활: 새 활 장착, 원래 활은 커서로 · 빈 커서로 빼기', () => {
+    const g = game();
+    const a = item('sbw'), b = item('sbw');
+    give(g, a);
+    give(g, b);
+    expect(g.merc!.items?.rarm?.id).toBe(b.id);
+    expect(g.store.cursor?.id).toBe(a.id);
+    g.store.cursor = null;
+    const base = mercStats(lod.hirelings!, 0, 10)!;
+    g.enqueue({ type: 'mercItem', slot: 'rarm' });
+    g.tick();
+    expect(g.store.cursor?.id).toBe(b.id);
+    expect(g.merc!.items?.rarm).toBeUndefined();
+    expect(g.mercUnit()!.stats.a1).toMatchObject({ min: base.minDamage, max: base.maxDamage });
+  });
+
+  it('검·힘 부족 갑옷은 거절: 커서 그대로, mercEquipFailed', () => {
+    const g = game({ merc: rogue(3) });
+    const sword = item('ssd');
+    give(g, sword);
+    expect(g.store.cursor?.id).toBe(sword.id);
+    expect(events(g).some((e) => e.type === 'mercEquipFailed' && e.reason === 'type')).toBe(true);
+    const plate = item('plt'); // 판금 갑옷: 힘 65
+    give(g, plate);
+    expect(g.store.cursor?.id).toBe(plate.id);
+    expect(g.merc!.items?.tors).toBeUndefined();
+  });
+
+  it('용병이 죽어도 장비는 남고, 부활하면 그대로 · 새로 고용하면 장비가 없어진다', () => {
+    const g = game({ gold: 100000 });
+    const armor = item('lea');
+    give(g, armor);
+    const def = g.mercUnit()!.stats.defense;
+    const u = g.mercUnit()!;
+    (g as unknown as { damagePet(p: MonsterUnit, d: Record<string, number>): void }).damagePet(u, { phys: 99999 * 256, fire: 0, ltng: 0, cold: 0, pois: 0, mag: 0, stunLen: 0, coldLen: 0, freezeLen: 0, poisLen: 0, hitClass: 0 });
+    expect(g.merc!.dead).toBe(true);
+    expect(g.merc!.items?.tors?.id).toBe(armor.id);
+    expect(g.resurrectMerc()).toBe(true);
+    expect(g.mercUnit()!.stats.defense).toBe(def);
+    g.hireMerc('merc09', 5, 1, 10, hirelingExp(10, 100), 20, 20);
+    expect(g.merc!.items ?? {}).toEqual({});
+  });
+
+  it('저장 왕복: 용병 장비가 그대로', () => {
+    const g = game();
+    const bow = item('sbw');
+    give(g, bow);
+    const save = makeSave('Hero', g.character!, 0, { inventory: [], equipment: {}, merc: g.mercSave() });
+    const back = parseSave(serializeSave(save));
+    expect(back.merc?.items?.rarm).toMatchObject({ id: bow.id, code: 'sbw' });
+    const g2 = game({ merc: back.merc! });
+    expect(g2.mercUnit()!.stats.a1.max).toBe(g.mercUnit()!.stats.a1.max);
+  });
+
+  it('치료 물약을 용병에게: 물약이 없어지고 용병 생명이 오른다', () => {
+    const g = game();
+    const u = g.mercUnit()!;
+    u.hp = 5;
+    const pot = item('hp3');
+    g.store.inv.items.push({ item: pot, x: 0, y: 0 });
+    g.enqueue({ type: 'mercPotion', itemId: pot.id });
+    for (let i = 0; i < 30; i++) g.tick();
+    expect(g.store.find(pot.id)).toBeNull();
+    expect(u.hp).toBeGreaterThan(10);
+  });
+});
+
+(hasGameData ? describe : describe.skip)('Phase 2: 클래식', () => {
+  it('클래식 데이터에서는 mercItem 이 아무것도 하지 않는다', () => {
+    const ct = new GameTables(gameChain());
+    const cd = buildGameData(gameChain(), ct);
+    const g = game({ data: cd, tables: ct });
+    const bow = cd.treasure.createItem(cd.items.base('sbw')!, 10, new Rng(2), QUALITY.NORMAL, false);
+    give(g, bow);
+    expect(g.store.cursor?.id).toBe(bow.id);
+    expect(g.merc!.items).toBeUndefined();
   });
 });

@@ -46,6 +46,10 @@ export type Command =
   | { type: 'repair'; itemId?: number }
   /** 고용 목록에서 용병 고르기 (목록 칸 번호) */
   | { type: 'hire'; index: number }
+  /** 확장팩 용병 장비: 커서 아이템을 용병에게 (칸은 아이템 종류로), 커서가 비었으면 slot 장비를 커서로. 출처: D2MOO Rcv0x61_DropPickupMercItem */
+  | { type: 'mercItem'; slot?: 'head' | 'tors' | 'rarm' | 'larm' }
+  /** 물약을 용병에게 (초상화에 놓기 · Shift+벨트 키) */
+  | { type: 'mercPotion'; itemId: number }
   /** NPC 대화·상점 닫기 */
   | { type: 'closeNpc' }
   /** 호라드릭 큐브: 열기(인벤토리·보관함의 큐브 오른쪽 클릭과 같음) · 트랜스뮤트 단추 · 닫기 */

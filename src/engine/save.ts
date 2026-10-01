@@ -187,7 +187,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     stashGold: items.stashGold ?? 0,
     corpse: structuredClone(items.corpse ?? {}),
     waypoints: [...(byDiff.waypointsByDiff[0] as number[])],
-    merc: items.merc ? { ...items.merc } : null,
+    merc: items.merc ? structuredClone(items.merc) : null,
     quests: [...(items.quests ?? [])],
     ...(normalQuest ? { questFlags: [...normalQuest] } : {}),
     act: cleanAct(items.act),
@@ -231,6 +231,20 @@ export function normalizeItem(it: ItemInstance): ItemInstance {
   return x;
 }
 
+/** 용병 장비 (확장팩 jf 구역): head·tors·rarm·larm 칸의 아이템만, 모양이 맞지 않으면 버린다 */
+function mercItems(v: unknown): { items?: MercSave['items'] } {
+  if (!v || typeof v !== 'object') return {};
+  const out: NonNullable<MercSave['items']> = {};
+  for (const slot of ['head', 'tors', 'rarm', 'larm'] as const) {
+    const it = (v as Record<string, unknown>)[slot] as ItemInstance | undefined;
+    if (it && typeof it === 'object' && typeof it.code === 'string' && Number.isInteger(it.id)) {
+      normalizeItem(it);
+      out[slot] = it;
+    }
+  }
+  return Object.keys(out).length ? { items: out } : {};
+}
+
 export function parseSave(text: string): CharacterSave {
   const s = JSON.parse(text) as Partial<CharacterSave> & { inventory?: unknown };
   if (s.version !== 1 && s.version !== SAVE_VERSION) throw new Error(`save version mismatch: ${s.version}`);
@@ -267,7 +281,7 @@ export function parseSave(text: string): CharacterSave {
   // 용병·퀘스트 필드가 없던 저장 호환. 모양이 맞지 않는 용병 기록은 버린다
   const m = s.merc as Partial<MercSave> | null | undefined;
   s.merc = m && typeof m.name === 'string' && Number.isInteger(m.seed) && Number.isInteger(m.hirelingId) && Number.isInteger(m.level) && typeof m.experience === 'number'
-    ? { name: m.name, seed: m.seed as number, hirelingId: m.hirelingId as number, level: m.level as number, experience: m.experience, dead: !!m.dead }
+    ? { name: m.name, seed: m.seed as number, hirelingId: m.hirelingId as number, level: m.level as number, experience: m.experience, dead: !!m.dead, ...mercItems(m.items) }
     : null;
   s.quests = Array.isArray(s.quests) ? s.quests.filter((q): q is string => typeof q === 'string') : [];
   // 퀘스트 기록: 숫자 워드 배열만 (모양이 맞지 않으면 버린다 → 예전 저장처럼 quests 이름으로)

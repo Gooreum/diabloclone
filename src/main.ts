@@ -446,7 +446,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     inventoryGrid = save.inventory;
     stash = save.stash;
     belt = save.belt;
-    const all = [...inventoryGrid.map((p) => p.item), ...stash.map((p) => p.item), ...(save.cube ?? []).map((p) => p.item), ...belt.filter((x): x is ItemInstance => !!x), ...Object.values(equipment)];
+    const all = [...inventoryGrid.map((p) => p.item), ...stash.map((p) => p.item), ...(save.cube ?? []).map((p) => p.item), ...belt.filter((x): x is ItemInstance => !!x), ...Object.values(equipment), ...Object.values(save.merc?.items ?? {})];
     data.treasure.reserveIds(Math.max(0, ...all.map((i) => i.id)));
   } else {
     // 출처: charstats.txt 클래스별 시작 장비 (예: 바바리안 hax 오른손·buc 왼손, 아마존 jav·buc, 소서리스 sst …, hp1 ×4, 두루마리)

@@ -148,7 +148,7 @@ export function byTimeValue(packed: number, baseTime: number): number {
  * 출처: D2StatList.cpp case 4 (APPLY_TO_ITEM) / case 5 (APPLY_TO_ITEM_PCT)
  * 근사(원작 미확인): op 5 의 % 는 무기 ED%·방어구 방어% 와 같은 합산
  */
-function itemLocalOps(stats: { stat: string; param: number; value: number }[], ops: Map<string, StatOp>, level: number, isArmor: boolean, isWeapon: boolean, add: (s: string, v: number) => void): ItemLocalOps {
+export function itemLocalOps(stats: { stat: string; param: number; value: number }[], ops: Map<string, StatOp>, level: number, isArmor: boolean, isWeapon: boolean, add: (s: string, v: number) => void): ItemLocalOps {
   const out = { ...NO_LOCAL };
   for (const s of stats) {
     const op = s.param === 0 ? ops.get(s.stat) : undefined;

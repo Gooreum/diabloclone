@@ -76,8 +76,19 @@ export class ItemText {
     return b ? this.str(b.namestr) : item.code;
   }
 
-  /** 첫 줄 이름 (감정 전 매직 이상은 기본 이름) */
+  /**
+   * 첫 줄 이름 (감정 전 매직 이상은 기본 이름). 이름을 새긴 아이템 (A5Q4 Anya — IFLAG_PERSONALIZED) 은 앞에 "<이름>'s"
+   * (string.tbl PlayerNameOnItemstring "%s's", 이름이 s 로 끝나면 PlayerNameOnItemstringX "%s'")
+   */
   name(item: ItemInstance): string {
+    const raw = this.plainName(item);
+    const who = item.personalized;
+    if (!who) return raw;
+    const fmt = this.str(/s$/i.test(who) ? 'PlayerNameOnItemstringX' : 'PlayerNameOnItemstring');
+    return `${(fmt.includes('%s') ? fmt : "%s's").replace('%s', who)} ${raw}`;
+  }
+
+  private plainName(item: ItemInstance): string {
     const base = this.baseName(item);
     const g = this.gen;
     if (item.code === 'gld') return `${item.quantity} ${this.str('gold')}`;

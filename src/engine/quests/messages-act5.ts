@@ -46,12 +46,14 @@ export const NPC_MESSAGES_ACT5: Record<number, NpcMessage[][]> = {
     t([['larzuk', 20134, 2, 'A5Q3SuccessfulLarzuk'], ['cain6', 20133, 2, 'A5Q3SuccessfulCain'], ['drehya', 20136, 2, 'A5Q3SuccessfulAnya'], ['malah', 20132, 2, 'A5Q3SuccessfulMalah'], ['qual-kehk', 20135, 2, 'A5Q3SuccessfulQualKehk']]),
   ],
   // 출처: A5Q4.cpp gpAct5Q4NpcMessages
+  // 표 2·3·4 의 20143 · 20148 은 D2MOO 표에 MONSTER_NIHLATHAK 로 적혀 있으나 문자열 키 (A5Q4EarlyReturnAnya · A5Q4SuccessfulAnya) 와
+  // ACT5Q4_Callback11_ScrollMessage (nNPCNo == MONSTER_DREHYA 일 때만 20148) 가 Anya 의 말임을 보여 준다 — drehya 로 적는다
   [QW.A5Q4]: [
     t([['drehya', 20137, 0, 'A5Q4InitAnya']]),
     t([['larzuk', 20141, 2, 'A5Q4AfterInitLarzuk'], ['cain6', 20139, 2, 'A5Q4AfterInitCain'], ['malah', 20140, 2, 'A5Q4AfterInitMalah'], ['qual-kehk', 20142, 2, 'A5Q4AfterInitQualKehk']]),
-    t([['larzuk', 20145, 2, 'A5Q4EarlyReturnLarzuk'], ['cain6', 20144, 2, 'A5Q4EarlyReturnCain'], ['nihlathak', 20143, 2, 'A5Q4EarlyReturnAnya'], ['malah', 20146, 2, 'A5Q4EarlyReturnMalah'], ['qual-kehk', 20147, 2, 'A5Q4EarlyReturnQualKehk']]),
-    t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['nihlathak', 20148, 0, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
-    t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['nihlathak', 20148, 2, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
+    t([['larzuk', 20145, 2, 'A5Q4EarlyReturnLarzuk'], ['cain6', 20144, 2, 'A5Q4EarlyReturnCain'], ['drehya', 20143, 2, 'A5Q4EarlyReturnAnya'], ['malah', 20146, 2, 'A5Q4EarlyReturnMalah'], ['qual-kehk', 20147, 2, 'A5Q4EarlyReturnQualKehk']]),
+    t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['drehya', 20148, 0, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
+    t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['drehya', 20148, 2, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
   ],
   // 출처: A5Q5.cpp gpAct5Q5NpcMessages
   [QW.A5Q5]: [

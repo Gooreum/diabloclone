@@ -21,7 +21,7 @@ const hasLod = existsSync(resolve(LOD, 'patch_d2.mpq')) && mpqOrder('lod').every
 /** NPC·장식 AI (NPC 단계 담당) — 이 테스트의 대상이 아니다 */
 const NPC_AI = new Set(['Idle', 'Npc', 'Towner', 'Vendor', 'NpcStationary', 'Hireable', 'Buffy', 'NpcOutOfTown', 'Navi', 'TownRogue', 'JarJar', 'GoodNpcRanged', 'Hireable']);
 /** 퀘스트 단계(5~7) 에서 만드는 AI */
-const QUEST_AI = new Set(['Wussie', 'Nihlathak', 'AncientStatue', 'Ancient', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
+const QUEST_AI = new Set(['Wussie', 'AncientStatue', 'Ancient', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
 
 type Inner = {
   monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean; killMonster(m: MonsterUnit, s: string): void;
@@ -171,6 +171,23 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
       void pd;
       inner(game).killMonster(host, 'player');
       expect(game.monsters.some((x) => x.type.baseId === 'painworm1' || x.type.id.startsWith('painworm'))).toBe(true);
+    });
+
+    it('Nihlathak: 대상 둘레 시체에 NihlathakCorpseExplosion — 시체 생명 비율 피해 (반은 불), 시체는 다시 못 씀', () => {
+      const game = newGame(23);
+      const nih = game.spawnMonster('nihlathakboss', 30.5, 20.5);
+      const corpse = game.spawnMonster('minion1', 22.5, 20.5);
+      inner(game).killMonster(corpse, 'other');
+      for (let i = 0; i < 40 && corpse.mode !== 'DD'; i++) game.tick();
+      expect(corpse.mode).toBe('DD');
+      game.character!.life = game.maxLife();
+      const before = game.character!.life;
+      expect(inner(game).monsterUseSkill(nih, 2, { unitId: corpse.id, x: corpse.x, y: corpse.y })).toBe(true);
+      const ev: GameEvent[] = [];
+      for (let i = 0; i < 80 && !ev.some((x) => x.type === 'corpseExploded'); i++) ev.push(...game.tick());
+      expect(ev.some((x) => x.type === 'corpseExploded' && x.targetId === corpse.id)).toBe(true);
+      expect(corpse.corpseUsed).toBe(true);
+      expect(game.character!.life).toBeLessThan(before);
     });
 
     it('Succubus Witch: Amplify Damage (Skill1) 로 플레이어에게 저주', () => {

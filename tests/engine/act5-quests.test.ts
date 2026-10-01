@@ -11,6 +11,7 @@ import { buildGameData } from '../../src/data/gamedata';
 import { actLevels, buildActWorld } from '../../src/data/world';
 import { MpqArchive, MpqChain } from '../../src/formats/mpq';
 import { Game, type GameData, type GameEvent } from '../../src/engine/game';
+import { isPersonalizable } from '../../src/engine/sockets';
 import { classStats, createCharacter, expTable } from '../../src/engine/player';
 import { nearestWalkable } from '../../src/engine/path';
 import { QFLAG, QuestRecord } from '../../src/engine/quests/record';
@@ -320,6 +321,70 @@ describe.skipIf(!hasLod)('Act 5 퀘스트 (확장팩 원작 데이터)', () => {
       expect(questResistDiffs([w.toJSON(), w.toJSON(), null], 2)).toBe(2);
       // CUSTOM4 없이 두루마리 사용 → 쓰지 못함
       expect(a5(makeGame(4, prep().toJSON())).useItem('tr2')).toBe(false);
+    }, T);
+  });
+  describe('A5Q4', () => {
+    type Obj = { id: number; type: { id: number }; portal?: { toLevel: string } };
+    const objs = (g: Game) => (inner(g) as unknown as { level: { objects: Obj[] } }).level.objects;
+    const prep = () => {
+      const r = new QuestRecord();
+      for (const w of [QW.A5Q1, QW.A5Q2, QW.A5Q3]) r.set(w, QFLAG.REWARDGRANTED);
+      return r;
+    };
+
+    it('Betrayal of Harrogath: Anya 20137 → 신전 포털 → Nihlathak 처치 (FX 17) → Anya 20148 → 이름 새기기 (이름 앞에 붙음) → 끝', () => {
+      const g = makeGame(4, prep().toJSON());
+      Object.defineProperty(g, 'playerName', { value: 'Ruby' });
+      const W = QW.A5Q4;
+      expect(a5(g).stateOf(W).state).toBe(1);
+      expect(g.questControl.npcHasQuest('drehya')).toBe(true);
+      expect(speechKeys(talkTo(g, 'drehya'))).toEqual(['A5Q4InitAnya']);
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.STARTED)).toBe(true);
+      expect(a5(g).stateOf(W).lastState).toBe(1);
+      const portal = objs(g).find((o) => o.type.id === 60 && o.portal?.toLevel === 'nihlathakstemple');
+      expect(portal, 'temple portal').toBeTruthy();
+      // 신전 → Halls of Vaught: Nihlathak (InitFn 69 오브젝트 자리)
+      goTo(g, 'nihlathakstemple');
+      expect(a5(g).stateOf(W).lastState).toBe(2);
+      goTo(g, 'hallsofvaught');
+      // goTo 는 몬스터를 비우므로 레벨을 다시 만들지 않고 Nihlathak 만 다시 (InitFn 69 가 이미 세웠으면 한 게임에 한 번 — 다시 못 만듦)
+      expect(a5(g).nihlathakLeft()).toBe(true);
+      expect((a5(g) as unknown as { q3: { nihTempleSpawned: boolean } }).q3.nihTempleSpawned).toBe(true);
+      const suIdx = data.uniques!.superUnique('Nihlathak Boss')!.idx;
+      (g as unknown as { bossFlags: Set<number> }).bossFlags.delete(suIdx);
+      const nih = g.spawnSuperUnique(suIdx, Math.floor(g.snapshot().player.x) + 4, Math.floor(g.snapshot().player.y), undefined, true)!;
+      expect(nih, 'nihlathak').toBeTruthy();
+      inner(g).events = [];
+      inner(g).killMonster(nih, 'player');
+      expect(rec(g, W, QFLAG.REWARDPENDING) && rec(g, W, QFLAG.PRIMARYGOALDONE)).toBe(true);
+      expect(inner(g).events.some((e) => e.type === 'questFx' && e.fx === 17)).toBe(true);
+      for (let i = 0; i < 12; i++) g.tick();
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q43');
+      // Anya: 20148 → 이름 새기기
+      expect(speechKeys(talkTo(g, 'drehya'))).toContain('A5Q4SuccessfulAnya');
+      expect(rec(g, W, QFLAG.ENTERAREA)).toBe(true);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q43a');
+      expect(g.snapshot().interaction?.options).toContain('personalize');
+      const ring = newItem('rin', QUALITY.MAGIC);
+      g.store.inv.autoAdd(ring);
+      menu(g, 'personalize');
+      expect(g.snapshot().interaction?.mode).toBe('personalize');
+      // 반지 (misc nameable 아님) 는 거절
+      g.enqueue({ type: 'imbue', itemId: ring.id });
+      expect(g.tick().some((e) => e.type === 'personalizeFailed')).toBe(true);
+      const cap = newItem('cap', QUALITY.NORMAL);
+      g.store.inv.autoAdd(cap);
+      g.enqueue({ type: 'imbue', itemId: cap.id });
+      const done = g.tick().find((e) => e.type === 'personalized');
+      expect(done?.name).toBe('Ruby');
+      const named = g.store.allItems().find((it) => it.id === done?.itemId)!;
+      expect(named.personalized).toBe('Ruby');
+      expect(rec(g, W, QFLAG.REWARDGRANTED)).toBe(true);
+      expect(g.snapshot().interaction?.options ?? []).not.toContain('personalize');
+      // 이미 새긴 아이템은 다시 못 새김
+      expect(isPersonalizable(data.items, named)).toBe(false);
+      expect(isPersonalizable(data.items, newItem('cap', QUALITY.NORMAL))).toBe(true);
     }, T);
   });
 });

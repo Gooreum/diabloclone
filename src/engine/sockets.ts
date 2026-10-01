@@ -37,3 +37,14 @@ export function larzukSockets(items: ItemDb, it: ItemInstance, rng: Rng): number
   else if (it.quality > QUALITY.MAGIC && n > 1) n = 1;
   return n;
 }
+
+/**
+ * 이름을 새길 수 있다 (확장팩 A5Q4 Anya). 출처: ITEMS_IsPersonalizable — 금화·화살통·볼트통·신체 부위 (귀) 가 아니고, NOSELL·부서짐이 아니고,
+ *   아직 새기지 않았고, 간단 저장 (compactsave) 이 아닌 아이템 중 items.txt nameable
+ */
+export function isPersonalizable(items: ItemDb, it: ItemInstance): boolean {
+  const b = items.base(it.code);
+  if (!b || ['gold', 'bowq', 'xboq', 'play'].includes(b.type)) return false;
+  if (b.quest || isBroken(it) || it.personalized) return false;
+  return !b.compactSave && b.nameable;
+}

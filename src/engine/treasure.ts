@@ -66,6 +66,8 @@ export interface ItemInstance {
   runewordBase?: { stats: ItemStat[]; defense: number };
   /** 인벤토리 그림 변형 번호 (itemtypes InvGfx1~6 중, 0 부터) */
   gfx?: number;
+  /** 이름을 새긴 캐릭터 (확장팩 A5Q4 Anya 보상 — IFLAG_PERSONALIZED + ITEMS_SetEarName) */
+  personalized?: string;
 }
 
 interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare: number; rareDiv: number; rareMin: number; set: number; setDiv: number; setMin: number; magic: number; magicDiv: number; magicMin: number; hiQ: number; hiQDiv: number; normal: number; normalDiv: number }

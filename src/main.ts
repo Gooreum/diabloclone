@@ -473,7 +473,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     map: world.byKey.get(world.townId)!.def.map, levels: world.levels.map((l) => l.def), act: startAct, difficulty,
     player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, cube: save?.cube ?? [], belt, gold: save?.gold ?? 0,
-    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}), questResistOther,
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}), questResistOther, playerName: name,
     ...(save?.altWeapons ? { altWeapons: save.altWeapons } : {}), ...(save?.weaponSet ? { weaponSet: save.weaponSet } : {}), ...(save?.altSkills ? { altSkills: save.altSkills } : {}),
   });
   // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)

@@ -56,7 +56,7 @@ import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { QW, questOfWord } from './quests/messages-acts';
 import { LEVEL } from './drlg/types';
 import { actCount } from './drlg/acts';
-import { isSocketable, larzukSockets } from './sockets';
+import { isPersonalizable, isSocketable, larzukSockets } from './sockets';
 import type { Act5Quests } from './quests/act5';
 import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
 
@@ -166,6 +166,8 @@ export interface GameInit {
   questFlags?: number[];
   /** A5Q3 저항 두루마리를 읽은 다른 난이도 수 (저장 questFlagsByDiff 의 A5Q3 CUSTOM3 — questResistDiffs) */
   questResistOther?: number;
+  /** 캐릭터 이름 (원작 pPlayerData->szName — 이름 새기기) */
+  playerName?: string;
   /** Phase 7: 저장의 열린 가장 높은 난이도 (디아블로를 죽이면 다음 난이도) */
   difficultyUnlocked?: 0 | 1 | 2;
   /** Phase 7: 저장의 진행 값 (원작 .d2s nProgression — 칭호) */
@@ -534,6 +536,8 @@ export class Game {
   readonly questRecord: QuestRecord;
   /** A5Q3 저항 두루마리를 읽은 다른 난이도 수 */
   private readonly questResistOther: number;
+  /** 캐릭터 이름 (원작 pPlayerData->szName) */
+  readonly playerName: string;
   /** 게임 전역 퀘스트 기록 (원작 pQuestControl->pQuestFlags, 게임마다 새로) */
   readonly questGlobal = new QuestRecord();
   /** Act 1 퀘스트 상태 기계 (questControl 의 Act 1 모듈) */
@@ -607,6 +611,7 @@ export class Game {
     // 출처: QUESTRECORD_CopyBufferToRecord(bResetStates) — 게임에 들어올 때
     this.questRecord = QuestRecord.load(init.questFlags, true);
     this.questResistOther = init.questResistOther ?? 0;
+    this.playerName = init.playerName ?? '';
     // 예전 저장(Phase 10 Step 1: 퀘스트 이름 목록) 호환. 근사: 'cain' = A1Q4 보상 받음으로 본다
     if (!init.questFlags) for (const f of init.quests ?? []) this.legacyQuest(f);
     // 원작 퀘스트 전역 시드 (QUESTS_QuestInit: SEED_InitLowSeed(ITEMS_RollRandomNumber(pGameSeed))). 근사: 게임 시드에서 고정 변환
@@ -1775,6 +1780,7 @@ export class Game {
       case 'imbue': {
         // 아이템 하나를 맡기는 NPC 창 (담금질·소켓·이름 새기기)
         if (this.talk?.mode === 'socket') this.socketItem(cmd.itemId);
+        else if (this.talk?.mode === 'personalize') this.personalizeItem(cmd.itemId);
         else this.imbue(cmd.itemId);
         return;
       }
@@ -7481,7 +7487,8 @@ export class Game {
           return true;
         }
         if (!t) {
-          const spot = nearestWalkable(this.map, { x: m.x + m.rng.pick(9) - 4, y: m.y + m.rng.pick(9) - 4 }, 4);
+          // Nihlathak: AITACTICS_UseSkillInRange 가 고른 지점 (fixed)
+          const spot = nearestWalkable(this.map, cast.fixed ? { x: tp.x, y: tp.y } : { x: m.x + m.rng.pick(9) - 4, y: m.y + m.rng.pick(9) - 4 }, 4);
           if (spot) {
             m.x = spot.x + 0.5;
             m.y = spot.y + 0.5;
@@ -7537,6 +7544,27 @@ export class Game {
         // MISSMODE_SrvHit43_HealingVortex: 맞은 몬스터 생명 += 스킬 물리 피해 (최대 생명까지). 근사(원작 미확인): 미사일 비행 대신 바로
         const t = tp.unit;
         if (t && !t.pet && t.mode !== 'DT' && t.mode !== 'DD') t.hp = Math.min(t.stats.maxHp, t.hp + (this.monSkillDamage(m, rec, lvl).phys >> 8));
+        return true;
+      }
+      case 'NihlathakCorpseExplosion': {
+        // SrvDo055 (몬스터): 시체 최대 생명 (MonStats 평균 × 128 = 256 단위 절반) × calc1~calc2 %, 시전자 레벨이 낮으면 비율,
+        //   calc3 % 는 원소 (fire), 반경 (aurarange + 1)/2 안의 적 — 물리는 aurarange/2 안만 (sub_6FD0D000)
+        const t = this.monsters.find((x) => x.id === cast.targetId);
+        if (!t || t.mode !== 'DD' || t.corpseUsed) return true;
+        t.corpseUsed = true;
+        const hp256 = Math.trunc(((data.monsters.levelBase(t.stats.level, 'HP') * (t.type.minHpPct + t.type.maxHpPct)) / 100 / 2)) * 256;
+        const lo = Math.trunc((calc.calc(rec, 1, lvl, o) * hp256) / 100), hi = Math.trunc((calc.calc(rec, 2, lvl, o) * hp256) / 100);
+        let dmg = lo + t.rng.pick(Math.max(0, hi - lo));
+        if (t.stats.level && m.stats.level < t.stats.level) dmg = Math.trunc((dmg * m.stats.level) / t.stats.level);
+        const pct = Math.max(0, Math.min(100, calc.calc(rec, 3, lvl, o)));
+        const ar = calc.eval(rec, rec.auraRangeCalc, lvl, o), r = Math.trunc((ar + 1) / 2), half = Math.trunc(ar / 2);
+        const d = emptyDamage();
+        if (pct > 0 && rec.eType) addElemental(d, rec.eType, Math.trunc((dmg * pct) / 100), calc.elemLength(rec, lvl, o));
+        const phys = Math.trunc((dmg * (100 - (pct > 0 && rec.eType ? pct : 0))) / 100);
+        const at = (x: number, y: number) => ({ ...d, phys: (x - t.x) ** 2 + (y - t.y) ** 2 > half * half ? 0 : phys });
+        for (const pet of [...this.pets]) if (pet.mode !== 'DT' && pet.mode !== 'DD' && Math.hypot(pet.x - t.x, pet.y - t.y) <= r) this.damagePet(pet, at(pet.x, pet.y));
+        if (Math.hypot(player.x - t.x, player.y - t.y) <= r) this.hitPlayer({ min: 0, max: 0, toHit: 0 }, m.stats.level, rec.hitClass, false, m, { ...at(player.x, player.y), manaDrain: 0 }, true);
+        this.events.push({ type: 'corpseExploded', targetId: t.id });
         return true;
       }
       case 'Overseer Whip': {
@@ -9294,6 +9322,8 @@ export class Game {
         if (n.type.id === 'charsi' && this.quests.canImbue()) out.push('imbue');
         // 확장팩: Larzuk 소켓 (A5Q1 REWARDPENDING)
         if (n.type.id === 'larzuk' && this.act5Quests()?.canSocket()) out.push('socket');
+        // 확장팩: Anya 이름 새기기 (A5Q4 REWARDPENDING)
+        if (n.type.id === 'drehya' && this.act5Quests()?.canPersonalize()) out.push('personalize');
         // 막 이동 (출처: NPC_HandleDialogMessage — WARRIV1 A1Q6 REWARDGRANTED, MESHIF1 A2Q6 REWARDGRANTED, WARRIV2·MESHIF2 조건 없음)
         for (const [opt, tr] of Object.entries(TRAVEL) as [NpcOption, { npc: string; to: number }][]) {
           if (tr.npc === n.type.id && this.canTravelAct(tr.to)) out.push(opt);
@@ -9487,6 +9517,11 @@ export class Game {
         // 출처: NPC_HandleDialogMessage (LARZUK) — 소켓 창: 아이템을 커서로 들어 Larzuk 에게 (담금질과 같은 창)
         t.mode = 'socket';
         this.events.push({ type: 'imbueOpened', npcId: n.id, service: 'socket' });
+        return;
+      case 'personalize':
+        // 출처: NPC_HandleDialogMessage (DREHYA) — 이름 새기기 창 (담금질과 같은 창)
+        t.mode = 'personalize';
+        this.events.push({ type: 'imbueOpened', npcId: n.id, service: 'personalize' });
         return;
       case 'goEast':
       case 'goWest':
@@ -9781,6 +9816,10 @@ export class Game {
       act: () => g.act,
       expansion: () => g.expansion,
       superUniqueKey: (idx) => g.data?.uniques?.superUnique(idx)?.key,
+      spawnSuperUnique: (key, x, y) => {
+        const su = g.data?.uniques?.superUnique(key);
+        return su ? (g.spawnSuperUnique(su.idx, x, y, undefined, true)?.id ?? null) : null;
+      },
       removeUnit: (levelNo, id) => {
         const lv = levelOf(levelNo);
         if (!lv) return;
@@ -9792,6 +9831,10 @@ export class Game {
         if (lv.objects.some((o) => o.id === id)) g.removeObject(lv.def.id, id);
       },
       playerClass: () => g.classStats?.cls,
+      waypointActive: (levelNo) => {
+        const no = g.waypointNoOf(levelNo);
+        return no === 255 || g.waypoints.has(no);
+      },
       npcPos: (typeId) => {
         const n = g.level.npcs.find((x) => x.type.id === typeId);
         return n ? { x: Math.floor(n.x), y: Math.floor(n.y) } : null;
@@ -9895,6 +9938,36 @@ export class Game {
    * Larzuk 소켓 (A5Q1 보상). 출처: SUnitNpc.cpp NPC_HandleDialogMessage (MONSTER_LARZUK) — A5Q1 REWARDPENDING, ITEMS_IsSocketable,
    *   ITEMS_Duplicate 뒤 소켓 수 (larzukSockets), D2GAME_NPC_RepairItem, 인벤토리 (자리가 없으면 발밑), ACT5Q1_SetRewardGranted
    */
+  /**
+   * Anya 이름 새기기. 출처: NPC_HandleDialogMessage (MONSTER_DREHYA) — A5Q4 REWARDPENDING 이 아니면 거절, ITEMS_IsPersonalizable,
+   *   ITEMS_Duplicate → 수리 → 인벤토리 (자리가 없으면 발밑), IFLAG_PERSONALIZED + ITEMS_SetEarName (캐릭터 이름), ACT5Q4_SetRewardGranted
+   */
+  personalizeItem(itemId: number): boolean {
+    const t = this.talk, n = this.talking(), data = this.data, q = this.act5Quests();
+    if (!t || !n || n.type.id !== 'drehya' || !data || !q) return false;
+    if (!q.canPersonalize()) {
+      this.events.push({ type: 'personalizeFailed', reason: 'quest' });
+      return false;
+    }
+    const found = this.store.find(itemId);
+    if (!found || !(found.where.kind === 'cursor' || found.where.kind === 'inventory')) return false;
+    const it = found.item;
+    if (!isPersonalizable(data.items, it)) {
+      this.events.push({ type: 'personalizeFailed', reason: 'item', itemId });
+      return false;
+    }
+    this.store.consume(it.id);
+    const out = structuredClone(it);
+    if (out.maxDurability > 0) out.durability = out.maxDurability;
+    out.personalized = (this.playerName || 'Hero').slice(0, 15);
+    if (!this.store.inv.autoAdd(out)) this.dropItem(out, this.player.x, this.player.y);
+    this.statsDirty = true;
+    q.personalizeDone();
+    t.mode = 'menu';
+    this.events.push({ type: 'personalized', itemId: out.id, code: out.code, name: out.personalized });
+    return true;
+  }
+
   socketItem(itemId: number): boolean {
     const t = this.talk, n = this.talking(), data = this.data, q = this.act5Quests();
     if (!t || !n || n.type.id !== 'larzuk' || !data || !q) return false;

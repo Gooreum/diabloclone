@@ -227,6 +227,8 @@ export function normalizeItem(it: ItemInstance): ItemInstance {
     delete x.runewordBase;
   }
   if (typeof x.gfx !== 'number') delete x.gfx;
+  if (typeof x.personalized !== 'string' || !x.personalized) delete x.personalized;
+  else x.personalized = x.personalized.slice(0, 15);
   x.socketed.forEach(normalizeItem);
   delete (x as { affixesPending?: boolean }).affixesPending;
   return x;

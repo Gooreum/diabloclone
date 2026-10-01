@@ -706,7 +706,61 @@ const whipped: AiFn = (w, m, _dist, combat) => {
   idle(w, m, 10);
 };
 
+/**
+ * 출처: AITHINK_Fn128_Nihlathak — (ACT5Q4_OnNihlathakActivated) 대상이 없으면 깨어 있을 때 (AI 상태 3·19) Imp Teleport 를 aip2 범위 안 아무 곳에.
+ *   근접 aip1% 순간이동, aip5 보다 가까우면 40% 도망 (5). Skill3 (시체 폭발): aip3% 대상 10 안 시체.
+ *   Skill4 (Arctic Blast): 60% · 거리 < 14. Skill2 (Overseer Whip): aip4% 거리² 625 안 하수인 (유니크 아님) — 없으면 Skill5 (MinionSpawner, 둘레에 evilhut 자리가 있으면)
+ *   아니면 6 걷기. Skill4 거리 < 14, 60% 다가감, 대기 5
+ * 근사(원작 미확인): MinionSpawner 의 evilhut 자리 판정 (sub_6FC68350) 은 canSpawnAt 으로, 하수인 종류 (D2Common_11063 레벨 계열) 는 minion1 그대로
+ */
+const nihlathak: AiFn = (w, m, dist, combat) => {
+  w.event?.({ type: 'bossActivated', typeId: m.type.id, superUnique: m.superUnique });
+  m.states.remove('inferno');
+  const range = aiParam(m, 1);
+  const teleport = () => w.useSkill(m, 0, { x: m.x + m.rng.pick(2 * range) - range, y: m.y + m.rng.pick(2 * range) - range, fixed: true });
+  if (w.noTarget) {
+    if (hasSkill(m, 0) && (m.aiState === 3 || m.aiState === 19)) teleport();
+    else idle(w, m, 25);
+    return;
+  }
+  if (hasSkill(m, 0) && combat && rollChance(m, 0)) {
+    teleport();
+    return;
+  }
+  if (dist < aiParam(m, 4) && rollPct(m) < 40 && escape(w, m, 5, true)) return;
+  if (hasSkill(m, 2) && rollChance(m, 2)) {
+    // 출처: sub_6FD15210 — 대상 둘레 10 안 시체
+    const t = w.target;
+    const corpse = w.monsters.find((o) => o.mode === 'DD' && !o.corpseUsed && !o.pet && sqDist(o.x, o.y, t.x, t.y) <= 100);
+    if (corpse && w.useSkill(m, 2, { unitId: corpse.id, x: corpse.x, y: corpse.y })) return;
+  }
+  if (hasSkill(m, 3) && rollPct(m) < 60 && dist < 14) {
+    w.useSkill(m, 3, tgt(w));
+    return;
+  }
+  if (hasSkill(m, 1) && rollChance(m, 3)) {
+    const whip = neighbours(w, m).find((o) => base(o) === 'minion1' && alive(o) && !o.states.has('bloodlust') && sqDist(m.x, m.y, o.x, o.y) <= 625 && !(o.flags & MONFLAG.UNIQUE));
+    if (whip) {
+      w.useSkill(m, 1, { unitId: whip.id, x: whip.x, y: whip.y });
+      return;
+    }
+    if (!hasSkill(m, 4) || !(w.canSpawnAt?.('evilhut', m.x, m.y) ?? true)) {
+      walkCloseToUnit(w, m, 6);
+      return;
+    }
+    w.useSkill(m, 4, tgt(w));
+    return;
+  }
+  if (hasSkill(m, 3) && dist < 14) {
+    w.useSkill(m, 3, tgt(w));
+    return;
+  }
+  if (rollPct(m) < 60) walkTo(w, m);
+  idle(w, m, 5);
+};
+
 export const ACT5_AI: Readonly<Record<string, AiFn>> = {
+  Nihlathak: nihlathak,
   Whipped: whipped, ReanimatedHorde: reanimatedHorde, Succubus: succubus, SuccubusWitch: succubusWitch, FrozenHorror: frozenHorror, BloodLord: bloodLord,
   DeathMauler: deathMauler, PutridDefiler: putridDefiler, ClawViperEx: clawViperEx, GenericSpawner: genericSpawner, EvilHole: evilHole, BaalTaunt: baalTaunt,
   SiegeTower: siegeTower, SiegeBeast: siegeBeast, Imp: imp, Catapult: catapult, CatapultSpotter: catapultSpotter,

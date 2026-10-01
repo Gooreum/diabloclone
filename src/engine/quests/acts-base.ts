@@ -60,10 +60,14 @@ export interface ActsQuestHost extends QuestHost {
   npcPos(typeId: string): { x: number; y: number } | null;
   /** SuperUniques.txt 행 → 이름 키 (MONSTERUNIQUE_GetBossHcIdx 비교용) */
   superUniqueKey?(idx: number): string | undefined;
+  /** 지금 레벨에 슈퍼유니크 (D2GAME_SpawnPresetMonster — SuperUniques.txt 이름 키). 만든 유닛 번호 */
+  spawnSuperUnique?(key: string, x: number, y: number): number | null;
   /** 유닛 없애기 (SUNIT_RemoveUnit — 몬스터·NPC·오브젝트) */
   removeUnit?(levelNo: number, id: number): void;
   /** 플레이어 직업 (charstats class — 'Amazon' …) */
   playerClass?(): string | undefined;
+  /** 그 레벨 웨이포인트를 켰다 (WAYPOINTS_IsActivated — 웨이포인트가 없는 레벨이면 true) */
+  waypointActive?(levelNo: number): boolean;
 }
 
 /** 원작 D2QuestDataStrc 에서 쓰는 칸 */

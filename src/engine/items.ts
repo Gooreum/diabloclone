@@ -47,6 +47,8 @@ export interface ItemBase {
   normCode: string; uberCode: string; ultraCode: string;
   /** 방어도 최소/최대는 minAc/maxAc, 흡수(absorbs) · 속도(speed) */
   compactSave: boolean;
+  /** 이름을 새길 수 있다 (weapons.txt Nameable · armor/misc nameable) */
+  nameable: boolean;
   /** 캐릭터 그래픽 코드 (alternategfx / alternateGfx) · 갑옷 부위별 무게 0 lit 1 med 2 hvy (armor.txt rArm lArm Torso Legs rSPad lSPad) */
   altGfx: string;
   armorGfx: { ra: number; la: number; tr: number; lg: number; s1: number; s2: number } | null;
@@ -146,6 +148,7 @@ export class ItemDb {
           magicLvl: n(r['magic lvl']), gemSockets: n(r.gemsockets), gemApplyType: n(r.gemapplytype), hasInv: n(r.hasinv) === 1,
           uniqueInvFile: r.uniqueinvfile ?? '', setInvFile: r.setinvfile ?? '',
           normCode: r.normcode ?? '', uberCode: r.ubercode ?? '', ultraCode: r.ultracode ?? '', compactSave: n(r.compactsave) === 1,
+          nameable: n(r.nameable ?? r.Nameable) === 1,
           altGfx: r.alternategfx || r.alternateGfx || r.code,
           armorGfx: r.Torso !== undefined && r.Torso !== '' ? { ra: n(r.rArm), la: n(r.lArm), tr: n(r.Torso), lg: n(r.Legs), s1: n(r.rSPad), s2: n(r.lSPad) } : null,
           useable: n(r.useable) === 1, pSpell: n(r.pSpell), useState: r.state ?? '', useLen: n(r.len),

@@ -397,3 +397,97 @@ describe.skipIf(!hasGameData)('3단계 발동 — 아이템 스킬 · 아이템 
     expect(inner.player.states.has(prayer.auraState)).toBe(true);
   });
 });
+
+describe.skipIf(!hasGameData)('3단계 충전 — 충전 스킬 · 다른 직업 스킬', () => {
+  const S = (name: string) => lod.skills!.byNameOf(name)!;
+  const charged = (skill: string, lvl: number, cur: number, max: number) => item('cst', [{ stat: 'item_charged_skill', param: (S(skill).id << 6) | lvl, value: (max << 8) | cur }]);
+
+  it('속성 생성: charged / hit-skill / aura 는 원작 인코딩 (스킬<<6|레벨, 최대<<8|현재, 이름 param)', () => {
+    const gen = lod.treasure.gen!;
+    const it = item('cst', []);
+    gen.assignMods(it, lod.items.base('cst')!, [
+      { code: 'charged', param: String(S('Teleport').id), min: 20, max: 5 },
+      { code: 'hit-skill', param: 'Amplify Damage', min: 4, max: 1 },
+      { code: 'aura', param: 'Might', min: 3, max: 3 },
+    ], new Rng(4));
+    const ch = it.stats.find((x) => x.stat === 'item_charged_skill')!;
+    expect(ch.param).toBe((S('Teleport').id << 6) | 5);
+    expect(ch.value >> 8).toBe(20);
+    expect(ch.value & 0xff).toBeGreaterThanOrEqual(3);
+    expect(ch.value & 0xff).toBeLessThanOrEqual(20);
+    expect(it.stats).toContainEqual({ stat: 'item_skillonhit', param: (S('Amplify Damage').id << 6) | 1, value: 4 });
+    expect(it.stats).toContainEqual({ stat: 'item_aura', param: S('Might').id, value: 3 });
+  });
+
+  it('충전 Teleport 5 (바바리안): 충전으로 고르고 쓰면 충전 −1, 마나 그대로', () => {
+    const staff = charged('Teleport', 5, 10, 20);
+    const { game, ch } = setup({ rarm: staff });
+    const tp = S('Teleport');
+    expect(game.canSelectSkill(tp, 'right')).toBe(false);
+    expect(game.canSelectSkill(tp, 'right', true)).toBe(true);
+    game.enqueue({ type: 'setSkill', hand: 'right', skill: tp.id, charge: true });
+    game.tick();
+    expect(ch.rightSkill).toBe(tp.id);
+    const mana = ch.mana;
+    game.enqueue({ type: 'useSkill', skill: tp.id, hand: 'right', x: 30.5, y: 20.5 });
+    const ev: GameEvent[] = [];
+    for (let i = 0; i < 30; i++) ev.push(...game.tick());
+    expect(ev.some((e) => e.type === 'skillStart' && e.skill === tp.id && e.level === 5)).toBe(true);
+    expect(staff.stats[0]!.value & 0xff).toBe(9);
+    expect(ch.mana).toBe(mana);
+  });
+
+  it('충전이 0 이면 고를 수도 쓸 수도 없다', () => {
+    const staff = charged('Teleport', 5, 0, 20);
+    const { game, ch } = setup({ rarm: staff });
+    const tp = S('Teleport');
+    expect(game.canSelectSkill(tp, 'right', true)).toBe(false);
+    ch.chargeSkills = { [tp.id]: staff.id };
+    ch.rightSkill = tp.id;
+    game.enqueue({ type: 'useSkill', skill: tp.id, hand: 'right', x: 30.5, y: 20.5 });
+    const ev: GameEvent[] = [];
+    for (let i = 0; i < 10; i++) ev.push(...game.tick());
+    expect(ev.some((e) => e.type === 'skillStart')).toBe(false);
+  });
+
+  it('재충전(큐브 rch · 수리) 은 현재 = 최대, 빠진 충전은 수리 대상 · 수리비가 붙는다', async () => {
+    const { rechargeItem } = await import('../../src/engine/itemgen');
+    const { needsRepair, chargedRepairCost } = await import('../../src/engine/price');
+    const staff = charged('Teleport', 5, 3, 20);
+    expect(needsRepair(lod.items, staff)).toBe(true);
+    expect(chargedRepairCost(staff, lod.treasure.gen!, 10000)).toBeGreaterThan(0);
+    rechargeItem(staff);
+    expect(staff.stats[0]!.value).toBe((20 << 8) | 20);
+    expect(chargedRepairCost(staff, lod.treasure.gen!, 10000)).toBe(0);
+  });
+
+  it('다른 직업 스킬: 소서리스 Battle Orders oskill 3 → 레벨 3, +모든 스킬 1 → 4, +바바리안 스킬은 적용 안 됨', () => {
+    const bo = S('Battle Orders');
+    const a = setup({ lrin: item('rin', [{ stat: 'item_nonclassskill', param: bo.id, value: 3 }]) }, { cls: 'Sorceress' });
+    expect(a.game.effectiveSkillLevel(bo.id)).toBe(3);
+    expect(a.game.itemSkillEntries()).toContainEqual({ skill: bo.id, charge: false });
+    const b = setup({
+      lrin: item('rin', [{ stat: 'item_nonclassskill', param: bo.id, value: 3 }]),
+      rrin: item('rin', [{ stat: 'item_allskills', value: 1 }, { stat: 'item_addclassskills', param: 4, value: 2 }]),
+    }, { cls: 'Sorceress' });
+    expect(b.game.effectiveSkillLevel(bo.id)).toBe(4);
+  });
+
+  it('자기 직업 oskill 은 최대 +3', () => {
+    const fb = S('Fire Bolt');
+    const { game, ch } = setup({ lrin: item('rin', [{ stat: 'item_nonclassskill', param: fb.id, value: 5 }]) }, { cls: 'Sorceress' });
+    ch.skills[fb.id] = 1;
+    expect(game.effectiveSkillLevel(fb.id)).toBe(4);
+  });
+
+  it('저장·불러오기: 충전으로 고른 스킬과 충전 수가 그대로', async () => {
+    const { makeSave, parseSave, serializeSave } = await import('../../src/engine/save');
+    const staff = charged('Teleport', 5, 7, 20);
+    const { game, ch } = setup({ rarm: staff });
+    game.enqueue({ type: 'setSkill', hand: 'right', skill: S('Teleport').id, charge: true });
+    game.tick();
+    const s = parseSave(serializeSave(makeSave('Chg', ch, 0, { inventory: [], equipment: game.equipment })));
+    expect(s.character.chargeSkills?.[S('Teleport').id]).toBe(staff.id);
+    expect(s.equipment.rarm?.stats[0]?.value).toBe((20 << 8) | 7);
+  });
+});

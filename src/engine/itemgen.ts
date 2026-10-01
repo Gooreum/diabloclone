@@ -93,7 +93,7 @@ export class ItemGen {
    */
   readonly statOps = new Map<string, StatOp>();
   /** 스킬 가격 (skills.txt cost add, cost mult) */
-  readonly skillCost = new Map<number, { add: number; mult: number }>();
+  readonly skillCost = new Map<number, { add: number; mult: number; reqLevel: number }>();
   /** 클래스 스킬 시작 Id (staffmods) */
   private readonly classFirstSkill = new Map<string, number>();
   private readonly skillRows: TxtRow[];
@@ -165,7 +165,7 @@ export class ItemGen {
       const targets = [r['op stat1'], r['op stat2'], r['op stat3']].filter((x): x is string => !!x);
       if (n(r.op) && targets.length) this.statOps.set(r.Stat, { op: n(r.op), param: n(r['op param']), base: r['op base'] ?? '', targets });
     }
-    for (const r of t.skills) if (r.Id) this.skillCost.set(n(r.Id), { add: n(r['cost add']), mult: n(r['cost mult']) });
+    for (const r of t.skills) if (r.Id) this.skillCost.set(n(r.Id), { add: n(r['cost add']), mult: n(r['cost mult']), reqLevel: n(r.reqlevel) });
     this.skillRows = t.skills;
     for (const r of t.gems ?? []) {
       if (!r.code) continue;
@@ -778,3 +778,11 @@ export function chargesValue(level: number, min: number, rng: Rng): number {
 
 /** 충전 스킬 값 풀기 */
 export const chargesOf = (value: number): { max: number; cur: number } => ({ max: (value >> 8) & 0xff, cur: value & 0xff });
+
+/** 충전 스킬 모두 가득 (큐브 rch · 수리). 출처: D2MOO D2GAME_RechargeItem_6FC4BD50 → ITEMMODS_UpdateItemWithSkillCharges */
+export function rechargeItem(item: ItemInstance): void {
+  for (const st of item.stats) if (st.stat === 'item_charged_skill') st.value = (st.value & 0xff00) | ((st.value >> 8) & 0xff);
+}
+
+/** 충전이 빠진 충전 스킬이 있다 (ITEMS_HasUsedCharges) */
+export const hasUsedCharges = (item: ItemInstance): boolean => item.stats.some((st) => st.stat === 'item_charged_skill' && (st.value & 0xff) < ((st.value >> 8) & 0xff));

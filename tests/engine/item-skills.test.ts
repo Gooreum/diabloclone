@@ -49,7 +49,7 @@ describe.skipIf(!hasGameData)('아이템 +스킬 → 유효 스킬 레벨', () =
     expect(b.cls.get(1)).toBe(2);
     expect([b.single.get(id('Nova')), b.single.get(id('Blaze')), b.single.get(id('Frost Nova'))]).toEqual([2, 2, 3]);
     // 다른 직업 스킬에는 모든 스킬만
-    expect(skillBonusOf(b, data.skills!.byId.get(id('Terror'))!, 'sor')).toEqual({ total: 4, single: 0 });
+    expect(skillBonusOf(b, data.skills!.byId.get(id('Terror'))!, 'sor')).toEqual({ total: 4, single: 0, oskill: 0 });
   });
 
   it('소서리스 프리셋 (스킬 모두 20): Blizzard 26, Nova 28, Fire Bolt 27 (Magefist 불 +1), 마나 소모·피해도 26레벨 값', () => {

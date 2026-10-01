@@ -266,10 +266,10 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
  * 장비 +스킬 합계. 출처: itemstatcost.txt item_allskills / item_addclassskills(param 직업) / item_addskill_tab(param 직업×8+탭) /
  * item_singleskill(param 스킬 Id) / item_elemskill(param 원소: fire 1, ltng 2, mag 3, cold 4, pois 5 — Magefist "+1 to Fire Skills"), D2MOO SKILLS_GetSkillLevel. computeDerived 와 같은 규칙: 부서진 것 제외, 감정된 것만, 소켓·세트 보너스 포함
  */
-export interface ItemSkillBonus { all: number; cls: Map<number, number>; tab: Map<number, number>; single: Map<number, number>; elem: Map<number, number> }
+export interface ItemSkillBonus { all: number; cls: Map<number, number>; tab: Map<number, number>; single: Map<number, number>; elem: Map<number, number>; nonclass: Map<number, number> }
 
 export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, charms: readonly ItemInstance[] = []): ItemSkillBonus {
-  const out: ItemSkillBonus = { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map() };
+  const out: ItemSkillBonus = { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map(), nonclass: new Map() };
   const addTo = (m: Map<number, number>, k: number, v: number) => m.set(k, (m.get(k) ?? 0) + v);
   const add = (s: { stat: string; param: number; value: number }) => {
     if (s.stat === 'item_allskills') out.all += s.value;
@@ -277,6 +277,7 @@ export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: I
     else if (s.stat === 'item_addskill_tab') addTo(out.tab, s.param, s.value);
     else if (s.stat === 'item_singleskill') addTo(out.single, s.param, s.value);
     else if (s.stat === 'item_elemskill') addTo(out.elem, s.param, s.value);
+    else if (s.stat === 'item_nonclassskill') addTo(out.nonclass, s.param, s.value);
   };
   const live = Object.values(equipment).filter((it) => items.base(it.code) && !isBroken(it));
   for (const it of live) {
@@ -289,7 +290,7 @@ export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: I
 }
 
 /** 직업 번호 (item_addclassskills 파라미터 · charstats 행 순서) */
-export const CLASS_INDEX: Record<string, number> = { ama: 0, sor: 1, nec: 2, pal: 3, bar: 4 };
+export const CLASS_INDEX: Record<string, number> = { ama: 0, sor: 1, nec: 2, pal: 3, bar: 4, dru: 5, ass: 6 };
 /** 원소 번호 (item_elemskill 파라미터 · ElemTypes.txt 순서) */
 const ELEM_INDEX: Record<string, number> = { fire: 1, ltng: 2, mag: 3, cold: 4, pois: 5 };
 
@@ -298,10 +299,16 @@ const ELEM_INDEX: Record<string, number> = { fire: 1, ltng: 2, mag: 3, cold: 4, 
  * single: 개별 스킬 보너스 — 하드 포인트가 없어도 이 값이 있으면 스킬을 쓸 수 있다.
  * 근사(원작 미확인): 탭 번호 = skilldesc SkillPage − 1, 원소 스킬 보너스는 skills.txt EType 이 같은 자기 직업 스킬에
  */
-export function skillBonusOf(b: ItemSkillBonus, s: { id: number; charclass: string; page: number; eType: string }, clsCode: string): { total: number; single: number } {
+/**
+ * oskill: 다른 직업 스킬 (item_nonclassskill) — 다른 직업이면 모든 +스킬 + oskill(상한 없음) + 원소, 자기 직업이면 최대 +3 (직업·탭 보너스도).
+ * 출처: D2MOO SKILLS_GetBonusSkillLevel (D2Skills.cpp:1906)
+ * 근사(원작 미확인): 다른 직업의 개별 스킬 보너스(item_singleskill — "(… Only)") 는 쓰지 않는다
+ */
+export function skillBonusOf(b: ItemSkillBonus, s: { id: number; charclass: string; page: number; eType: string }, clsCode: string): { total: number; single: number; oskill: number } {
   const cls = CLASS_INDEX[s.charclass];
-  if (cls === undefined || s.charclass !== clsCode) return { total: b.all, single: 0 };
-  const single = b.single.get(s.id) ?? 0;
+  const oskill = b.nonclass.get(s.id) ?? 0;
   const elem = ELEM_INDEX[s.eType] !== undefined ? (b.elem.get(ELEM_INDEX[s.eType]!) ?? 0) : 0;
-  return { total: b.all + (b.cls.get(cls) ?? 0) + (b.tab.get(cls * 8 + s.page - 1) ?? 0) + single + elem, single };
+  if (cls === undefined || s.charclass !== clsCode) return { total: b.all + (oskill > 0 ? oskill + elem : 0), single: 0, oskill };
+  const single = b.single.get(s.id) ?? 0;
+  return { total: b.all + (b.cls.get(cls) ?? 0) + (b.tab.get(cls * 8 + s.page - 1) ?? 0) + single + elem + Math.min(oskill, 3), single, oskill };
 }

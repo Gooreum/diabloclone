@@ -821,11 +821,11 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (slot >= 0) {
         e.preventDefault();
         const m = input.mouse;
-        const hover = hud.skillMenu && m ? hud.hoveredMenuSkill(m.x, m.y) : null;
-        if (hover !== null && hud.skillMenu) game.enqueue({ type: 'setHotkey', slot, skill: hover, hand: hud.skillMenu });
+        const hover = hud.skillMenu && m ? hud.hoveredMenuEntry(m.x, m.y) : null;
+        if (hover && hud.skillMenu) game.enqueue({ type: 'setHotkey', slot, skill: hover.id, hand: hud.skillMenu, ...(hover.charge ? { charge: true } : {}) });
         else {
           const hk = ch.hotkeys?.[slot];
-          if (hk) game.enqueue({ type: 'setSkill', hand: hk.hand, skill: hk.skill });
+          if (hk) game.enqueue({ type: 'setSkill', hand: hk.hand, skill: hk.skill, ...(hk.charge ? { charge: true } : {}) });
         }
         return;
       }
@@ -886,7 +886,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
     // 컨트롤 패널 동작 (클릭)
-    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand) => game.canSelectSkill(s, hand), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str) });
+    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand, charge) => game.canSelectSkill(s, hand, charge), itemSkills: () => game.itemSkillEntries(), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str) });
     onHud = (a: HudAction, button: number, cur: ItemInstance | null) => {
       if (a.kind === 'run') input.run = !input.run;
       else if (a.kind === 'minipanel') hud.miniOpen = !hud.miniOpen;
@@ -894,7 +894,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         openLeft('char');
       } else if (a.kind === 'newSkill') openRight('tree');
       else if (a.kind === 'skillMenu') hud.skillMenu = hud.skillMenu === a.hand ? null : a.hand;
-      else if (a.kind === 'setSkill') game.enqueue({ type: 'setSkill', hand: a.hand, skill: a.id });
+      else if (a.kind === 'setSkill') game.enqueue({ type: 'setSkill', hand: a.hand, skill: a.id, ...(a.charge ? { charge: true } : {}) });
       else if (a.kind === 'mini') {
         if (a.button === 'char') toggleChar();
         else if (a.button === 'inv') toggleInv();

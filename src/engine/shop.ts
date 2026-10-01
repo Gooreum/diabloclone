@@ -8,6 +8,7 @@ import type { TxtRow } from '../formats/txt';
 import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type Quality, type TreasureDb } from './treasure';
 import { Rng } from './rng';
+import { rechargeItem } from './itemgen';
 
 /** storepage.txt 순서: 0 방어구, 1 무기, 2 마법, 3 잡화 */
 export const STORE_PAGES = ['armo', 'weap', 'mag', 'misc'] as const;
@@ -77,6 +78,8 @@ export function repairFull(items: ItemDb, it: ItemInstance, base: ItemBase): voi
   const type = items.types.get(base.type);
   if (type?.throwable && base.stackable) it.quantity = base.maxStack;
   if (it.maxDurability > 0) it.durability = it.maxDurability;
+  // 수리하면 충전 스킬도 가득 (출처: D2MOO NPC 수리 → D2GAME_RechargeItem_6FC4BD50)
+  rechargeItem(it);
 }
 
 export interface StoreCtx {

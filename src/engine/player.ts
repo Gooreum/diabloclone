@@ -59,9 +59,11 @@ export interface Character {
   rightSkill: number;
   /** 스킬 단축키 Skill 1~8 칸 (원작: 스킬 고르기 목록에서 아이콘을 가리키고 단축키 → 그 손에 등록). 키는 옵션에서 바꾼다 */
   hotkeys?: (SkillHotkey | null)[];
+  /** 충전 스킬로 고른 스킬 → 충전 아이템 Id (원작: 스킬을 (스킬, 아이템 GUID) 로 고른다 — D2GAME_AssignSkill_6FD13800) */
+  chargeSkills?: Record<number, number>;
 }
 
-export interface SkillHotkey { skill: number; hand: 'left' | 'right' }
+export interface SkillHotkey { skill: number; hand: 'left' | 'right'; charge?: boolean }
 export const HOTKEY_SLOTS = 8;
 
 /** 시작 생명 = vit + hpadd, 마나 = 에너지, 스태미나 = stamina 컬럼 (예: 바바리안 55/10/92) */

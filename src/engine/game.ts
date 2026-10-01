@@ -1644,18 +1644,23 @@ export class Game {
       // ---- [UI Phase 12 Step 2] 끝
       case 'setSkill': {
         const s = this.data?.skills?.byId.get(cmd.skill);
-        if (!c || !s || !this.canSelectSkill(s, cmd.hand)) return;
+        if (!c || !s || !this.canSelectSkill(s, cmd.hand, cmd.charge)) return;
         if (cmd.hand === 'left') c.leftSkill = s.id;
         else c.rightSkill = s.id;
+        // 충전 스킬로 고르면 그 아이템 충전을 쓰고, 일반 스킬로 고르면 충전 연결을 푼다
+        if (cmd.charge) {
+          const e = this.equippedCharges().find((x) => x.skill === s.id && x.cur > 0);
+          if (e) (c.chargeSkills ??= {})[s.id] = e.item.id;
+        } else if (c.chargeSkills) delete c.chargeSkills[s.id];
         return;
       }
       // 원작: 스킬 고르기 목록에서 아이콘을 가리키고 단축키 → 그 손의 단축키. 한 스킬(같은 손)에는 키 하나
       case 'setHotkey': {
         const s = this.data?.skills?.byId.get(cmd.skill);
-        if (!c || !s || !this.canSelectSkill(s, cmd.hand) || !Number.isInteger(cmd.slot) || cmd.slot < 0 || cmd.slot >= HOTKEY_SLOTS) return;
+        if (!c || !s || !this.canSelectSkill(s, cmd.hand, cmd.charge) || !Number.isInteger(cmd.slot) || cmd.slot < 0 || cmd.slot >= HOTKEY_SLOTS) return;
         const hk = (c.hotkeys ??= Array<SkillHotkey | null>(HOTKEY_SLOTS).fill(null));
-        for (let i = 0; i < HOTKEY_SLOTS; i++) if (hk[i]?.skill === s.id && hk[i]?.hand === cmd.hand) hk[i] = null;
-        hk[cmd.slot] = { skill: s.id, hand: cmd.hand };
+        for (let i = 0; i < HOTKEY_SLOTS; i++) if (hk[i]?.skill === s.id && hk[i]?.hand === cmd.hand && !!hk[i]?.charge === !!cmd.charge) hk[i] = null;
+        hk[cmd.slot] = { skill: s.id, hand: cmd.hand, ...(cmd.charge ? { charge: true } : {}) };
         return;
       }
       default:
@@ -1663,12 +1668,53 @@ export class Game {
     }
   }
 
-  /** 버튼에 올릴 수 있는 스킬: 배운 액티브 스킬 또는 일반 스킬(Attack, Throw). 왼쪽은 leftskill 플래그 필요 */
-  canSelectSkill(s: SkillRecord, hand: 'left' | 'right'): boolean {
+  /** 버튼에 올릴 수 있는 스킬: 배운 액티브 스킬 또는 일반 스킬(Attack, Throw). 왼쪽은 leftskill 플래그 필요. charge = 충전이 남은 아이템 충전 스킬 */
+  canSelectSkill(s: SkillRecord, hand: 'left' | 'right', charge = false): boolean {
     if (s.passive) return false;
     if (hand === 'left' && !s.leftSkill) return false;
+    if (charge) return this.equippedCharges().some((e) => e.skill === s.id && e.cur > 0);
     if (s.id === SKILL_ATTACK || s.id === SKILL_THROW) return true;
     return this.effectiveSkillLevel(s.id) > 0;
+  }
+
+  /**
+   * 장착한 아이템(지금 무기 세트)의 충전 스킬: layer = 스킬 << 6 | 레벨, 값 = 최대 << 8 | 현재.
+   * 출처: D2MOO D2Common_10954 (충전 스킬을 아이템 GUID 와 함께 추가), sub_6FDB1070 (아이템이 몸에 있고 충전 > 0)
+   */
+  equippedCharges(): { item: ItemInstance; stat: ItemInstance['stats'][number]; skill: number; lvl: number; cur: number; max: number }[] {
+    const items = this.data?.items;
+    const out: { item: ItemInstance; stat: ItemInstance['stats'][number]; skill: number; lvl: number; cur: number; max: number }[] = [];
+    for (const it of Object.values(this.equipment)) {
+      if (!it.identified || (items && isBroken(it))) continue;
+      for (const st of it.stats) if (st.stat === 'item_charged_skill') out.push({ item: it, stat: st, skill: st.param >> 6, lvl: st.param & 63, cur: st.value & 0xff, max: (st.value >> 8) & 0xff });
+    }
+    return out;
+  }
+
+  /** 이 스킬을 충전으로 쓰는 중이면 그 충전 (연결된 아이템을 벗었으면 연결을 푼다) */
+  private activeCharge(skillId: number): { stat: ItemInstance['stats'][number]; lvl: number; cur: number } | null {
+    const c = this.character;
+    const bound = c?.chargeSkills?.[skillId];
+    if (!c || bound === undefined) return null;
+    const list = this.equippedCharges().filter((e) => e.skill === skillId);
+    if (!list.length) {
+      delete c.chargeSkills![skillId];
+      return null;
+    }
+    return list.find((e) => e.item.id === bound && e.cur > 0) ?? list.find((e) => e.cur > 0) ?? list[0]!;
+  }
+
+  /** 스킬 고르기 목록의 아이템 줄: 다른 직업 스킬(oskill) · 충전 스킬 (원작 스킬 목록 맨 위 줄) */
+  itemSkillEntries(): { skill: number; charge: boolean; cur?: number; max?: number }[] {
+    const c = this.character, db = this.data?.skills;
+    if (!c || !db) return [];
+    const out: { skill: number; charge: boolean; cur?: number; max?: number }[] = [];
+    for (const [id] of this.itemSkills().nonclass) {
+      const s = db.byId.get(id);
+      if (s && s.charclass !== CLASS_CODE[c.cls] && this.effectiveSkillLevel(id) > 0) out.push({ skill: id, charge: false });
+    }
+    for (const e of this.equippedCharges()) out.push({ skill: e.skill, charge: true, cur: e.cur, max: e.max });
+    return out;
   }
 
   private isBusy(): boolean {
@@ -1759,13 +1805,14 @@ export class Game {
     if (!c || !s) return 0;
     if (s.id <= 5) return 1;
     const hard = c.skills[id] ?? 0;
-    const { total, single } = skillBonusOf(this.itemSkills(), s, CLASS_CODE[c.cls]);
-    return hard > 0 || single > 0 ? hard + total + this.allSkillsBonus() : 0;
+    const { total, single, oskill } = skillBonusOf(this.itemSkills(), s, CLASS_CODE[c.cls]);
+    // 다른 직업 스킬(oskill)이 있으면 배우지 않아도 쓸 수 있다 (출처: ItemMode.cpp:167 — SKILLS_AddSkill 기본 레벨 0)
+    return hard > 0 || single > 0 || oskill > 0 ? hard + total + this.allSkillsBonus() : 0;
   }
 
   private itemSkills(): ItemSkillBonus {
     this.derived();
-    return this.itemSkillCache ?? { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map() };
+    return this.itemSkillCache ?? { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map(), nonclass: new Map() };
   }
 
   /** 전체 스킬 +: 스킬 신전(allskills) + Battle Command(item_allskills). 출처: itemstatcost.txt item_allskills */
@@ -2454,6 +2501,9 @@ export class Game {
   }
 
   private skillLevel(s: SkillRecord): number {
+    // 충전 스킬: 아이템에 적힌 레벨 그대로 (+스킬 미적용), 충전이 없으면 쓸 수 없다 (출처: SKILLS_GetSkillLevel — nOwnerGUID 가 있으면 보너스 없음)
+    const ch = this.activeCharge(s.id);
+    if (ch) return ch.cur > 0 ? ch.lvl : 0;
     // 스킬 신전: 배운 스킬 +Arg0 (shrines.txt Skill Boost Arg0 = 2, 상태 shrine_skill). 근사(원작 미확인): 원작은 상태 해제 콜백에서 스킬을 다시 계산
     // Battle Command: item_allskills +1 (출처: skills.txt Battle Command aurastat1)
     return this.effectiveSkillLevel(s.id);
@@ -2503,8 +2553,8 @@ export class Game {
       p.action = null;
       return;
     }
-    // 원작: AttackNoMana 스킬은 마나가 모자라면 일반 공격으로 대신한다
-    const needMana = s.repeat ? s.startMana * 256 : (this.data.skillCalc?.manaCost256(s, this.skillLevel(s)) ?? 0);
+    // 원작: AttackNoMana 스킬은 마나가 모자라면 일반 공격으로 대신한다 (충전 스킬은 마나를 쓰지 않는다)
+    const needMana = this.activeCharge(s.id) ? 0 : s.repeat ? s.startMana * 256 : (this.data.skillCalc?.manaCost256(s, this.skillLevel(s)) ?? 0);
     if (c && s.id > 5 && this.data.skillCalc && needMana > c.mana * 256) {
       if (s.attackNoMana) s = this.skillRecord(SKILL_ATTACK) ?? s;
       else {
@@ -2613,8 +2663,14 @@ export class Game {
     if (!data) return false;
     const lvl = this.skillLevel(s);
     if (!this.startCheck(s, targetId, targetItem)) return false;
+    // 충전 스킬: 마나 대신 그 아이템 충전 1 (출처: D2GAME_SKILLMANA_Consume_6FD10A50)
+    const charge = this.activeCharge(s.id);
+    if (charge) {
+      charge.stat.value = (charge.stat.value & 0xff00) | Math.max(0, charge.cur - 1);
+      this.events.push({ type: 'chargeUsed', skill: s.id, left: Math.max(0, charge.cur - 1) });
+    }
     // 반복 스킬은 발사할 때마다 마나를 쓴다 (skills.txt startmana 로 시작 조건만 검사)
-    if (c && s.id > 5 && data.skillCalc && !s.repeat) c.mana = Math.max(0, c.mana - data.skillCalc.manaCost256(s, lvl) / 256);
+    else if (c && s.id > 5 && data.skillCalc && !s.repeat) c.mana = Math.max(0, c.mana - data.skillCalc.manaCost256(s, lvl) / 256);
     if (Math.hypot(tx - p.x, ty - p.y) > 1e-6) p.dir = dir64(tx - p.x, ty - p.y);
     const wclass = this.weaponWclass();
     const token = this.playerToken();

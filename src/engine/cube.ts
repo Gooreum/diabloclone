@@ -7,6 +7,7 @@ import type { TxtRow } from '../formats/txt';
 import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type Quality, type TreasureDb } from './treasure';
 import type { Rng } from './rng';
+import { rechargeItem } from './itemgen';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
@@ -286,7 +287,6 @@ function randomOfType(ctx: CubeCtx, type: string, level: number): ItemBase | und
  *   mod 1~5 = chance(0 이면 늘) 로 속성 추가 (출처: ITEMMODS_AddCraftPropertyList), 소켓 속성은 ITEMS_AddSockets 품질 상한
  *   (유니크·세트 1 · 레어 2 · 매직 4 · 제작 3, ITEMS_GetMaxSockets 이하), uns = 박힌 것을 없애고 룬워드도 없앤다
  * 근사(원작 미확인): pre=/suf= 강제 접사는 굴린 매직 접사를 그 접사로 바꾸고 속성을 다시 굴린다,
- *   rch(재충전)는 충전 스킬(2단계 나)과 함께
  */
 function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance | null {
   let level = o.lvl;
@@ -302,6 +302,8 @@ function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance
       x.socketed.forEach(fix);
     };
     fix(out);
+    // rch: 충전 스킬을 가득 (출처: PlrTrade.cpp:883 CUBEFLAG_OUT_RECHARGE → D2GAME_RechargeItem_6FC4BD50)
+    if (o.rch) rechargeItem(out);
     if (o.uns) {
       out.socketed = [];
       if (out.runeword !== undefined) {

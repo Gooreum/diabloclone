@@ -99,7 +99,7 @@ export type HudAction =
   | { kind: 'newStats' }
   | { kind: 'newSkill' }
   | { kind: 'skillMenu'; hand: 'left' | 'right' }
-  | { kind: 'setSkill'; hand: 'left' | 'right'; id: number }
+  | { kind: 'setSkill'; hand: 'left' | 'right'; id: number; charge?: boolean }
   | { kind: 'belt'; slot: number }
   | { kind: 'panel' };
 
@@ -111,7 +111,9 @@ export interface HudState {
   run: boolean;
   store: ItemStore;
   str: (k: string) => string;
-  canSelect: (s: SkillRecord, hand: 'left' | 'right') => boolean;
+  canSelect: (s: SkillRecord, hand: 'left' | 'right', charge?: boolean) => boolean;
+  /** 스킬 고르기 목록의 아이템 줄 (다른 직업 스킬 · 충전 스킬) */
+  itemSkills?: () => { skill: number; charge: boolean; cur?: number; max?: number }[];
   mouse: { x: number; y: number } | null;
   /** 스킬 단축키 칸(0~7)의 지금 키 이름 (옵션에서 바꾼 키) */
   hotkeyLabel?: (slot: number) => string;
@@ -132,7 +134,7 @@ export class ControlPanel {
   private readonly art: UiArt;
   private readonly icons: ItemIcons;
   private readonly skills: SkillDb | undefined;
-  private menuRects: { id: number; r: Rect }[] = [];
+  private menuRects: { id: number; r: Rect; charge?: boolean; cur?: number; max?: number }[] = [];
 
   /** 확장팩 설치면 원작 800 조작판 (원작 LoD 는 800×600 에서 클래식 캐릭터도 이 판을 쓴다) */
   private readonly lod: boolean;
@@ -175,12 +177,25 @@ export class ControlPanel {
     const hand = this.skillMenu;
     if (!hand) return;
     const list = this.menuSkills(st, hand);
-    list.forEach((s, i) => {
+    const place = (i: number) => {
       const row = Math.floor(i / 10), col = i % 10;
-      const y = this.L.lskill.y - 48 * (row + 1) - 4;
-      const x = hand === 'right' ? this.L.rskill.x - col * 48 : this.L.lskill.x + col * 48;
-      this.menuRects.push({ id: s.id, r: { x, y, w: 48, h: 48 } });
+      return { x: hand === 'right' ? this.L.rskill.x - col * 48 : this.L.lskill.x + col * 48, y: this.L.lskill.y - 48 * (row + 1) - 4, w: 48, h: 48 };
+    };
+    list.forEach((s, i) => this.menuRects.push({ id: s.id, r: place(i) }));
+    // 아이템 줄 (다른 직업 스킬 · 충전 스킬): 직업 스킬 위 새 줄. 근사(원작 미확인): 원작 줄 순서·위치
+    const rows = Math.ceil(list.length / 10);
+    const extra = (st.itemSkills?.() ?? []).filter((e) => {
+      const s = this.skills?.byId.get(e.skill);
+      return !!s && st.canSelect(s, hand, e.charge);
     });
+    extra.forEach((e, k) => this.menuRects.push({ id: e.skill, r: place(rows * 10 + k), ...(e.charge ? { charge: true, cur: e.cur, max: e.max } : {}) }));
+  }
+
+  /** 스킬 고르기 목록에서 (x, y) 아래 칸 (충전 스킬 여부 포함) */
+  hoveredMenuEntry(x: number, y: number): { id: number; charge: boolean } | null {
+    if (!this.skillMenu) return null;
+    const m = this.menuRects.find((q) => inRect(q.r, x, y));
+    return m ? { id: m.id, charge: !!m.charge } : null;
   }
 
   /** 스킬 고르기 목록에서 (x, y) 아래 스킬 (단축키 등록용) */
@@ -190,8 +205,8 @@ export class ControlPanel {
   }
 
   /** e2e: 스킬 고르기 목록에서 스킬 아이콘 가운데 */
-  menuCenter(id: number): { x: number; y: number } | null {
-    const m = this.menuRects.find((q) => q.id === id);
+  menuCenter(id: number, charge = false): { x: number; y: number } | null {
+    const m = this.menuRects.find((q) => q.id === id && !!q.charge === charge);
     return m ? { x: m.r.x + 24, y: m.r.y + 24 } : null;
   }
 
@@ -213,7 +228,7 @@ export class ControlPanel {
       const hand = this.skillMenu;
       const hit = this.menuRects.find((m) => inRect(m.r, x, y));
       this.skillMenu = null;
-      if (hit) return { kind: 'setSkill', hand, id: hit.id };
+      if (hit) return { kind: 'setSkill', hand, id: hit.id, ...(hit.charge ? { charge: true } : {}) };
       if (inRect({ ...this.L.lskill, w: 48, h: 48 }, x, y) || inRect({ ...this.L.rskill, w: 48, h: 48 }, x, y)) return { kind: 'panel' };
     }
     if (this.miniOpen && inRect(this.L.mini, x, y)) {
@@ -364,8 +379,10 @@ export class ControlPanel {
     this.layoutMenu(st);
     for (const m of this.menuRects) {
       this.skillIcon(ctx, m.id, m.r.x, m.r.y);
+      // 충전 수 (근사(원작 미확인): 위치 = 아이콘 왼쪽 아래, 글꼴 font16)
+      if (m.charge) drawText(ctx, `${m.cur ?? 0}`, m.r.x + 3, m.r.y + 30, { font: 'font16', color: 'white' });
       // 등록된 단축키 이름 (근사(원작 미확인): 위치 = 아이콘 오른쪽 아래, 글꼴 font16)
-      const slot = st.ch.hotkeys?.findIndex((h) => h?.skill === m.id && h.hand === this.skillMenu) ?? -1;
+      const slot = st.ch.hotkeys?.findIndex((h) => h?.skill === m.id && h.hand === this.skillMenu && !!h.charge === !!m.charge) ?? -1;
       const label = slot >= 0 ? st.hotkeyLabel?.(slot) : undefined;
       if (label) drawText(ctx, label, m.r.x + 46, m.r.y + 30, { font: 'font16', align: 'right', color: 'white' });
     }
@@ -398,6 +415,8 @@ export class ControlPanel {
       const hit = this.menuRects.find((q) => inRect(q.r, m.x, m.y));
       const id = hit?.id ?? (inRect({ ...this.L.lskill, w: 48, h: 48 }, m.x, m.y) ? ch.leftSkill : inRect({ ...this.L.rskill, w: 48, h: 48 }, m.x, m.y) ? ch.rightSkill : null);
       if (id !== null) text = this.skills?.byId.get(id)?.displayName ?? null;
+      // 충전 스킬: 이름 뒤에 (현재/최대 Charges) — 원작 string.tbl ModStre10d
+      if (text && hit?.charge) text = `${text} ${fmt(st.str('ModStre10d'), hit.cur ?? 0, hit.max ?? 0)}`;
     }
     if (!text) return;
     const w = d2text.width(text) + 8, h = d2text.lineHeight() + 2;

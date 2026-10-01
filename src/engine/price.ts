@@ -4,7 +4,7 @@
 // 주의: 원작 변수 이름은 NPC 기준 — nSellCost = NPC 가 파는 값(플레이어가 사는 값), nBuyCost = NPC 가 사는 값(플레이어가 파는 값).
 // 원작은 32비트 정수 연산(곱셈 오버플로를 피하려고 65535 초과 시 곱셈 순서를 바꿈) — 여기서는 JS 정수로 같은 순서의 나눗셈 절단만 재현.
 import type { ItemBase, ItemDb } from './items';
-import { statOf, type ItemGen } from './itemgen';
+import { hasUsedCharges, statOf, type ItemGen } from './itemgen';
 import { QUALITY, type ItemInstance } from './treasure';
 import type { TxtRow } from '../formats/txt';
 
@@ -66,6 +66,8 @@ export function isRepairable(items: ItemDb, it: ItemInstance): boolean {
   if (!b || !it.identified) return false;
   // 이더리얼은 수리할 수 없다 (원작 표시 "Ethereal (Cannot be Repaired)")
   if (it.ethereal) return false;
+  // 충전이 빠진 충전 스킬이 있으면 수리(재충전) 대상 (출처: ITEMS_IsRepairable — STAT_ITEM_CHARGED_SKILL)
+  if (hasUsedCharges(it)) return true;
   const t = items.types.get(b.type);
   if (!t?.repair) return false;
   if (t.throwable && b.stackable) return true;
@@ -77,6 +79,7 @@ export function needsRepair(items: ItemDb, it: ItemInstance): boolean {
   const b = items.base(it.code);
   if (!b || !isRepairable(items, it)) return false;
   if (hasDurability(b, it) && it.durability < it.maxDurability) return true;
+  if (hasUsedCharges(it)) return true;
   return b.stackable && it.quantity < Math.min(b.maxStack, 511);
 }
 
@@ -91,12 +94,14 @@ function bonusStats(item: ItemInstance, gen: ItemGen, x: Triple, div: number): T
     const c = gen.statCost.get(st.stat);
     if (!c) continue;
     if (c.encode >= 1 && c.encode <= 3) {
-      // encode 1: param = 스킬, 값 = 수치 / encode 2·3: param = 스킬, 값 = 스킬 레벨 (근사: 레벨 분리 없이 값 사용)
-      const sk = gen.skillCost.get(st.param);
+      // encode 1: param = 스킬, 값 = 수치 / encode 2·3 (발동·충전): param = 스킬 << 6 | 레벨, 레벨로 계산
+      // 출처: D2MOO ITEMS_CalculateAdditionalCostsForBonusStats (nLayer >> nStuff, nLayer & nShiftedStuff)
+      const sk = gen.skillCost.get(c.encode === 1 ? st.param : st.param >> 6);
       if (!sk) continue;
-      acc.s += sk.add + Math.trunc((v * x.s * sk.mult) / 1024);
-      acc.b += sk.add + Math.trunc((v * sk.mult * x.b) / 4096);
-      acc.r += sk.add + Math.trunc((v * sk.mult * x.r) / 1024);
+      const lv = c.encode === 1 ? v : st.param & 63;
+      acc.s += sk.add + Math.trunc((lv * x.s * sk.mult) / 1024);
+      acc.b += sk.add + Math.trunc((lv * sk.mult * x.b) / 4096);
+      acc.r += sk.add + Math.trunc((lv * sk.mult * x.r) / 1024);
       continue;
     }
     acc.s += c.add + Math.trunc((v * x.s * c.mult) / 1024);
@@ -229,6 +234,8 @@ export function transactionCost(item: ItemInstance, kind: Transaction, ctx: Pric
       x.b *= qty;
     } else x.b *= qty;
   }
+  // 수리: 빠진 충전 비용 (이더리얼 제외). 출처: ITEMS_CalculateTransactionCost → ITEMS_CalculateAdditionalCostsForChargedSkills(10000)
+  if (kind === 'repair' && !item.ethereal && ctx.gen) x.r += chargedRepairCost(item, ctx.gen, 10000);
   let cost = Math.min(x.b, npc.maxBuy[ctx.difficulty]);
   const reduce = Math.min(ctx.reducePct ?? 0, 99);
   if (kind === 'repair') cost = x.r - Math.trunc((x.r * reduce) / 100);
@@ -272,4 +279,22 @@ export function gambleCost(items: ItemDb, code: string, playerLevel: number, red
   }
   const reduce = Math.min(reducePct, 99);
   return reduce ? cost - Math.trunc((cost * reduce) / 100) : cost;
+}
+
+/**
+ * 빠진 충전 비용: 충전 스킬마다 (cost add + base × (레벨 + 2·reqlevel/6 + 2) × cost mult / 1024) × (최대 − 현재) / 최대.
+ * 출처: D2MOO ITEMS_CalculateAdditionalCostsForChargedSkills (Items.cpp:1789)
+ */
+export function chargedRepairCost(item: ItemInstance, gen: ItemGen, baseCost: number): number {
+  let cost = 0;
+  for (const st of item.stats) {
+    if (st.stat !== 'item_charged_skill') continue;
+    const max = (st.value >> 8) & 0xff, cur = st.value & 0xff;
+    if (cur >= max || max <= 0) continue;
+    const sk = gen.skillCost.get(st.param >> 6);
+    if (!sk) continue;
+    const base = baseCost * ((st.param & 63) + Math.trunc((2 * sk.reqLevel) / 6) + 2);
+    cost += Math.trunc(((sk.add + Math.trunc((base * sk.mult) / 1024)) * (max - cur)) / max);
+  }
+  return cost;
 }

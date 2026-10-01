@@ -133,3 +133,75 @@ describe.skipIf(!hasGameData)('이더리얼', () => {
     expect('ethereal' in back.inventory[1]!.item).toBe(false);
   });
 });
+
+describe.skipIf(!hasGameData)('확장팩 큐브 (제작 · mod · 소켓 비우기)', () => {
+  const ctxOf = (d: GameData, seed = 9) => ({ items: d.items, treasure: d.treasure, rng: new Rng(seed), playerLevel: 60, difficulty: 0, cls: 'bar', expansion: d.expansion });
+  /** 조합 입력을 그대로 만든다 (아이템 코드 우선, 없으면 그 종류의 첫 기본템, 품질 조건 맞춤) */
+  const inputsOf = (d: GameData, r: NonNullable<ReturnType<CubeDb['recipes']['find']>>): ItemInstance[] =>
+    r.inputs.filter((x): x is NonNullable<typeof x> => !!x).flatMap((x) => {
+      const base = x.code ? d.items.base(x.code)! : x.any ? d.items.base('lsd')! : [...d.items.bases.values()].find((b) => d.items.isType(b, x.type!) && b.version < 100 && b.spawnable)!;
+      return Array.from({ length: x.qty || 1 }, (_, i) => {
+        const q = (x.quality || QUALITY.NORMAL) as Quality;
+        const it = d.treasure.createItem(base, 40, new Rng(100 + i), q, q > QUALITY.NORMAL);
+        it.identified = true;
+        if (x.sock && it.sockets <= 0) it.sockets = 1;
+        if (x.nos) it.sockets = 0;
+        return it;
+      });
+    });
+
+  it('제작: 결과는 품질 8 (crf), 접사 1~4 개, mod 속성, 요구 레벨 접사 기준 +10+3n 이상', () => {
+    const db = lod.cube as CubeDb;
+    const crafts = db.recipes.filter((r) => r.enabled && r.outputs[0]?.quality === QUALITY.CRAFTED);
+    expect(crafts.length).toBeGreaterThan(20);
+    let tried = 0;
+    for (const r of crafts.slice(0, 12)) {
+      const res = transmute(db, ctxOf(lod), inputsOf(lod, r));
+      if (!res || res.recipe.row !== r.row) continue;
+      tried++;
+      const out = res.outputs[0]!;
+      expect(out.quality).toBe(QUALITY.CRAFTED);
+      const n = out.prefixes.length + out.suffixes.length;
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(4);
+      expect(out.rareName).toBeTruthy();
+      expect(out.levelReq).toBeGreaterThanOrEqual(10 + 3 * n);
+      // mod 1 속성이 하나 이상 붙는다 (mod 행 수 ≥ 1)
+      expect(out.stats.length).toBeGreaterThan(n);
+    }
+    expect(tried).toBeGreaterThan(3);
+    // 클래식 ctx 는 제작 조합이 맞지 않는다
+    const r0 = crafts[0]!;
+    expect(transmute(classic.cube as CubeDb, ctxOf(classic), inputsOf(classic, r0))?.recipe.row).not.toBe(r0.row);
+  });
+
+  it('소켓 일반템 조합(useitem + mod sock): 소켓이 1~최대 사이로 생긴다', () => {
+    const db = lod.cube as CubeDb;
+    const r = db.recipes.find((x) => x.enabled && x.outputs[0]?.kind === 'useitem' && x.outputs[0].mods.some((m) => m.code === 'sock'))!;
+    expect(r).toBeTruthy();
+    const res = transmute(db, ctxOf(lod), inputsOf(lod, r));
+    expect(res?.recipe.row).toBe(r.row);
+    expect(res!.outputs[0]!.sockets).toBeGreaterThanOrEqual(1);
+    expect(res!.outputs[0]!.sockets).toBeLessThanOrEqual(6);
+  });
+
+  it('소켓 비우기(uns): 박힌 것과 룬워드가 사라지고 원래 속성으로 돌아간다', () => {
+    const db = lod.cube as CubeDb;
+    const r = db.recipes.find((x) => x.enabled && x.outputs[0]?.uns)!;
+    expect(r).toBeTruthy();
+    const ins = inputsOf(lod, r);
+    const target = ins.find((it) => it.sockets > 0)!;
+    const rune = make(lod, 'r01');
+    target.socketed = [rune];
+    target.runeword = 5;
+    target.runewordBase = { stats: [], defense: target.defense };
+    target.stats = [{ stat: 'tohit', param: 0, value: 50 }];
+    const res = transmute(db, ctxOf(lod), ins);
+    expect(res?.recipe.row).toBe(r.row);
+    const out = res!.outputs.find((o) => o.code === target.code)!;
+    expect(out.socketed).toEqual([]);
+    expect(out.runeword).toBeUndefined();
+    expect(out.stats).toEqual([]);
+    expect(out.sockets).toBe(target.sockets);
+  });
+});

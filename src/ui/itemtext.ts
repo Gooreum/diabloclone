@@ -13,6 +13,8 @@ import { QUALITY, type ItemInstance } from '../engine/treasure';
 export const QUALITY_COLOR: Record<number, string> = {
   [QUALITY.INFERIOR]: '#8c8c8c', [QUALITY.NORMAL]: '#ffffff', [QUALITY.SUPERIOR]: '#ffffff',
   [QUALITY.MAGIC]: '#6969ff', [QUALITY.SET]: '#00c400', [QUALITY.RARE]: '#ffff64', [QUALITY.UNIQUE]: '#c7b377',
+  // 제작 (확장팩) — 원작 주황 (근사: 글꼴 색표 orange 값 미확인)
+  [QUALITY.CRAFTED]: '#ffa800',
 };
 
 export interface TextLine { text: string; color: string }
@@ -64,7 +66,8 @@ export class ItemText {
         const s = item.suffixes[0] !== undefined ? this.str(g?.suffixes[item.suffixes[0]]?.name ?? '') : '';
         return [p, base, s].filter(Boolean).join(' ');
       }
-      case QUALITY.RARE: {
+      case QUALITY.RARE:
+      case QUALITY.CRAFTED: {
         const [a, b] = item.rareName ?? [0, 0];
         return `${this.str(g?.rarePrefixes[a]?.name ?? '')} ${this.str(g?.rareSuffixes[b]?.name ?? '')}`;
       }
@@ -106,7 +109,7 @@ export class ItemText {
     const color = QUALITY_COLOR[item.quality] ?? '#fff';
     const out: TextLine[] = [{ text: this.name(item), color }];
     if (!b) return out;
-    if (item.identified && [QUALITY.RARE, QUALITY.UNIQUE, QUALITY.SET].includes(item.quality as 5 | 6 | 7)) out.push({ text: this.baseName(item), color });
+    if (item.identified && ([QUALITY.RARE, QUALITY.UNIQUE, QUALITY.SET, QUALITY.CRAFTED] as number[]).includes(item.quality)) out.push({ text: this.baseName(item), color });
     const white = '#ffffff', red = '#ff5050', blue = '#6969ff';
     if (b.category === 'armor' && item.defense) out.push({ text: `${this.str('ItemStats1h')} ${armorDefense(item)}`, color: statOf(item, 'item_armor_percent') || statOf(item, 'armorclass') ? blue : white });
     if (this.items.isType(b, 'weap')) {

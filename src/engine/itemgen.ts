@@ -219,6 +219,11 @@ export class ItemGen {
         q = QUALITY.MAGIC;
         continue;
       }
+      if (q === QUALITY.CRAFTED) {
+        if (this.rollCrafted(item, base, itemRng)) break;
+        q = QUALITY.MAGIC;
+        continue;
+      }
       if (q === QUALITY.RARE) {
         if (this.items.types.get(base.type)?.rare && this.rollRare(item, base, itemRng)) break;
         q = QUALITY.MAGIC;
@@ -245,6 +250,12 @@ export class ItemGen {
     if (q === QUALITY.NORMAL || q === QUALITY.SUPERIOR) this.rollSockets(item, base, itemRng, startSeed, ctx.difficulty ?? 0);
     if (q === QUALITY.NORMAL) this.staffMods(item, base, itemRng);
     this.finishStats(item, base);
+    if (q === QUALITY.CRAFTED) {
+      // 출처: D2MOO D2Common Items.cpp 요구 레벨 — 제작은 접사 lvlreq 최대 + 10 + 3 × 접사 수 (최대 98)
+      const n = item.prefixes.length + item.suffixes.length;
+      const affixReq = Math.max(0, ...item.prefixes.map((i) => this.prefixes[i]?.levelReq ?? 0), ...item.suffixes.map((i) => this.suffixes[i]?.levelReq ?? 0));
+      item.levelReq = Math.max(base.levelReq, Math.min(98, affixReq + 10 + 3 * n));
+    }
     if (this.expansion && ctx.ethereal && ctx.ethereal !== 'never') this.rollEthereal(item, base, itemRng, ctx.ethereal === 'always');
   }
 
@@ -386,6 +397,27 @@ export class ItemGen {
     item.rareName = [rp.idx, rs.idx];
     // 레어 주얼은 3~4 접사 (출처: D2MOO D2GAME_RollRareItem — ITEMS_MIN/MAX_AFFIXES_RARE_JEWEL)
     const count = this.isType(base, 'jewl') ? 3 + rng.pick(2) : ([3, 4, 4, 5, 5, 5, 6, 6][Number(rng.next() & 7n) & 7] as number);
+    return this.rollRareAffixes(item, base, rng, count);
+  }
+
+  /**
+   * 제작 (확장팩 큐브 crf): 레어 이름 + 접사 rand(5) 개, 아이템 레벨에 따른 최소 (1 · >30 2 · >50 3 · >70 4).
+   * 출처: D2MOO ItemsMagic.cpp sub_6FC53CD0 → D2GAME_AssignMagicAffixesForRareItem. 요구 레벨은 applyQuality 끝 (craftedLevelReq)
+   */
+  private rollCrafted(item: ItemInstance, base: ItemBase, rng: Rng): boolean {
+    const pick = (list: RareAffix[]) => {
+      const c = list.filter((a) => !a.etypes.some((t) => this.isType(base, t)) && a.itypes.some((t) => this.isType(base, t)));
+      return c.length ? (c[rng.pick(c.length)] as RareAffix) : null;
+    };
+    const rp = pick(this.rarePrefixes), rs = pick(this.rareSuffixes);
+    if (!rp || !rs) return false;
+    item.rareName = [rp.idx, rs.idx];
+    const min = item.ilvl > 70 ? 4 : item.ilvl > 50 ? 3 : item.ilvl > 30 ? 2 : 1;
+    return this.rollRareAffixes(item, base, rng, Math.max(rng.pick(5), min));
+  }
+
+  /** 레어·제작 접사 count 개 (접두·접미 각 최대 3) 와 속성 굴림 */
+  private rollRareAffixes(item: ItemInstance, base: ItemBase, rng: Rng, count: number): boolean {
     let pDone = false, sDone = false;
     const chosen: { a: MagicAffix }[] = [];
     for (let i = 0; i < count && !(pDone && sDone); i++) {

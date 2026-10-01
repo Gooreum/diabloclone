@@ -163,6 +163,7 @@ export function transactionCost(item: ItemInstance, kind: Transaction, ctx: Pric
     let bonus = false;
     switch (q) {
       case QUALITY.RARE:
+      case QUALITY.CRAFTED:
         for (const i of item.prefixes) { const a = gen.prefixes[i]; if (a) affix(a.costAdd, a.costMult); }
         for (const i of item.suffixes) { const a = gen.suffixes[i]; if (a) affix(a.costAdd, a.costMult); }
         bonus = true;

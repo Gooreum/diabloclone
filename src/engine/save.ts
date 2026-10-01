@@ -221,7 +221,10 @@ export function normalizeItem(it: ItemInstance): ItemInstance {
   x.socketed ??= [];
   x.stats ??= [];
   if (x.ethereal !== true) delete x.ethereal;
-  if (typeof x.runeword !== 'number') delete x.runeword;
+  if (typeof x.runeword !== 'number') {
+    delete x.runeword;
+    delete x.runewordBase;
+  }
   if (typeof x.gfx !== 'number') delete x.gfx;
   x.socketed.forEach(normalizeItem);
   delete (x as { affixesPending?: boolean }).affixesPending;

@@ -40,6 +40,8 @@ export interface CubeOutput {
   setIdx?: number;
   sock: boolean; eth: boolean; mod: boolean; uns: boolean; rem: boolean; reg: boolean; exc: boolean; eli: boolean; rep: boolean; rch: boolean;
   lvl: number; plvl: number; ilvl: number;
+  /** 결과에 붙이는 속성 (cubemain mod 1~5 · b mod · c mod — 제작·소켓 조합). chance 0 = 늘 */
+  mods: { code: string; chance: number; param: string; min: number; max: number }[];
 }
 
 export interface CubeRecipe {
@@ -75,7 +77,14 @@ export class CubeDb {
       const inputs = [1, 2, 3, 4, 5, 6, 7].map((i) => this.parseInput(r[`input ${i}`] ?? '', uIdx, sIdx));
       const outputs = ['output', 'output b', 'output c'].map((k, oi) => {
         const pfx = ['', 'b ', 'c '][oi] as string;
-        return this.parseOutput(r[k] ?? '', uIdx, sIdx, n(r[`${pfx}lvl`]), n(r[`${pfx}plvl`]), n(r[`${pfx}ilvl`]));
+        const out = this.parseOutput(r[k] ?? '', uIdx, sIdx, n(r[`${pfx}lvl`]), n(r[`${pfx}plvl`]), n(r[`${pfx}ilvl`]));
+        if (out) {
+          for (let m = 1; m <= 5; m++) {
+            const code = r[`${pfx}mod ${m}`];
+            if (code) out.mods.push({ code, chance: n(r[`${pfx}mod ${m} chance`]), param: r[`${pfx}mod ${m} param`] ?? '', min: n(r[`${pfx}mod ${m} min`]), max: n(r[`${pfx}mod ${m} max`]) });
+          }
+        }
+        return out;
       });
       this.recipes.push({
         row, description: r.description ?? '', enabled: n(r.enabled) === 1, ladder: n(r.ladder) === 1, minDiff: n(r['min diff']), version: n(r.version),
@@ -120,7 +129,7 @@ export class CubeDb {
     const [head, ...mods] = s.split(',').map((x) => x.trim());
     const out: CubeOutput = {
       kind: 'code', quality: 0, qty: 0, pre: [], suf: [], sock: false, eth: false, mod: false, uns: false, rem: false, reg: false, exc: false, eli: false, rep: false, rch: false,
-      lvl, plvl, ilvl,
+      lvl, plvl, ilvl, mods: [],
     };
     const h = head ?? '';
     if (h.toLowerCase() === 'cow portal') out.kind = 'cow';
@@ -214,6 +223,8 @@ function checkInput(ctx: CubeCtx, recipe: CubeRecipe, idx: number, list: ItemIns
     if (inp.uniqueIdx !== undefined && it.uniqueIdx !== inp.uniqueIdx) return;
     if (inp.setIdx !== undefined && it.setIdx !== inp.setIdx) return;
     if (inp.nos ? it.sockets > 0 : inp.sock && it.sockets <= 0) return;
+    // 룬워드 아이템은 nru 입력에 맞지 않는다
+    if (inp.nru && it.runeword !== undefined) return;
     // 이더리얼 입력 조건 (출처: PLRTRADE_CheckCubeInput eth / noe)
     if (inp.eth && !it.ethereal) return;
     if (inp.noe && it.ethereal) return;
@@ -241,6 +252,13 @@ function upgradeCode(ctx: CubeCtx, b: ItemBase, o: CubeOutput): string {
   return nb && (ctx.expansion || nb.version < 100) ? nb.code : b.code;
 }
 
+/** 최대 소켓 (출처: ITEMS_GetMaxSockets — itemtypes MaxSock1/25/40 · items gemsockets) */
+function maxSockets(ctx: CubeCtx, b: ItemBase, ilvl: number): number {
+  const def = [...ctx.items.typeChain(b.type)].map((x) => ctx.items.types.get(x)).find((dd) => dd && (dd.maxSock[0] || dd.maxSock[1] || dd.maxSock[2]));
+  const tier = ilvl <= 25 ? 0 : ilvl <= 40 ? 1 : 2;
+  return Math.min(b.gemSockets, def?.maxSock[tier] ?? 0);
+}
+
 /** 출처: PLRTRADE_RollRandomItemClassOfSameType — 무작위 시작 행부터 한 바퀴: 그 type·spawnable·클래식·레벨 ≤ nLevel, 최대 256 후보 중 하나 */
 function randomOfType(ctx: CubeCtx, type: string, level: number): ItemBase | undefined {
   const all = [...ctx.items.bases.values()];
@@ -265,8 +283,10 @@ function randomOfType(ctx: CubeCtx, type: string, level: number): ItemBase | und
  *   useitem = 첫 입력을 복제(속성 유지), usetype = 첫 입력과 같은 기본 아이템을 새로(quality), 아이템 코드·itemtype = 새 아이템,
  *   소켓(sock) 없으면 소켓 없이, sock=N 이면 결과에 min(최대 소켓, N) (매직 3·레어/유니크/세트 1 상한), rep = 내구·수량 채움,
  *   qty = 쌓이는 결과 수량, 결과는 감정된 채로 큐브에
- * 근사(원작 미확인): pre=/suf= 강제 접사는 굴린 매직 접사를 그 접사로 바꾸고 속성을 다시 굴린다, mod 1~5 제작 속성(클래식 행 없음)은 생략,
- *   rch(재충전)는 충전 스킬이 없는 클래식에서 생략
+ *   mod 1~5 = chance(0 이면 늘) 로 속성 추가 (출처: ITEMMODS_AddCraftPropertyList), 소켓 속성은 ITEMS_AddSockets 품질 상한
+ *   (유니크·세트 1 · 레어 2 · 매직 4 · 제작 3, ITEMS_GetMaxSockets 이하), uns = 박힌 것을 없애고 룬워드도 없앤다
+ * 근사(원작 미확인): pre=/suf= 강제 접사는 굴린 매직 접사를 그 접사로 바꾸고 속성을 다시 굴린다,
+ *   rch(재충전)는 충전 스킬(2단계 나)과 함께
  */
 function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance | null {
   let level = o.lvl;
@@ -282,6 +302,17 @@ function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance
       x.socketed.forEach(fix);
     };
     fix(out);
+    if (o.uns) {
+      out.socketed = [];
+      if (out.runeword !== undefined) {
+        if (out.runewordBase) {
+          out.stats = out.runewordBase.stats;
+          out.defense = out.runewordBase.defense;
+        }
+        delete out.runeword;
+        delete out.runewordBase;
+      }
+    }
   } else {
     let base: ItemBase | undefined;
     let quality = o.quality;
@@ -315,15 +346,29 @@ function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance
   }
   const b = ctx.items.base(out.code);
   if (!b) return null;
+  if (o.mods.length && t.gen) {
+    for (const m of o.mods) {
+      if (m.chance && ctx.rng.pick(100) >= m.chance) continue;
+      const before = out.sockets;
+      t.gen.assignMods(out, b, [{ code: m.code, param: m.param, min: m.min, max: m.max }], ctx.rng);
+      if (out.sockets !== before) {
+        const q = out.quality;
+        const qcap = q === QUALITY.UNIQUE || q === QUALITY.SET ? 1 : q === QUALITY.RARE ? 2 : q === QUALITY.MAGIC ? 4 : q === QUALITY.CRAFTED ? 3 : 6;
+        const s = Math.max(before, Math.min(out.sockets, qcap, maxSockets(ctx, b, out.ilvl)));
+        out.sockets = s;
+        const st = out.stats.find((x) => x.stat === 'item_numsockets');
+        if (st) st.value = s;
+        if (s <= 0) out.stats = out.stats.filter((x) => x.stat !== 'item_numsockets');
+      }
+    }
+  }
   if (o.rep) {
     if (b.stackable && o.qty) out.quantity = Math.min(b.maxStack, o.qty);
     if (out.maxDurability > 0) out.durability = out.maxDurability;
   }
   if (o.sock) {
     if (o.qty && out.sockets <= 0) {
-      const def = [...ctx.items.typeChain(b.type)].map((x) => ctx.items.types.get(x)).find((dd) => dd && (dd.maxSock[0] || dd.maxSock[1] || dd.maxSock[2]));
-      const tier = out.ilvl <= 25 ? 0 : out.ilvl <= 40 ? 1 : 2;
-      let max = Math.min(b.gemSockets, def?.maxSock[tier] ?? 0, o.qty);
+      let max = Math.min(maxSockets(ctx, b, out.ilvl), o.qty);
       if (out.quality === QUALITY.MAGIC) max = Math.min(max, 3);
       else if (out.quality >= QUALITY.SET) max = Math.min(max, 1);
       if (max > 0) {

@@ -11,7 +11,7 @@ import type { ItemGen } from './itemgen';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;
 
-export const QUALITY = { INFERIOR: 1, NORMAL: 2, SUPERIOR: 3, MAGIC: 4, SET: 5, RARE: 6, UNIQUE: 7 } as const;
+export const QUALITY = { INFERIOR: 1, NORMAL: 2, SUPERIOR: 3, MAGIC: 4, SET: 5, RARE: 6, UNIQUE: 7, CRAFTED: 8 } as const;
 export type Quality = (typeof QUALITY)[keyof typeof QUALITY];
 
 interface QualityMods { unique: number; set: number; rare: number; magic: number }
@@ -62,6 +62,8 @@ export interface ItemInstance {
   ethereal?: boolean;
   /** 룬워드 (runes.txt 행 번호) — 완성 때 T1 속성이 stats 에 들어간다 */
   runeword?: number;
+  /** 룬워드가 되기 전 속성·방어 (소켓 비우기 큐브로 룬워드를 없앨 때 되돌린다) */
+  runewordBase?: { stats: ItemStat[]; defense: number };
   /** 인벤토리 그림 변형 번호 (itemtypes InvGfx1~6 중, 0 부터) */
   gfx?: number;
 }

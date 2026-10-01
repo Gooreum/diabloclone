@@ -1533,6 +1533,7 @@ export class Game {
           const rw = target && tb && gen && this.data?.expansion ? this.data.runewords?.match(this.data.items, target.item) : null;
           if (rw && target && tb && gen) {
             target.item.runeword = rw.idx;
+            target.item.runewordBase = { stats: structuredClone(target.item.stats), defense: target.item.defense };
             gen.assignMods(target.item, tb, rw.mods, this.rng);
             this.events.push({ type: 'runeword', itemId: target.item.id, runeword: rw.idx });
           }

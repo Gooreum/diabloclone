@@ -816,8 +816,297 @@ const ancient: AiFn = (w, m, dist, combat) => {
   idle(w, m, 25);
 };
 
+/**
+ * 출처: AITHINK_Fn134_BaalThrone — dwAiParam[0] = 무리 순번, [1] = 깃발 (1: 시체 폭발 뒤 · 2: 무리를 부름), [2] = 다음 판단 프레임.
+ *   부른 무리가 남아 있으면: 대상에게 저주가 없으면 aip1% Skill1 (Decrepify), 아니면 대기 10.
+ *   깃발 1 이면: 무리 < 5 → Baal Monster Spawn (Baal Subject N, 자리 y+13), 순번++, 100 프레임 뒤, 깃발 2.
+ *     다섯 무리를 다 이기면 baalcrabstairs 로 바뀐다 (BaalToStairs).
+ *   아니면: Baal Corpse Explode (Skill2), 깃발 1, 250 프레임 뒤, 소리 16
+ */
+const baalThrone: AiFn = (w, m) => {
+  if (w.frame < m.ai[2]!) {
+    idle(w, m, m.ai[2]! - w.frame);
+    return;
+  }
+  const wave = w.monsters.some((o) => o.waveOwner === m.id && alive(o));
+  if (wave) {
+    if (!w.noTarget && hasSkill(m, 0) && !(w.targetInfo?.().states.includes('decrepify') ?? false) && rollChance(m, 0)) {
+      w.useSkill(m, 0, tgt(w));
+      return;
+    }
+    idle(w, m, 10);
+    return;
+  }
+  if (m.ai[1]! & 1) {
+    if (m.ai[0]! < 5) {
+      m.skillParam1 = m.ai[0]!;
+      w.useNamedSkill?.(m, 'Baal Monster Spawn', 'S3', { x: m.x, y: m.y + 13, fixed: true });
+      m.ai[0]!++;
+      m.ai[2] = w.frame + 100;
+      m.ai[1] = (m.ai[1]! | 2) & ~1;
+    } else {
+      w.reinit?.(m, 'baalcrabstairs');
+      idle(w, m, 5);
+    }
+    return;
+  }
+  w.useSkill(m, 1, { unitId: m.id, x: m.x, y: m.y });
+  m.ai[1]! |= 1;
+  m.ai[2] = w.frame + 250;
+  w.event?.({ type: 'baalLaugh', monsterId: m.id, sound: 16 });
+};
+
+/**
+ * 출처: AITHINK_Fn138_BaalToStairs — 25 안의 Worldstone Chamber 포털 (563) 로 걸어가 aip1 안이면 Chamber 를 열고 (ACT5Q6_OpenWorldStoneChamber) 사라진다
+ */
+const baalToStairs: AiFn = (w, m) => {
+  const portal = w.objectNear?.(m, 563, 25);
+  if (!portal) {
+    idle(w, m, 25);
+    return;
+  }
+  if (Math.hypot(portal.x - m.x, portal.y - m.y) >= aiParam(m, 0)) {
+    moveToPoint(w, m, portal.x, portal.y, 0);
+    return;
+  }
+  w.event?.({ type: 'wscOpened' });
+  w.removeSelf?.(m);
+};
+
+// =====================================================================================================
+// Baal (AiBaal.cpp)
+// =====================================================================================================
+
+/** 출처: AI_GetRandomArrayIndex — 가중치 합 안의 난수가 떨어진 칸 (합이 0 이면 기본값) */
+function weightedIndex(m: MonsterUnit, weights: number[], def: number): number {
+  const sum = weights.reduce((a, b) => a + b, 0);
+  const r = m.rng.pick(sum);
+  let acc = 0;
+  for (let i = 0; i < weights.length; i++) {
+    acc += weights[i] as number;
+    if (r < acc) return i;
+  }
+  return def;
+}
+
+/**
+ * 출처: AIBAAL_RollRandomAiParam — 16 칸 가중치 표로 행동 번호. 대상 없음: 미사일 충돌이 있으면 4, 아니면 8% 로 9 · 그 밖 1.
+ *   근접 표 · 벽 없이 보임 (AIBAAL_RollRandomAiParamForNonCollidingUnit) · 벽 너머 표 — 난이도·생명·냉기 상태·특수 스킬 (Blizzard·Meteor …)·집에서 거리 (> 75 · > 100)·
+ *   플레이어 포털이 집 75 안 (근처) 에 따라 칸을 바꾼다
+ * 근사(원작 미확인): 대상 점수 (nMax) 는 AiWorld.targetInfo.score (원작 AIBAAL_GetTargetScore 와 비슷한 식), 대상 수 (nCount) 는 싱글 1, 플레이어 수 보정 난이도 1
+ */
+function baalRoll(w: AiWorld, m: MonsterUnit, dist: number, combat: boolean): number {
+  if (w.noTarget) return 8 * (m.rng.pick(100) < 8 ? 1 : 0) + 1;
+  const info = w.targetInfo?.();
+  const home = m.home ?? { x: m.x, y: m.y };
+  const t = w.target;
+  const fromHome = Math.hypot(t.x - home.x, t.y - home.y);
+  const medium = fromHome > 75, far = fromHome > 100;
+  const close = !!info?.portal && Math.hypot(info.portal.x - home.x, info.portal.y - home.y) < 75;
+  const nCount = 1, nMax = info?.score ?? 1, cold = !!info?.cold, special = !!info?.special;
+  const myLife = w.lifePct(m), tLife = info?.lifePct ?? 100;
+  const clear = !w.missileBlocked?.(m);
+  if (combat) {
+    const a = [0, 50, 0, 0, 0, 0, 0, 0, 20, 30, 150, 10, 10, 70, 40, 0];
+    if (!w.difficulty) {
+      a[1] = 75;
+      a[13] = 45;
+    }
+    if (tLife < 33) a[10]! += 50;
+    a[1]! += 100 - myLife;
+    if (cold) a[8] = a[13] = a[11] = 0;
+    if (!clear) a[11] = a[13] = a[12] = 0;
+    return weightedIndex(m, a, 1);
+  }
+  if (clear) {
+    const a = [0, 0, 5, 5, 5, 0, 5, 0, 40, 40, 0, 70, 80, 60, 20, 0];
+    let bonus = 100;
+    if (!w.difficulty) {
+      bonus = 125;
+      a[13] = 40;
+    }
+    a[15] = Math.max(0, 10 * (2 - m.ai[1]!));
+    if (dist > 35) {
+      a[6] = 15;
+      a[13] = 0;
+    }
+    a[1] = 100 - myLife + bonus;
+    if (dist > 25) {
+      a[14] = 30;
+      a[11] = 0;
+    }
+    if (nCount < 2) a[11]! -= 10;
+    if (nMax > 60) a[8] = 70;
+    if (nCount < 2) a[8] = 0;
+    if (special && !medium) {
+      a[6]! += 30;
+      a[11]! += 10;
+      a[14]! += 15;
+    } else if (medium) {
+      a[3] = 25;
+      a[2] = 0;
+      a[6]! += 25;
+      a[14]! += 35;
+    }
+    if (far) a[5] = 60;
+    if (close) a[7] = 0;
+    return weightedIndex(m, a.map((v) => Math.max(0, v)), 1);
+  }
+  const a = [0, 100, 20, 20, 20, 0, 20, 0, 80, 70, 0, 0, 0, 0, 0, 0];
+  if (!w.difficulty) a[1] = 125;
+  if (nCount < 2) {
+    a[2] = 45;
+    a[10] = 25;
+  }
+  a[1]! += 100 - myLife;
+  if (special && !medium) {
+    a[14]! += 50;
+    a[13]! += 50;
+  }
+  if (medium) {
+    a[2] = 0;
+    a[6] = 0;
+    a[3]! += 15;
+    a[11]! += 25;
+    a[13]! += 25;
+  }
+  if (far) a[5]! += 60;
+  return weightedIndex(m, a, 1);
+}
+
+/**
+ * 출처: AIBAAL_MainSkillHandler — 1 대기 (난이도 35/15/5), 2·6 대상 반경 12 로, 3 선회 6, 4 곁으로 16, 5 집으로, 8 저주 (최대 생명 > 최대 마나면 Defense Curse, 아니면 Blood Mana),
+ *   9 Baal Tentacle, 10 A2, 11 Baal Nova, 12 Baal Inferno, 13 Baal Cold Missiles, 14 대상 반대쪽 25 로 순간이동, 15 분신 (살아 있는 분신이 없을 때)
+ */
+function baalAct(w: AiWorld, m: MonsterUnit, n: number): void {
+  const t = w.target;
+  switch (n) {
+    case 1:
+      idle(w, m, [35, 15, 5][w.difficulty] ?? 5);
+      return;
+    case 2:
+    case 6:
+      if (!walkInRadius(w, m, 12, 0)) idle(w, m, 5);
+      return;
+    case 3:
+      if (!circle(w, m, 6)) idle(w, m, 5);
+      return;
+    case 4:
+      if (!walkCloseToUnit(w, m, 16)) idle(w, m, 5);
+      return;
+    case 5: {
+      const h = m.home;
+      if (!h || !moveToPoint(w, m, h.x, h.y, 0)) idle(w, m, 5);
+      return;
+    }
+    case 8: {
+      if (w.noTarget) return idle(w, m, 5);
+      const lom = w.targetUnit?.().lifeOverMana ?? true;
+      if (lom && hasSkill(m, 5)) w.useSkill(m, 5, tgt(w));
+      else if (hasSkill(m, 6)) w.useSkill(m, 6, tgt(w));
+      else idle(w, m, 5);
+      return;
+    }
+    case 9:
+      if (!w.useNamedSkill?.(m, 'Baal Tentacle', 'S2', tgt(w))) idle(w, m, 5);
+      return;
+    case 10:
+      w.startMode(m, 'A2');
+      return;
+    case 11:
+      if (!w.useNamedSkill?.(m, 'Baal Nova', 'S3', tgt(w))) idle(w, m, 5);
+      return;
+    case 12:
+      if (!w.useSkill(m, 1, tgt(w))) idle(w, m, 5);
+      return;
+    case 13:
+      if (!w.useSkill(m, 3, tgt(w))) idle(w, m, 5);
+      return;
+    case 14: {
+      if (w.noTarget) return idle(w, m, 5);
+      const d = Math.max(1, Math.trunc(Math.hypot(t.x - m.x, t.y - m.y)));
+      const x = Math.floor(m.x) + Math.trunc((25 * (Math.floor(m.x) - Math.floor(t.x))) / d);
+      const y = Math.floor(m.y) + Math.trunc((25 * (Math.floor(m.y) - Math.floor(t.y))) / d);
+      if (hasSkill(m, 4) && (w.canSpawnAt?.(m.type.id, x, y) ?? true) && w.useSkill(m, 4, { x: x + 0.5, y: y + 0.5, fixed: true })) return;
+      idle(w, m, 5);
+      return;
+    }
+    case 15: {
+      const clones = w.monsters.some((o) => o.waveOwner === m.id && base(o) === 'baalclone' && alive(o));
+      if (!clones && base(m) === 'baalcrab') {
+        const x = t.x + ((m.rng.roll() >>> 0) % 24) - 12, y = t.y + ((m.rng.roll() >>> 0) % 24) - 12;
+        if (w.spawnBaalClone?.(m, x, y)) {
+          m.ai[1]!++;
+          w.event?.({ type: 'baalLaugh', monsterId: m.id, sound: 16 });
+        }
+      }
+      idle(w, m, 5);
+      return;
+    }
+    default:
+      idle(w, m, 5);
+  }
+}
+
+/** 출처: AITHINK_Fn135_BaalCrab — 처음 자리를 집으로 (AI 명령 10), 대상 (55 안) 을 골라 행동 굴림 → MainSkillHandler, 뒤 25 대기 */
+const baalCrab: AiFn = (w, m, dist, combat) => {
+  m.home ??= { x: m.x, y: m.y };
+  const n = !w.noTarget && dist >= 55 ? baalRoll({ ...w, noTarget: true }, m, dist, false) : baalRoll(w, m, dist, combat);
+  baalAct(w, m, n);
+  if (m.mode !== 'NU') wait(w, m, 25);
+};
+
+/** 출처: AITHINK_Fn140_BaalCrabClone — 주인 (Baal) 이 죽으면 함께 죽는다. 행동 7·9·14·15 는 2 로 */
+const baalCrabClone: AiFn = (w, m, dist, combat) => {
+  const owner = m.waveOwner !== undefined ? w.unit?.(m.waveOwner) : undefined;
+  if (!owner || !alive(owner)) {
+    w.dieQuietly(m);
+    return;
+  }
+  m.home ??= { x: m.x, y: m.y };
+  if (w.noTarget || dist >= 55) {
+    idle(w, m, 15);
+    return;
+  }
+  let n = baalRoll(w, m, dist, combat);
+  if (n === 7 || n === 9 || n === 14 || n === 15) n = 2;
+  baalAct(w, m, n);
+  if (m.mode !== 'NU') wait(w, m, 25);
+};
+
+/** 출처: AITHINK_Fn139_BaalTentacle — 주인이 죽으면 죽음, 살아 있는 시간 25 × (rand(aip3) + aip3) 프레임, 근접이면 aip1% A1, 아니면 대기 aip2 */
+const baalTentacle: AiFn = (w, m, _dist, combat) => {
+  const owner = m.waveOwner !== undefined ? w.unit?.(m.waveOwner) : undefined;
+  if (!owner || !alive(owner)) {
+    w.dieQuietly(m);
+    return;
+  }
+  if (!m.ai[2]) m.ai[2] = w.frame + 25 * (m.rng.pick(aiParam(m, 2)) + aiParam(m, 2));
+  if (w.frame > m.ai[2]!) {
+    w.dieQuietly(m);
+    return;
+  }
+  if (combat && rollChance(m, 0)) {
+    w.startMode(m, 'A1');
+    return;
+  }
+  idle(w, m, aiParam(m, 1));
+};
+
+/** 출처: AITHINK_Fn141_BaalMinion — 근접: aip1% 로 (Skill1 이 있으면 aip3% Smite, 아니면 A1), 아니면 대기 aip3. 멀면 aip2% 다가감. 뒤 aip4 */
+const baalMinion: AiFn = (w, m, _dist, combat) => {
+  if (!w.noTarget && combat) {
+    if (rollChance(m, 0)) {
+      if (hasSkill(m, 0) && rollChance(m, 2)) w.useSkill(m, 0, tgt(w));
+      else w.startMode(m, 'A1');
+    } else idle(w, m, aiParam(m, 2));
+  } else if (rollChance(m, 1)) walkTo(w, m);
+  wait(w, m, aiParam(m, 3));
+};
+
 export const ACT5_AI: Readonly<Record<string, AiFn>> = {
-  Nihlathak: nihlathak, Ancient: ancient,
+  Nihlathak: nihlathak, Ancient: ancient, BaalThrone: baalThrone, BaalToStairs: baalToStairs,
+  BaalCrab: baalCrab, BaalCrabClone: baalCrabClone, BaalTentacle: baalTentacle, BaalMinion: baalMinion,
   Whipped: whipped, ReanimatedHorde: reanimatedHorde, Succubus: succubus, SuccubusWitch: succubusWitch, FrozenHorror: frozenHorror, BloodLord: bloodLord,
   DeathMauler: deathMauler, PutridDefiler: putridDefiler, ClawViperEx: clawViperEx, GenericSpawner: genericSpawner, EvilHole: evilHole, BaalTaunt: baalTaunt,
   SiegeTower: siegeTower, SiegeBeast: siegeBeast, Imp: imp, Catapult: catapult, CatapultSpotter: catapultSpotter,

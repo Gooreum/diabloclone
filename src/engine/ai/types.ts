@@ -146,6 +146,10 @@ export interface MonsterUnit {
   /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */
   summonLvl?: number;
   /** 돌진 스킬 (Leap·Charge·SerpentCharge·DiabRun) 진행: 목표 지점, 맞힐 대상, 판정 여부 */
+  /** Baal 왕좌가 부른 무리 (원작 UNITS_StoreOwner — 무리가 남았는지 판단) */
+  waveOwner?: number;
+  /** 스킬 Param1 (원작 SKILLS_SetParam1 — Baal Monster Spawn 이 부를 무리 순번) */
+  skillParam1?: number;
   dash?: { x: number; y: number; targetId?: number; hit: boolean; speed: number; /** Whirlwind: 멈추지 않고 지나가며 친다 (다음 타격 프레임) */ spin?: number };
   /** 연속 분사 스킬 (Inferno·DiabLight): 끝 프레임, 다음 미사일 프레임, 간격 */
   stream?: { until: number; next: number; every: number };
@@ -265,6 +269,14 @@ export interface AiWorld {
   levelPool?(): string[];
   /** monstats genericSpawn */
   isGenericSpawn?(typeId: string): boolean;
+  /** 몬스터를 다른 종류로 (원작 MONSTER_Reinitialize — Baal 왕좌 → baalcrabstairs) */
+  reinit?(m: MonsterUnit, typeId: string): void;
+  /** Baal 분신 (생명 1/3) — 만들었으면 true */
+  spawnBaalClone?(m: MonsterUnit, x: number, y: number): boolean;
+  /** 거리 maxDist 안의 그 종류 오브젝트 자리 (objects.txt 번호) */
+  objectNear?(m: MonsterUnit, classId: number, maxDist: number): { x: number; y: number } | undefined;
+  /** 유닛을 월드에서 없앤다 (SUNIT_RemoveUnit) */
+  removeSelf?(m: MonsterUnit): void;
   /** 고대인이 싸울 수 있다 (원작 ACT5Q5_IsActivatable — 제단을 눌렀고 포털이 없다) */
   ancientsActive?(): boolean;
   /** 대상 유닛 정보 (Succubus: 상태 목록이 있는지·플레이어인지·최대 생명 > 최대 마나) */

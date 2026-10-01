@@ -64,12 +64,12 @@ export const NPC_MESSAGES_ACT5: Record<number, NpcMessage[][]> = {
     t([['ancientstatue1', 20002, 0, 'AncientsAct5IntroGossip1'], ['ancientstatue2', 20002, 0, 'AncientsAct5IntroGossip1'], ['ancientstatue3', 20002, 0, 'AncientsAct5IntroGossip1']]),
     t([['larzuk', 20167, 0, 'A5Q5SuccessfulLarzuk'], ['cain6', 20165, 0, 'A5Q5SuccessfulCain'], ['drehya', 20166, 0, 'A5Q5SuccessfulAnya'], ['malah', 20168, 0, 'A5Q5SuccessfulMalah'], ['qual-kehk', 20164, 0, 'A5Q5SuccessfulQualKehk']]),
   ],
-  // 출처: A5Q6.cpp gpAct5Q6NpcMessages
+  // 출처: A5Q6.cpp gpAct5Q6NpcMessages (20173 · 20176 의 화자도 문자열 키대로 Anya)
   [QW.A5Q6]: [
-    t([['larzuk', 20171, 2, 'A5Q6EarlyReturnLarzuk'], ['cain6', 20170, 2, 'A5Q6EarlyReturnCain'], ['malah', 20172, 2, 'A5Q6EarlyReturnMalah'], ['qual-kehk', 20174, 2, 'A5Q6EarlyReturnQualKehk'], ['nihlathak', 20173, 2, 'A5Q6EarlyReturnAnya']]),
+    t([['larzuk', 20171, 2, 'A5Q6EarlyReturnLarzuk'], ['cain6', 20170, 2, 'A5Q6EarlyReturnCain'], ['malah', 20172, 2, 'A5Q6EarlyReturnMalah'], ['qual-kehk', 20174, 2, 'A5Q6EarlyReturnQualKehk'], ['drehya', 20173, 2, 'A5Q6EarlyReturnAnya']]),
     t([['larzuk', 20178, 0, 'A5Q6SuccessfulLarzuk'], ['cain6', 20177, 0, 'A5Q6SuccessfulCain'], ['malah', 20179, 0, 'A5Q6SuccessfulMalah'], ['tyrael3', 20175, 0, 'A5Q6SuccessfulTyrael'], ['qual-kehk', 20180, 0, 'A5Q6SuccessfulQualKehk'], ['drehya', 20176, 0, 'A5Q6SuccessfulAnya']]),
     t([['larzuk', 20178, 0, 'A5Q6SuccessfulLarzuk'], ['malah', 20179, 0, 'A5Q6SuccessfulMalah'], ['tyrael3', 20175, 0, 'A5Q6SuccessfulTyrael'], ['qual-kehk', 20180, 0, 'A5Q6SuccessfulQualKehk'], ['drehya', 20176, 0, 'A5Q6SuccessfulAnya']]),
-    t([['larzuk', 20178, 2, 'A5Q6SuccessfulLarzuk'], ['malah', 20179, 2, 'A5Q6SuccessfulMalah'], ['tyrael3', 20175, 2, 'A5Q6SuccessfulTyrael'], ['qual-kehk', 20180, 2, 'A5Q6SuccessfulQualKehk'], ['nihlathak', 20176, 2, 'A5Q6SuccessfulAnya']]),
+    t([['larzuk', 20178, 2, 'A5Q6SuccessfulLarzuk'], ['malah', 20179, 2, 'A5Q6SuccessfulMalah'], ['tyrael3', 20175, 2, 'A5Q6SuccessfulTyrael'], ['qual-kehk', 20180, 2, 'A5Q6SuccessfulQualKehk'], ['drehya', 20176, 2, 'A5Q6SuccessfulAnya']]),
     t([['cain6', 20177, 0, 'A5Q6SuccessfulCain']]),
     t([['cain6', 20177, 2, 'A5Q6SuccessfulCain']]),
   ],

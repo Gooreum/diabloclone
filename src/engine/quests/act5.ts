@@ -22,9 +22,9 @@ export const L5 = {
 
 /**
  * objects.txt InitFn — 71 LarzukStandard, 62 CagedWussie, 66 DrehyaStartInTown, 67 DrehyaStartOutsideTown, 68 NihlathakStartInTown, 69 NihlathakStartOutsideTown,
- * 74 FrozenAnya, 63/64/65 AncientStatue3/1/2, 72 AncientsAltar, 73 AncientsDoor, 76 SummitDoor
+ * 74 FrozenAnya, 63/64/65 AncientStatue3/1/2, 72 AncientsAltar, 73 AncientsDoor, 76 SummitDoor, 75 BaalsPortal, 77 LastPortal
  */
-export const ACT5_INIT_FNS = [71, 62, 66, 67, 68, 69, 74, 63, 64, 65, 72, 73, 76] as const;
+export const ACT5_INIT_FNS = [71, 62, 66, 67, 68, 69, 74, 63, 64, 65, 72, 73, 76, 75, 77] as const;
 
 /** A5Q5 오브젝트 (objects.txt): 석상 474 (Statue 3) · 475 (Statue 1) · 476 (Statue 2), 제단 546, Worldstone Keep 문 547, 고대인 자리 561, Summit 문 564 */
 const OBJ5 = { STATUE3: 474, STATUE1: 475, STATUE2: 476, ALTAR: 546, WSK_DOOR: 547, INVISIBLE_ANCIENT: 561, SUMMIT_DOOR: 564 } as const;
@@ -32,6 +32,14 @@ const OBJ5 = { STATUE3: 474, STATUE1: 475, STATUE2: 476, ALTAR: 546, WSK_DOOR: 5
 const STATUE_ANCIENT: Record<number, [number, string]> = { [OBJ5.STATUE3]: [1, 'Ancient Barbarian 3'], [OBJ5.STATUE1]: [0, 'Ancient Barbarian 1'], [OBJ5.STATUE2]: [2, 'Ancient Barbarian 2'] };
 /** 출처: ACT5Q5_Callback08_MonsterKilled — 고대인 → 석상 GUID 칸 (barb1 → 2, barb2 → 0, barb3 → 1) */
 const ANCIENT_STATUE: Record<string, number> = { ancientbarb1: 2, ancientbarb2: 0, ancientbarb3: 1 };
+/** A5Q6 오브젝트: Worldstone Chamber 포털 563 (왕좌) · 569 (Chamber), 마지막 포털 565 */
+const OBJ6 = { BAAL_PORTAL: 563, BAAL_PORTAL_BACK: 569, LAST_PORTAL: 565 } as const;
+/** 출처: ACT5Q6_ActiveFilterCallback / ScrollMessage — 끝낸 뒤 마을 사람 대사의 기록 칸 */
+const A5Q6_NPC_FLAG: Record<string, [number, number]> = {
+  larzuk: [QFLAG.ENTERAREA, 20178], cain6: [QFLAG.CUSTOM1, 20177], malah: [QFLAG.CUSTOM2, 20179], tyrael3: [QFLAG.CUSTOM3, 20175],
+  'qual-kehk': [QFLAG.CUSTOM4, 20180], drehya: [QFLAG.CUSTOM5, 20176],
+};
+
 /** 출처: ACT5Q5_RewardPlayer — 보통 · 악몽 · 지옥 */
 export const A5Q5_EXP = [1_400_000, 20_000_000, 40_000_000] as const;
 /** 출처: ACT5Q5_Callback11_ScrollMessage / NpcActivate — 끝낸 뒤 마을 사람마다 한 번 듣는 대사의 기록 칸 */
@@ -77,7 +85,7 @@ export function questResistDiffs(byDiff: readonly (readonly number[] | null)[], 
   return n;
 }
 
-const { A5Q1, A5Q2, A5Q3, A5Q4, A5Q5 } = QW;
+const { A5Q1, A5Q2, A5Q3, A5Q4, A5Q5, A5Q6 } = QW;
 const TOWN = L5.HARROGATH;
 
 /**
@@ -112,8 +120,12 @@ export class Act5Quests extends ActQuestBase {
     portals: 0, defeated: false, timerActive: false, summitDoorId: -1, summitDoorMode: 0, summitDoorInit: false, wskDoorId: -1,
   };
 
+  // A5Q6 (D2Act5Quest6Strc): 포털 모드 (처음 OPERATING, 그 뒤 OPENED)
+  private q6 = { started: false, wscOpen: false, lastPortalOpened: false, baalPortalMode: OBJMODE.OPERATING as number, lastPortalMode: OBJMODE.OPERATING as number, baalKilled: false };
+
   constructor(h: ActsQuestHost) {
     super(h);
+    this.q[A5Q6] = new QuestData(A5Q6, 4);
     this.q[A5Q4] = new QuestData(A5Q4, 4);
     this.q[A5Q5] = new QuestData(A5Q5, 4);
     this.q[A5Q1] = new QuestData(A5Q1, 4);
@@ -154,6 +166,15 @@ export class Act5Quests extends ActQuestBase {
           if (!d.state) d.state = 1;
           return true;
         }
+        return this.seq(A5Q6);
+      case A5Q6:
+        // 출처: ACT5Q6_SeqCallback — 진행 중이고 fState 0 이면 시작: fState 2, 로그 1
+        if (d.notIntro && !d.state) {
+          this.q6.started = true;
+          d.state = 2;
+          this.iterate(A5Q6, 1);
+          this.updateFlags(A5Q6);
+        }
         return true;
     }
     return true;
@@ -168,6 +189,7 @@ export class Act5Quests extends ActQuestBase {
 
   startGame(): void {
     this.startCommon();
+    this.startedQ6();
     this.startedQ5();
     this.startedQ4();
     this.startedQ3();
@@ -175,6 +197,21 @@ export class Act5Quests extends ActQuestBase {
     this.startedQ1();
     // 출처: QUESTS_SequenceCycler — 퀘스트 31 (A5Q1) 의 SeqCallback
     this.seq(A5Q1);
+  }
+
+  /** 출처: ACT5Q6_Callback13_PlayerStartedGame — 끝냈으면 CUSTOM6 + 진행 값 5 */
+  private startedQ6(): void {
+    const d = this.Q(A5Q6);
+    if (this.has(A5Q6, QFLAG.REWARDGRANTED) || this.has(A5Q6, QFLAG.COMPLETEDBEFORE)) {
+      this.set(A5Q6, QFLAG.CUSTOM6);
+      this.h.progress(5);
+    } else if (!this.has(A5Q6, QFLAG.REWARDPENDING)) {
+      if (this.has(A5Q6, QFLAG.LEAVETOWN)) [d.lastState, d.state] = [1, 3];
+      else if (this.has(A5Q6, QFLAG.STARTED)) {
+        this.q6.started = true;
+        [d.lastState, d.state] = [1, 3];
+      }
+    }
   }
 
   /** 출처: ACT5Q5_Callback13_PlayerStartedGame */
@@ -245,6 +282,13 @@ export class Act5Quests extends ActQuestBase {
   /** 출처: ACT5Q1_UnitIterate_UpdateQuestStateFlags */
   private updateFlags(w: number): void {
     const d = this.Q(w);
+    if (w === A5Q6) {
+      // 출처: ACT5Q6_UnitIterate_UpdateQuestStateFlags
+      if (this.done(A5Q6)) return;
+      if (d.state === 2) this.set(A5Q6, QFLAG.STARTED);
+      else if (d.state === 3) this.set(A5Q6, QFLAG.LEAVETOWN);
+      return;
+    }
     if (w === A5Q5) {
       // 출처: ACT5Q5_UnitIterate_UpdateQuestStateFlags — 보상 받음이거나 레벨 < 20 × (난이도 + 1) 이면 그대로
       if (this.has(A5Q5, QFLAG.REWARDGRANTED) || this.h.playerLevel() < 20 * (this.h.difficulty() + 1)) return;
@@ -303,6 +347,11 @@ export class Act5Quests extends ActQuestBase {
         if (this.done(A5Q3) && !this.has(A5Q4, QFLAG.REWARDGRANTED) && !this.has(A5Q4, QFLAG.REWARDPENDING)) return true;
       } else if (this.has(A5Q4, QFLAG.PRIMARYGOALDONE) && !this.has(A5Q4, QFLAG.ENTERAREA)) return true;
     }
+    // 출처: ACT5Q6_ActiveFilterCallback — 끝낸 뒤 아직 듣지 않은 마을 사람 (Cain 은 CUSTOM6 이면 없음)
+    if (this.has(A5Q6, QFLAG.REWARDGRANTED)) {
+      const f = A5Q6_NPC_FLAG[npc];
+      if (f && !(npc === 'cain6' && this.has(A5Q6, QFLAG.CUSTOM6)) && !this.has(A5Q6, f[0])) return true;
+    }
     // 출처: ACT5Q5_ActiveFilterCallback
     if (npc === 'qual-kehk' && this.Q(A5Q5).state === 1 && !this.has(A5Q5, QFLAG.REWARDGRANTED)) return true;
     // 출처: ACT5Q2_ActiveFilterCallback
@@ -321,7 +370,32 @@ export class Act5Quests extends ActQuestBase {
     this.activateQ3(npc, out);
     this.activateQ4(npc, out);
     this.activateQ5(npc, out);
+    this.activateQ6(npc, out);
     return out;
+  }
+
+  /** 출처: ACT5Q6_Callback00_NpcActivate */
+  private activateQ6(npc: string, out: QuestSpeech[]): void {
+    const d = this.Q(A5Q6);
+    if (this.has(A5Q6, QFLAG.REWARDGRANTED)) {
+      const f = A5Q6_NPC_FLAG[npc];
+      if (!f) return;
+      if (npc === 'cain6') {
+        if (!this.has(A5Q6, QFLAG.CUSTOM6)) this.chain(A5Q6, this.has(A5Q6, QFLAG.CUSTOM1) && this.has(A5Q6, QFLAG.PRIMARYGOALDONE) ? 5 : 4, npc, out);
+        return;
+      }
+      if (npc === 'tyrael3') {
+        if (this.has(A5Q6, QFLAG.PRIMARYGOALDONE)) this.chain(A5Q6, 2, npc, out);
+        return;
+      }
+      if (!this.has(A5Q6, f[0])) return this.chain(A5Q6, 2, npc, out);
+      if (this.has(A5Q6, QFLAG.PRIMARYGOALDONE)) this.chain(A5Q6, 3, npc, out);
+      return;
+    }
+    if (d.state < 4) {
+      const i = [-1, -1, -1, 0, 1, 2][d.state] ?? -1;
+      if (i !== -1) this.chain(A5Q6, i, npc, out);
+    }
   }
 
   /** 출처: ACT5Q5_Callback00_NpcActivate — 끝낸 뒤에는 마을 사람마다 끝 대사 (표 5) 를 한 번, 그 뒤 (PGD 면) 표 3 */
@@ -415,6 +489,8 @@ export class Act5Quests extends ActQuestBase {
     this.scrollQ3(npc, index);
     this.scrollQ4(npc, index);
     this.scrollQ5(npc, index);
+    // 출처: ACT5Q6_Callback11_ScrollMessage — 끝 대사마다 기록 칸
+    for (const f of Object.values(A5Q6_NPC_FLAG)) if (f[1] === index) this.set(A5Q6, f[0]);
     // 출처: ACT5Q1_Callback11_ScrollMessage — 20077: Larzuk 이 시작, 20090: 보상 (Larzuk 에게 아이템을 주면 소켓 — CUSTOM1)
     if (npc === 'larzuk' && index === 20077) {
       this.q1.larzukStart = true;
@@ -647,6 +723,11 @@ export class Act5Quests extends ActQuestBase {
 
   npcDeactivate(npc: string): void {
     if (npc === 'drehya') this.deactivateQ4();
+    // 출처: ACT5Q6_Callback02_NpcDeactivate → UnitIterate_CreateLastPortal — Tyrael3 과 이야기하면 Chamber 플레이어 자리 x+5 에 마지막 포털 (565)
+    if (npc === 'tyrael3' && !this.q6.lastPortalOpened && this.h.levelNo() === L5.WORLDSTONECHAMBER) {
+      const p = this.h.playerPos?.();
+      if (p && this.h.createObject(L5.WORLDSTONECHAMBER, OBJ6.LAST_PORTAL, Math.floor(p.x) + 5, Math.floor(p.y), OBJMODE.OPERATING)) this.q6.lastPortalOpened = true;
+    }
     // 출처: ACT5Q5_Callback02_NpcDeactivate
     if (npc === 'qual-kehk' && this.q5.qualKehk) {
       this.iterate(A5Q5, 1);
@@ -687,6 +768,7 @@ export class Act5Quests extends ActQuestBase {
       const d = this.Q(A5Q1);
       if (!d.state && d.notIntro) d.state = 1;
     }
+    if (ev.type === 'wscOpened') this.openWorldstoneChamber();
     // 출처: ACT5Q5_OnPortalOpened / OnPortalClosed (Summit 의 마을 포털), ACT5Q5_OnPlayerDied
     if (ev.type === 'portalOpened' && ev.fieldLevelNo === L5.ARREATSUMMIT && ev.owned !== false && !this.q5.defeated) {
       const x = this.q5;
@@ -727,6 +809,7 @@ export class Act5Quests extends ActQuestBase {
   // ------------------------------------------------------------ 레벨 이동
 
   changeLevel(oldNo: number, newNo: number): void {
+    this.changeLevelQ6(oldNo, newNo);
     this.changeLevelQ5(oldNo, newNo);
     // 출처: ACT5Q4_Callback03_ChangedLevel
     const d4 = this.Q(A5Q4);
@@ -768,6 +851,36 @@ export class Act5Quests extends ActQuestBase {
       if (d2.lastState || !d2.notIntro || this.q2.killed >= 5) return;
       this.iterate(A5Q2, 1);
     }
+  }
+
+  /** 출처: ACT5Q6_Callback03_ChangedLevel — 마을을 나서면 fState 3, 왕좌 (131) 이상이면 로그 2 */
+  private changeLevelQ6(oldNo: number, newNo: number): void {
+    const d = this.Q(A5Q6);
+    if (oldNo === TOWN) {
+      d.guid = false;
+      if (d.state === 2) {
+        if (this.done(A5Q6)) return;
+        d.state = 3;
+        if (d.lastState !== 1) this.iterate(A5Q6, 1);
+        this.updateFlags(A5Q6);
+      }
+    }
+    if (newNo >= L5.THRONEOFDESTRUCTION) {
+      if (d.notIntro && d.lastState < 2) this.iterate(A5Q6, 2);
+      this.updateFlags(A5Q6);
+    }
+  }
+
+  /** 출처: ACT5Q6_OpenWorldStoneChamber (BaalToStairs AI) — Chamber 가 열림, 로그 3 */
+  private openWorldstoneChamber(): void {
+    const d = this.Q(A5Q6);
+    this.q6.wscOpen = true;
+    if (d.notIntro && d.lastState < 3) this.iterate(A5Q6, 3);
+  }
+
+  /** Worldstone Chamber 가 열렸다 */
+  worldstoneChamberOpen(): boolean {
+    return this.q6.wscOpen;
   }
 
   /** 출처: ACT5Q5_Callback03_ChangedLevel — 마을을 나서면 fState 3, Summit 에 들어오면 로그 2 · Summit 문을 닫는다 (고대인을 이기기 전) */
@@ -912,6 +1025,7 @@ export class Act5Quests extends ActQuestBase {
     if (k.typeId === 'prisondoor') this.killedPrisonDoor(k);
     if (k.superUnique === 'Nihlathak Boss') this.killedNihlathak(k);
     if (ANCIENT_STATUE[k.typeId] !== undefined) this.killedAncient(k);
+    if (k.typeId === 'baalcrab') this.killedBaal(k);
   }
 
   /**
@@ -1057,6 +1171,44 @@ export class Act5Quests extends ActQuestBase {
     return true;
   }
 
+  /**
+   * 출처: ACT5Q6_Callback08_MonsterKilled — FX 19, 진행 중이면 로그 4, Chamber 의 플레이어: PGD + REWARDGRANTED + 진행 값 5 (CLIENTS_UpdateCharacterProgression),
+   *   그 밖 COMPLETEDNOW, 소리 83, 처음이면 금화 더미 (6000×난이도 + 1500 ~ +3000), 저장, fState 5. 미사일 625 (baal fx control) 가 Tyrael3 을 (x−5, y−5) 에
+   * 근사(원작 미확인): 미사일 대신 50 틱 뒤 Tyrael3 (원작은 미사일 100 프레임 안 — MISSMODE_SrvDo36_BaalFxControl)
+   */
+  private killedBaal(k: ActsKill): void {
+    const d = this.Q(A5Q6), x = this.q6;
+    this.h.emit({ type: 'questFx', fx: 19 });
+    if (x.baalKilled) return;
+    x.baalKilled = true;
+    if (d.notIntro) {
+      this.iterate(A5Q6, 4);
+      const inChamber = this.h.levelNo() === L5.WORLDSTONECHAMBER;
+      const first = !this.has(A5Q6, QFLAG.REWARDGRANTED);
+      if (inChamber && !this.done(A5Q6)) {
+        this.set(A5Q6, QFLAG.PRIMARYGOALDONE);
+        this.set(A5Q6, QFLAG.REWARDGRANTED);
+        this.h.progress(5);
+        this.h.completeDifficulty();
+      }
+      if (!this.has(A5Q6, QFLAG.REWARDGRANTED)) this.set(A5Q6, QFLAG.COMPLETEDNOW);
+      if (this.has(A5Q6, QFLAG.PRIMARYGOALDONE)) {
+        this.h.emit({ type: 'questSound', sound: 83 });
+        this.h.emit({ type: 'questCompleted', quest: A5Q6, act: this.act });
+      }
+      if (inChamber && first) {
+        const lo = 6000 * this.h.difficulty() + 1500, hi = Math.min(65535, 6000 * this.h.difficulty() + 3000);
+        this.h.dropGold?.(Math.floor(k.x), Math.floor(k.y), lo + this.h.seed.pick(hi - lo));
+      }
+      this.h.emit({ type: 'questSave' });
+      d.state = 5;
+    }
+    this.timer(50, () => {
+      if (d.notIntro) this.h.spawnMonster(L5.WORLDSTONECHAMBER, 'tyrael3', Math.floor(k.x) - 5, Math.floor(k.y) - 5, { npc: true });
+      return true;
+    });
+  }
+
   /** Anya 가 이름을 새겨 줄 수 있다 (SUnitNpc.cpp MONSTER_DREHYA: A5Q4 REWARDPENDING) */
   canPersonalize(): boolean {
     return this.has(A5Q4, QFLAG.REWARDPENDING);
@@ -1114,6 +1266,18 @@ export class Act5Quests extends ActQuestBase {
     if (o.type.initFn === 72) return this.initAltar(o);
     if (o.type.initFn === 73) return this.initWskDoor(o);
     if (o.type.initFn === 76) return this.initSummitDoor(o);
+    if (o.type.initFn === 75) {
+      // 출처: OBJECTS_InitFunction75_BaalsPortal — 저장한 모드 (처음 OPERATING), 그 뒤 OPENED
+      this.h.setObjectMode(o, this.q6.baalPortalMode, this.q6.baalPortalMode === OBJMODE.OPERATING);
+      this.q6.baalPortalMode = OBJMODE.OPENED;
+      return;
+    }
+    if (o.type.initFn === 77) {
+      // 출처: OBJECTS_InitFunction77_LastPortal
+      this.h.setObjectMode(o, this.q6.lastPortalMode, this.q6.lastPortalMode === OBJMODE.OPERATING);
+      this.q6.lastPortalMode = OBJMODE.OPENED;
+      return;
+    }
     if (o.type.initFn === 74) return this.initFrozenAnya(o);
     if (o.type.initFn !== 71 || this.q1.larzukSpawned) return;
     if (this.h.spawnMonster(TOWN, 'larzuk', o.x, o.y, { npc: true }) !== null) this.q1.larzukSpawned = true;
@@ -1229,6 +1393,22 @@ export class Act5Quests extends ActQuestBase {
     return true;
   }
 
+  /**
+   * 출처: OBJECTS_OperateFunction72_LastPortal — 열렸고 PGD 면 Harrogath 로, 저장, 엔딩 (패킷 0x61 7 — 확장팩 마지막 영상), CUSTOM6. 아니면 소리 19
+   * 근사(원작 미확인): 마지막 영상 (d2x) 대신 엔딩 문구 (gameCompleted, expansion)
+   */
+  private operateLastPortal(): boolean {
+    if (this.q6.lastPortalMode !== OBJMODE.OPENED) return true;
+    if (!this.has(A5Q6, QFLAG.PRIMARYGOALDONE)) {
+      this.h.emit({ type: 'questDenied', quest: A5Q6 });
+      return true;
+    }
+    this.h.warpToLevel(TOWN);
+    this.set(A5Q6, QFLAG.CUSTOM6);
+    this.h.emit({ type: 'gameCompleted', difficulty: this.h.difficulty(), expansion: true });
+    return true;
+  }
+
   /** 출처: OBJECTS_OperateFunction69_InvisibleAncient — 끝냈고 아직이면 대사 20169 (A5Q6InitAncients) */
   private operateInvisibleAncient(o: ObjectUnit): boolean {
     if (this.has(A5Q5, QFLAG.REWARDGRANTED) && !this.has(A5Q5, QFLAG.ENTERAREA)) {
@@ -1321,6 +1501,14 @@ export class Act5Quests extends ActQuestBase {
   operate(o: ObjectUnit): boolean {
     if (o.type.id === OBJ_FROZEN_ANYA) return this.operateFrozenAnya(o);
     if (o.type.id === OBJ5.ALTAR) return this.operateAltar(o);
+    if (o.type.id === OBJ6.BAAL_PORTAL || o.type.id === OBJ6.BAAL_PORTAL_BACK) {
+      // 출처: OBJECTS_OperateFunction70_BaalPortal — 왕좌에서는 Chamber 가 열렸을 때만 Chamber 로 (타일 11), 그 밖은 왕좌로
+      if (this.h.levelNo() === L5.THRONEOFDESTRUCTION) {
+        if (this.q6.wscOpen) this.h.warpToLevel(L5.WORLDSTONECHAMBER);
+      } else this.h.warpToLevel(L5.THRONEOFDESTRUCTION);
+      return true;
+    }
+    if (o.type.id === OBJ6.LAST_PORTAL) return this.operateLastPortal();
     if (o.type.id === OBJ5.INVISIBLE_ANCIENT) return this.operateInvisibleAncient(o);
     // 석상 (OperateFn 62~64): 아무 일 없음 (소리 19). 문 547·564 는 걸어서 넘어가는 출구 (exitBlocked)
     if (o.type.id === OBJ5.STATUE1 || o.type.id === OBJ5.STATUE2 || o.type.id === OBJ5.STATUE3) return true;
@@ -1346,6 +1534,8 @@ export class Act5Quests extends ActQuestBase {
    *   OBJECTS_OperateFunction66_AncientsDoor (예전 게임: 보상 받음·대기가 아니면 못 엶), OperateFunction71_SummitDoor (닫힌 Summit 문 — 이기기 전 못 내려감)
    */
   override exitBlocked(from: number, to: number): boolean {
+    // 출처: QUESTS_LevelWarpCheck → ACT5Q6_IsWorldStoneChamberClosed
+    if (to === L5.WORLDSTONECHAMBER) return !this.q6.wscOpen;
     if (from !== L5.ARREATSUMMIT) return false;
     const x = this.q5;
     if (to === L5.WORLDSTONEKEEP1) return this.Q(A5Q5).notIntro ? !x.defeated : !this.done(A5Q5);

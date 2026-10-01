@@ -68,6 +68,10 @@ export interface ActsQuestHost extends QuestHost {
   removeUnit?(levelNo: number, id: number): void;
   /** 플레이어 직업 (charstats class — 'Amazon' …) */
   playerClass?(): string | undefined;
+  /** 플레이어 자리 (서브타일) */
+  playerPos?(): { x: number; y: number };
+  /** 그 자리에 금화 더미 (ITEMS_DropGoldPile) */
+  dropGold?(x: number, y: number, amount: number): void;
   /** 퀘스트 경험치 (한 레벨 폭까지 — ACT5Q5_RewardPlayer). 실제로 준 양 */
   giveQuestExperience?(amount: number): number;
   /** 그 레벨에 있는 플레이어 마을 포털을 닫는다 */

@@ -239,6 +239,8 @@ const LOG_KEYS: Record<number, Record<number, string>> = {
   [QW.A5Q4]: { 1: 'qstsa5q41', 2: 'qstsa5q42a', 3: 'qstsa5q42', 4: 'qstsa5q43', 5: 'qstsa5q43a' },
   // A5Q5: 1 Qual-Kehk 시작 (Summit 으로), 2 Summit 에 들어옴 (제단을), 3 제단을 누름 (세 고대인을)
   [QW.A5Q5]: { 1: 'qstsa5q51', 2: 'qstsa5q52', 3: 'qstsa5q53' },
+  // A5Q6: 1 고대인을 이김 (왕좌를 찾아라), 2 왕좌에 들어옴 (하수인을), 3 Chamber 가 열림 (Baal 을), 4 Baal 처치 (Tyrael 에게)
+  [QW.A5Q6]: { 1: 'qstsa5q61a', 2: 'qstsa5q62b', 3: 'qstsa5q62a', 4: 'qstsa5q63' },
   [QW.A5Q3]: { 1: 'qstsa5q31', 2: 'qstsa5q31a', 3: 'qstsa5q32', 4: 'qstsa5q33', 5: 'qstsa5q34', 6: 'qstsa5q35' },
 };
 

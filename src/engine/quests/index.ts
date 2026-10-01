@@ -30,7 +30,7 @@ export interface QuestKill {
  *       Act 2: 21 HoradricOrifice, 38 TyraelsDoor / Act 3: 25 Gidbinn, 39 GidbinnAltar, 41 SewerStairs, 42 SewerLever, 44 HellGate, 45 MephistoBridge,
  *       53 StairsR, 60 CompellingOrb / Act 4: 48 HellForge, 78 LastLastPortal (확장팩) / Act 5: 71 LarzukStandard, 62 CagedWussie
  */
-export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48, 78, 71, 62, 66, 67, 68, 69, 74, 63, 64, 65, 72, 73, 76]);
+export const QUEST_INIT_FNS: ReadonlySet<number> = new Set([4, 6, 7, 9, 13, 15, 47, 21, 38, 25, 39, 41, 42, 44, 45, 53, 60, 48, 78, 71, 62, 66, 67, 68, 69, 74, 63, 64, 65, 72, 73, 76, 75, 77]);
 
 /** 한 막의 퀘스트 모듈 (원작 막별 A{n}Q{m}.cpp 콜백 묶음) */
 export interface ActQuestModule {
@@ -158,4 +158,4 @@ export class QuestControl {
 }
 
 /** 퀘스트가 듣는 게임 사건 */
-const QUEST_EVENT_TYPES = new Set(['bossActivated', 'cubeQuestItem', 'sealOperated', 'diabloSpawned', 'sealBossKilled', 'chaosCleared', 'npcTalk', 'portalOpened', 'portalClosed', 'playerDied']);
+const QUEST_EVENT_TYPES = new Set(['bossActivated', 'cubeQuestItem', 'sealOperated', 'diabloSpawned', 'sealBossKilled', 'chaosCleared', 'npcTalk', 'portalOpened', 'portalClosed', 'playerDied', 'wscOpened']);

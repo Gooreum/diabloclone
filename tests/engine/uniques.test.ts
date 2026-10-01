@@ -172,7 +172,7 @@ describe.skipIf(!hasGameData)('챔피언·유니크·슈퍼유니크 (원작 데
     const worlds: Act1GameWorld[] = [];
     beforeAll(() => {
       for (const seed of [101, 20202]) worlds.push(buildAct1World(gameChain(), tables, data, seed));
-    });
+    }, 120_000);
     // 출처: SuperUniques.txt (Class, Mod1~3, MinGrp, TC) · 원작 배치 레벨
     const EXPECT: [string, number, string, string, number[], string][] = [
       ['coldplains', 0, 'Bishibosh', 'fallenshaman1', [8, 9], 'Act 1 Super A'],

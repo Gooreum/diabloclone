@@ -6456,6 +6456,26 @@ export class Game {
       levelPool: () => this.level.def.monsterInfo?.pool ?? [],
       isGenericSpawn: (id) => !!this.data?.monsters.types.get(id)?.genericSpawn,
       ancientsActive: () => this.act5Quests()?.ancientsActivatable() ?? true,
+      reinit: (m, typeId) => this.reinitMonster(m, typeId),
+      spawnBaalClone: (m, x, y) => {
+        // 출처: AIBAAL_MainSkillHandler 15 — baalclone, 경험치·드롭 없음, 최대 생명 = Baal 최대 생명 / 3, 현재 생명 / 3, 재생 0, 서로 주인
+        const c = this.spawnMonMinion(m, 'baalclone', x, y, 'NU', { noTc: true });
+        if (!c) return false;
+        c.stats = { ...c.stats, maxHp: Math.max(1, Math.trunc(m.stats.maxHp / 3)) };
+        c.hp = Math.max(1, Math.trunc(m.hp / 3));
+        c.waveOwner = m.id;
+        c.nextThink = this.tickCount + 15;
+        this.events.push({ type: 'baalClone', monsterId: c.id, owner: m.id });
+        return true;
+      },
+      objectNear: (m, classId, maxDist) => {
+        const o = this.level.objects.find((x) => x.type.id === classId && Math.hypot(x.x - m.x, x.y - m.y) <= maxDist);
+        return o ? { x: o.x, y: o.y } : undefined;
+      },
+      removeSelf: (m) => {
+        const i = this.monsters.indexOf(m);
+        if (i >= 0) this.monsters.splice(i, 1);
+      },
       targetUnit: () => ({
         cursed: CURSE_STATES.some((c) => this.player.states.has(c)),
         player: true,
@@ -6707,6 +6727,7 @@ export class Game {
       case 'MegademonInferno':
       case 'DiabLight':
       case 'Horror Arctic Blast':
+      case 'Baal Inferno':
         m.stream = undefined;
         break;
       default:
@@ -7450,6 +7471,8 @@ export class Game {
       case 'MegademonInferno':
       case 'DiabLight':
       case 'Horror Arctic Blast':
+      case 'Baal Inferno':
+        // Baal Inferno (St53/Do95 → baal inferno). 근사(원작 미확인): Hit 55 (맞으면 마나 HitPar1 % 줄임) 은 넣지 않음
         this.monInferno(m, cast, index, rec);
         return true;
       case 'DoomKnightMissile': {
@@ -7586,6 +7609,67 @@ export class Game {
         this.events.push({ type: 'corpseExploded', targetId: t.id });
         return true;
       }
+      case 'Baal Teleport':
+      case 'Baal Clone Teleport': {
+        // SrvDo098 (MonTeleport): 시전 지점으로
+        const spot = nearestWalkable(this.map, { x: cast.tx, y: cast.ty }, 3);
+        if (spot) {
+          m.x = spot.x + 0.5;
+          m.y = spot.y + 0.5;
+          this.events.push({ type: 'monsterTeleport', monsterId: m.id });
+        }
+        return true;
+      }
+      case 'Baal Tentacle': {
+        // SrvDo140: 난이도 + rand(3) + 2 개, 대상 둘레 ±9 에 촉수 (MONSTERS_GetMinionSpawnInfo — baaltentacle 계열 난이도 + rand(2)), 경험치·드롭 없음, 주인 = Baal
+        const n = this.difficulty + (m.rng.roll() >>> 0) % 3 + 2;
+        let id = 'baaltentacle1';
+        for (let i = 0, k = this.difficulty + m.rng.pick(2); i < k; i++) id = data.monsters.types.get(id)?.nextInClass || id;
+        for (let i = 0; i < n; i++) {
+          const x = tp.x + ((m.rng.roll() >>> 0) % 18) - 9, y = tp.y + ((m.rng.roll() >>> 0) % 18) - 9;
+          const t = this.spawnMonMinion(m, id, x, y, (m.type.spawnMode as MonMode) || 'NU', { noTc: true });
+          if (t) {
+            t.waveOwner = m.id;
+            t.nextThink = this.tickCount + 15;
+          }
+        }
+        return true;
+      }
+      case 'Baal Cold Missiles': {
+        // SrvDo139 → baal cold maker (SrvDo31: 대상 방향과 수직으로 지나가며 baal cold trail 을 흩뿌림)
+        // 근사(원작 미확인): 만드는 미사일 대신 대상 쪽 부채꼴 (±20°) 다섯 줄기 baal cold trail
+        const def = data.missiles.get(rec.srvMissileA);
+        const trail = def?.subMissile1 ? data.missiles.get(def.subMissile1) : undefined;
+        if (!trail) return true;
+        const base = Math.atan2(tp.y - m.y, tp.x - m.x);
+        for (let i = -2; i <= 2; i++) {
+          const a = base + (i * Math.PI) / 18;
+          this.fireMonMissile(m, trail.name, { x: m.x, y: m.y }, { x: m.x + Math.cos(a) * 30, y: m.y + Math.sin(a) * 30 }, { lvl });
+        }
+        return true;
+      }
+      case 'Baal Monster Spawn': {
+        // 출처: AITHINK_Fn134_BaalThrone (Param1 = Baal Subject N) → 미사일 baal spawn monsters → SrvHit54: 그 자리에 슈퍼유니크 무리
+        //   근사(원작 미확인): 미사일 비행 없이 시전 지점에 바로
+        const key = `Baal Subject ${Math.min(5, Math.max(1, (m.skillParam1 ?? 0) + 1))}`;
+        const su = data.uniques?.superUnique(key);
+        const spot = nearestWalkable(this.map, { x: cast.tx, y: cast.ty }, 8);
+        if (!su || !spot) return true;
+        const before = new Set(this.monsters.map((x) => x.id));
+        const boss = this.spawnSuperUnique(su.idx, spot.x, spot.y, undefined, true);
+        if (boss) for (const x of this.monsters) if (!before.has(x.id)) x.waveOwner = m.id;
+        return true;
+      }
+      case 'Baal Corpse Explode': {
+        // SrvDo141: 반경 Param5 + (레벨−1)·Param6 안 시체마다 SrvDo055 (피해 calc 없음 — 시체를 터뜨려 없앰)
+        const r = (rec.params[4] ?? 0) + (lvl - 1) * (rec.params[5] ?? 0);
+        for (const x of this.monsters) {
+          if (x.mode !== 'DD' || x.corpseUsed || Math.hypot(x.x - m.x, x.y - m.y) > r) continue;
+          x.corpseUsed = true;
+          this.events.push({ type: 'corpseExploded', targetId: x.id });
+        }
+        return true;
+      }
       case 'Overseer Whip': {
         // SrvDo131: minion 계열이면 rand%100 >= calc1 이고 Bloodlust 가 아닐 때 같은 순번의 suicideminion 으로 바꾼다 (SpecialState WHIPPED),
         //   아니면 aurastate 저주 (Bloodlust: auralen 동안 aurastat)
@@ -7709,9 +7793,10 @@ export class Game {
       case 'ArcaneTower':
       case 'Frost Nova':
       case 'MephFrostNova':
-      case 'DiabFire': {
-        // SrvDo106 / SrvDo022: 노바 (64 방향)
-        const def = data.missiles.get(rec.srvMissileA);
+      case 'DiabFire':
+      case 'Baal Nova': {
+        // SrvDo106 / SrvDo022: 노바 (64 방향). Baal Nova 는 srvmissile (baal nova)
+        const def = data.missiles.get(rec.srvMissileA || rec.srvMissile);
         if (def) this.monNova(m, def.name, lvl, def.vel + (rec.calcs[0] ? calc.calc(rec, 1, lvl, o) : 0));
         return true;
       }
@@ -8024,6 +8109,19 @@ export class Game {
       this.damagePlayerDirect(pkt, 'deathDmg');
     }
     this.events.push({ type: 'monsterExploded', monsterId: m.id, damage: dmg / 2 });
+  }
+
+  /** 출처: MONSTER_Reinitialize — 같은 자리에서 다른 monstats 종류로 (생명 비율 유지, AI 처음부터, changeclass 상태) */
+  private reinitMonster(m: MonsterUnit, typeId: string): void {
+    const data = this.data;
+    if (!data?.monsters.types.has(typeId)) return;
+    const hpPct = m.hp / Math.max(1, m.stats.maxHp);
+    m.type = data.monsters.get(typeId);
+    m.stats = rollMonsterStats(data.monsters, m.type, m.rng);
+    m.hp = Math.max(1, Math.round(m.stats.maxHp * hpPct));
+    m.ai = [0, 0, 0];
+    m.states.set('changeclass', Infinity);
+    this.events.push({ type: 'monsterReinitialized', monsterId: m.id, typeId });
   }
 
   /** 죽음 애니메이션이 끝남. 출처: MonsterMode.cpp sub_6FC641D0 — SplEndDeath 1: MONSTER_Reinitialize(minion1) (Fetish Shaman 시체 → Fetish 시체) */
@@ -9870,6 +9968,8 @@ export class Game {
         if (lv.objects.some((o) => o.id === id)) g.removeObject(lv.def.id, id);
       },
       playerClass: () => g.classStats?.cls,
+      playerPos: () => ({ x: g.player.x, y: g.player.y }),
+      dropGold: (x, y, amount) => g.dropGold(amount, x + 0.5, y + 0.5),
       giveQuestExperience: (amount) => {
         // 출처: ACT5Q5_RewardPlayer — 최대 레벨이면 없음, 지금 레벨 다음 칸의 폭 (Threshold(lvl+1) − Threshold(lvl)) 까지
         const c = g.character, t = g.expTable;

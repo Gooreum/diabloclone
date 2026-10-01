@@ -21,7 +21,7 @@ const hasLod = existsSync(resolve(LOD, 'patch_d2.mpq')) && mpqOrder('lod').every
 /** NPC·장식 AI (NPC 단계 담당) — 이 테스트의 대상이 아니다 */
 const NPC_AI = new Set(['Idle', 'Npc', 'Towner', 'Vendor', 'NpcStationary', 'Hireable', 'Buffy', 'NpcOutOfTown', 'Navi', 'TownRogue', 'JarJar', 'GoodNpcRanged', 'Hireable']);
 /** 퀘스트 단계(5~7) 에서 만드는 AI */
-const QUEST_AI = new Set(['Wussie', 'AncientStatue', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
+const QUEST_AI = new Set(['Wussie', 'AncientStatue']);
 
 type Inner = {
   monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean; killMonster(m: MonsterUnit, s: string): void;
@@ -208,6 +208,33 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
       expect(inner(game).monsterUseSkill(talic, 0, { x: 18.5, y: 18.5, fixed: true })).toBe(true);
       const ww = run(game, 120, (e) => e.some((x) => x.type === 'playerHit'));
       expect(ww.some((x) => x.type === 'playerHit')).toBe(true);
+    });
+
+    it('Baal: AI 가 Baal 스킬을 쓰고, 촉수 (Baal Tentacle) 는 주인이 죽으면 함께 죽고, 분신은 생명 1/3', () => {
+      const game = newGame(31, 132);
+      const baal = game.spawnMonster('baalcrab', 30.5, 20.5);
+      const used = new Set<string>();
+      run(game, 1500, (e) => {
+        for (const x of e) if (x.type === 'monsterSkill' && x.monsterId === baal.id) used.add(String(x.skill));
+        return used.size >= 3;
+      });
+      expect(used.size).toBeGreaterThanOrEqual(2);
+      const g2 = newGame(37, 132);
+      const b2 = g2.spawnMonster('baalcrab', 30.5, 20.5);
+      expect((g2 as unknown as { monsterUseNamedSkill(m: MonsterUnit, s: string, mode: string, t: SkillTarget): boolean })
+        .monsterUseNamedSkill(b2, 'Baal Tentacle', 'S2', { x: 20.5, y: 20.5 })).toBe(true);
+      run(g2, 80, () => g2.monsters.some((x) => x.type.id.startsWith('baaltentacle')));
+      const tentacles = g2.monsters.filter((x) => x.type.id.startsWith('baaltentacle'));
+      expect(tentacles.length).toBeGreaterThanOrEqual(2);
+      expect(tentacles.every((x) => x.waveOwner === b2.id)).toBe(true);
+      const w = (g2 as unknown as { aiWorld(): { spawnBaalClone(m: MonsterUnit, x: number, y: number): boolean } }).aiWorld();
+      expect(w.spawnBaalClone(b2, 24.5, 24.5)).toBe(true);
+      const clone = g2.monsters.find((x) => x.type.id === 'baalclone')!;
+      expect(clone.stats.maxHp).toBe(Math.trunc(b2.stats.maxHp / 3));
+      inner(g2).killMonster(b2, 'player');
+      run(g2, 60);
+      expect(g2.monsters.some((x) => x.type.id.startsWith('baaltentacle') && x.mode !== 'DD' && x.mode !== 'DT')).toBe(false);
+      expect(clone.mode === 'DD' || clone.mode === 'DT' || !g2.monsters.includes(clone)).toBe(true);
     });
 
     it('Succubus Witch: Amplify Damage (Skill1) 로 플레이어에게 저주', () => {

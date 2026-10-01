@@ -470,4 +470,97 @@ describe.skipIf(!hasLod)('Act 5 퀘스트 (확장팩 원작 데이터)', () => {
       expect(rec(g, QW.A5Q5, QFLAG.COMPLETEDNOW)).toBe(true);
     }, T);
   });
+  describe('A5Q6', () => {
+    type Obj = { id: number; type: { id: number }; mode: number; x: number; y: number };
+    const objs = (g: Game) => (inner(g) as unknown as { level: { objects: Obj[] } }).level.objects;
+    const prep = () => {
+      const r = new QuestRecord();
+      for (const w of [QW.A5Q1, QW.A5Q2, QW.A5Q3, QW.A5Q4, QW.A5Q5]) r.set(w, QFLAG.REWARDGRANTED);
+      return r;
+    };
+    const enter = (g: Game, key: string) => {
+      const def = g.levelDef(key)!;
+      const p = nearestWalkable(def.map, def.portalSpot ?? { x: def.map.width / 2, y: def.map.height / 2 }, 400)!;
+      g.changeLevel(key, p.x + 0.5, p.y + 0.5);
+      (g as unknown as { exitHold: boolean }).exitHold = true;
+      g.tick();
+    };
+
+    it('Eve of Destruction: 왕좌 — 시체 폭발·250 프레임 → Baal Subject 1~5 무리 (처치마다 다음) → baalcrabstairs 가 포털로 가서 Chamber 가 열림', () => {
+      const g = makeGame(4, prep().toJSON(), 90);
+      const W = QW.A5Q6;
+      expect(a5(g).stateOf(W).state).toBe(2);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q61a');
+      enter(g, 'throneofdestruction');
+      expect(a5(g).stateOf(W).lastState).toBe(2);
+      expect(g.questControl.exitBlocked(131, 132)).toBe(true);
+      const throne = inner(g).level.monsters.find((m) => m.type.id === 'baalthrone')!;
+      expect(throne, 'baal throne').toBeTruthy();
+      const portal = objs(g).find((o) => o.type.id === 563)!;
+      expect(portal, 'chamber portal').toBeTruthy();
+      // 플레이어를 왕좌 곁에
+      const spot = nearestWalkable(g.map, { x: throne.x, y: throne.y + 6 }, 10)!;
+      g.changeLevel(g.levelId, spot.x + 0.5, spot.y + 0.5);
+      const subjects: string[] = [];
+      for (let i = 0; i < 6000 && !a5(g).worldstoneChamberOpen(); i++) {
+        g.character!.life = g.maxLife();
+        g.tick();
+        const wave = inner(g).level.monsters.filter((m) => m.waveOwner === throne.id && m.mode !== 'DD' && m.mode !== 'DT');
+        if (wave.length) {
+          const su = wave.find((m) => m.superUnique !== undefined);
+          if (su) subjects.push(data.uniques!.superUnique(su.superUnique!)!.key);
+          for (const m of wave) inner(g).killMonster(m, 'player');
+        }
+      }
+      expect(subjects).toEqual(['Baal Subject 1', 'Baal Subject 2', 'Baal Subject 3', 'Baal Subject 4', 'Baal Subject 5']);
+      expect(a5(g).worldstoneChamberOpen()).toBe(true);
+      expect(a5(g).stateOf(W).lastState).toBe(3);
+      expect(g.questControl.exitBlocked(131, 132)).toBe(false);
+      expect(inner(g).level.monsters.some((m) => m.type.id === 'baalcrabstairs' || m.type.id === 'baalthrone')).toBe(false);
+      // 포털 563 → Worldstone Chamber
+      g.operateObject(portal as never);
+      g.tick();
+      expect(g.levelId).toBe('worldstonechamber');
+    }, T);
+
+    it('Baal 처치 (Chamber): 보상·진행 값 5·다음 난이도·금화·FX 19 → Tyrael3 → 대화 뒤 마지막 포털 → Harrogath·엔딩 (확장팩)', () => {
+      const g = makeGame(4, prep().toJSON(), 90);
+      const W = QW.A5Q6;
+      // Chamber 를 연 뒤로 (왕좌 단계는 앞 테스트)
+      (a5(g) as unknown as { q6: { wscOpen: boolean } }).q6.wscOpen = true;
+      enter(g, 'worldstonechamber');
+      const baal = inner(g).level.monsters.find((m) => m.type.id === 'baalcrab')!;
+      expect(baal, 'baal').toBeTruthy();
+      const gold0 = inner(g).events.length;
+      void gold0;
+      inner(g).events = [];
+      inner(g).killMonster(baal, 'player');
+      expect(rec(g, W, QFLAG.REWARDGRANTED) && rec(g, W, QFLAG.PRIMARYGOALDONE)).toBe(true);
+      expect(inner(g).events.some((e) => e.type === 'questFx' && e.fx === 19)).toBe(true);
+      expect(g.progression).toBe(5);
+      expect(g.difficultyUnlocked).toBe(1);
+      const gold = (inner(g) as unknown as { level: { ground: { item: { code: string; quantity: number } }[] } }).level.ground.filter((x) => x.item.code === 'gld');
+      expect(gold.some((x) => x.item.quantity >= 1500 && x.item.quantity <= 3000)).toBe(true);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q63');
+      for (let i = 0; i < 70 && !g.npcs.some((n) => n.type.id === 'tyrael3'); i++) g.tick();
+      expect(g.npcs.some((n) => n.type.id === 'tyrael3')).toBe(true);
+      // Tyrael 이야기 → 닫으면 마지막 포털 (565)
+      expect(speechKeys(talkTo(g, 'tyrael3'))).toContain('A5Q6SuccessfulTyrael');
+      closeTalk(g);
+      const last = (inner(g) as unknown as { level: { objects: Obj[] } }).level.objects.find((o) => o.type.id === 565)!;
+      expect(last, 'last portal').toBeTruthy();
+      for (let i = 0; i < 30; i++) g.tick();
+      inner(g).events = [];
+      g.operateObject(last as never);
+      const evs = [...inner(g).events];
+      g.tick();
+      expect(g.levelId).toBe('harrogath');
+      expect(evs.some((e) => e.type === 'gameCompleted' && e.expansion === true)).toBe(true);
+      expect(rec(g, W, QFLAG.CUSTOM6)).toBe(true);
+      // 마을: Larzuk 끝 대사 (ENTERAREA), Cain 은 CUSTOM6 뒤 없음
+      expect(speechKeys(talkTo(g, 'larzuk'))).toContain('A5Q6SuccessfulLarzuk');
+      expect(rec(g, W, QFLAG.ENTERAREA)).toBe(true);
+      expect(g.questControl.npcHasQuest('cain6')).toBe(false);
+    }, T);
+  });
 });

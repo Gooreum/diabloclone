@@ -1117,7 +1117,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               // Phase 7: 클래식 엔딩 (원작 엔딩 영상 대신 문구 — string.tbl Killdiablo1~3 + 칭호). 근사(원작 미확인): 표시 방식
               const title = heroTitle(FEMALE.includes(cls), Math.max(save?.progression ?? 0, game.progression), false, game.expansion);
               messageLog.push(str('Killdiablo1'), performance.now(), 'gold');
-              messageLog.push(str('KillDiablo2'), performance.now(), 'gold');
+              // 확장팩: 바알 뒤 마지막 포털 (원작 마지막 영상 'strlastcinematic' Destruction's End 대신 그 제목)
+              messageLog.push(ev.expansion ? str('strlastcinematic') : str('KillDiablo2'), performance.now(), 'gold');
               if (title) messageLog.push(`${str('KillDiablo3')} ${title} ${name}`, performance.now(), 'gold');
             } else if (ev.type === 'exitBlocked') {
               // Phase 7: 퀘스트가 닫은 출구 (원작 QUESTS_LevelWarpCheck — 막힌 소리). 근사: 메시지 없이 소리만 (Phase 9)

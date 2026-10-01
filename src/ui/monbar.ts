@@ -6,7 +6,7 @@ import type { MonsterSnapshot } from '../engine/game';
 import type { MonsterDb } from '../engine/monster';
 import { Rng } from '../engine/rng';
 import { d2text, drawText } from './text';
-import { MONFLAG, UMOD, UMOD_STRING, uniqueNameKeys, type UniqueDb } from '../engine/uniques';
+import { CHAMPION_UMODS, MONFLAG, UMOD, UMOD_STRING, uniqueNameKeys, type UniqueDb } from '../engine/uniques';
 
 /** 원작 글자 색 (D2 font color: 흰색 0, 파랑 3 챔피언, 금색 4 유니크) */
 export const MONBAR_COLORS = { normal: '#ffffff', champion: '#6969ff', unique: '#c7b377' } as const;
@@ -29,7 +29,7 @@ export class MonsterNamer {
     const base = this.str(t?.nameStr ?? m.typeId);
     const mods: string[] = [];
     for (const u of m.umods) {
-      if (u <= UMOD.LEVELADD || u === UMOD.QUESTCOMPLETE || u === UMOD.CHAMPION) continue;
+      if (u <= UMOD.LEVELADD || u === UMOD.QUESTCOMPLETE || CHAMPION_UMODS.includes(u)) continue;
       const k = UMOD_STRING[u];
       if (k) mods.push(this.str(k));
     }
@@ -37,7 +37,11 @@ export class MonsterNamer {
       const su = this.uniques.superUnique(m.superUnique);
       return { name: su ? this.str(su.name) : base, color: MONBAR_COLORS.unique, mods };
     }
-    if (m.flags & MONFLAG.CHAMPION) return { name: base, color: MONBAR_COLORS.champion, mods: [this.str(UMOD_STRING[UMOD.CHAMPION] ?? 'Champion'), ...mods] };
+    if (m.flags & MONFLAG.CHAMPION) {
+      // 확장팩 챔피언 종류면 그 이름 (Ghostly · Fanatic · Possessed · Berserker), 아니면 Champion
+      const kind = m.umods.find((u) => CHAMPION_UMODS.includes(u) && u !== UMOD.CHAMPION) ?? UMOD.CHAMPION;
+      return { name: base, color: MONBAR_COLORS.champion, mods: [this.str(UMOD_STRING[kind] ?? 'Champion'), ...mods] };
+    }
     if (m.flags & MONFLAG.UNIQUE && this.uniques) {
       const [p, s, a] = uniqueNameKeys(this.uniques, m.nameSeed, (seed) => new Rng(seed));
       return { name: [this.str(p), this.str(s), this.str(a)].filter(Boolean).join(' '), color: MONBAR_COLORS.unique, mods };

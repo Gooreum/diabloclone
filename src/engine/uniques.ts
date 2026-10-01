@@ -19,7 +19,12 @@ export const UMOD = {
   RNDNAME: 1, HPMULTIPLY: 2, LIGHT: 3, LEVELADD: 4, STRONG: 5, FAST: 6, CURSE: 7, RESIST: 8, FIRE: 9,
   CHAMPION: 16, LIGHTNING: 17, COLD: 18, QUESTCOMPLETE: 22, POISONHIT: 23, THIEF: 24, MANAHIT: 25, TELEPORT: 26,
   SPECTRALHIT: 27, STONESKIN: 28, MULTISHOT: 29, AURA: 30,
+  // 확장팩 챔피언 종류 (MonUMod version 100, champion 1 — 확장팩 게임에서만)
+  GHOSTLY: 36, FANATIC: 37, POSSESSED: 38, BERSERK: 39,
 } as const;
+
+/** 챔피언 수식어 (원작 cpick 이 있는 champion 행) */
+export const CHAMPION_UMODS: readonly number[] = [UMOD.CHAMPION, UMOD.GHOSTLY, UMOD.FANATIC, UMOD.POSSESSED, UMOD.BERSERK];
 
 export interface UModDef {
   id: number; name: string; enabled: boolean; version: number; xfer: boolean; champion: boolean; fPick: number;
@@ -125,12 +130,12 @@ export class UniqueDb {
   }
 
   /**
-   * 수식어가 이 몬스터에 붙을 수 있는가. 출처: sub_6FC6EC10 — enabled, 클래식은 version < 100, exclude MonType,
+   * 수식어가 이 몬스터에 붙을 수 있는가. 출처: sub_6FC6EC10 — enabled, 클래식 게임은 version < 100 (확장팩 게임은 모두), exclude MonType,
    * fPick 1 = A1 모드, 2 = 근접(isMelee)·nomultishot 이 아닌 몬스터, 3 = 걷기 모드
    * 근사(원작 미확인): exclude 는 MonType 중첩(MonType.txt) 대신 같은 MonType 만 비교 (Act 1 에 해당 몬스터 없음)
    */
   canPick(u: UModDef, t: MonsterType): boolean {
-    if (!u.enabled || u.version >= 100) return false;
+    if (!u.enabled || (!this.monsters.expansion && u.version >= 100)) return false;
     if (u.exclude.includes(t.monType)) return false;
     if (u.fPick === 1) return t.modes.has('A1');
     if (u.fPick === 2) return !(t.isMelee || t.noMultishot);
@@ -354,14 +359,41 @@ export function applyUModInit(ctx: UModContext, m: UModTarget, umod: number, bUn
       // 출처: MONSTERUNIQUE_UMod26_Teleport — MonTeleport 스킬 부여
       if (bUnique) m.skillsAdded.push('MonTeleport');
       break;
-    case UMOD.CHAMPION: {
-      // 출처: MONSTERUNIQUE_UMod16_Champion — 레벨 −1, 경험치 − 2/5, 피해 constants[11]%·명중 constants[10]% × ChampionDmgBonus/100, 속도 +20%
+    case UMOD.CHAMPION:
+      if (bUnique) umodChampion(ctx, m, umod);
+      break;
+    case UMOD.GHOSTLY: {
+      // 출처: MONSTERUNIQUE_UMod36_Ghostly — (반투명 0x40) 물리 저항 80, Champion, 냉기 피해 = MonLvl DM × constants[22+d]·[25+d] %, 냉기 길이 150
+      // 근사(원작 미확인): 반투명 그림 (MONTYPEFLAG_GHOSTLY) 은 그리지 않는다
       if (!bUnique) break;
-      m.stats.level -= 1;
-      m.stats.exp -= Math.trunc((2 * m.stats.exp) / 5);
-      addBonus(m, 'damagepercent', Math.trunc((ctx.db.constant(11) * ctx.championDmgBonus) / 100));
-      addBonus(m, 'item_tohit_percent', Math.trunc((ctx.db.constant(10) * ctx.championDmgBonus) / 100));
-      if (m.type.velocity > 0) addBonus(m, 'velocitypercent', 20);
+      m.resist.dm = 80;
+      umodChampion(ctx, m, umod);
+      const dm = ctx.monsters.levelBase(Math.max(1, m.stats.level), 'DM');
+      addBonus(m, 'coldmindam', Math.trunc((dm * ctx.db.constant(d + 22)) / 100));
+      addBonus(m, 'coldmaxdam', Math.trunc((dm * ctx.db.constant(d + 25)) / 100));
+      addBonus(m, 'coldlength', 150);
+      break;
+    }
+    case UMOD.FANATIC:
+      // 출처: MONSTERUNIQUE_UMod37_Fanatic — 방어 −70 %, Champion (속도 = clamp(2048/Velocity − 128, 10, 100))
+      if (!bUnique) break;
+      m.stats.defense = Math.trunc((m.stats.defense * 30) / 100);
+      umodChampion(ctx, m, umod);
+      break;
+    case UMOD.POSSESSED:
+      // 출처: MONSTERUNIQUE_UMod38_Possessed — 최대 생명 ×2, Champion
+      if (!bUnique) break;
+      m.stats.maxHp *= 2;
+      m.hp = m.stats.maxHp;
+      umodChampion(ctx, m, umod);
+      break;
+    case UMOD.BERSERK: {
+      // 출처: MONSTERUNIQUE_UMod39_Berserk — 최대 생명 −75 %, 피해·명중 + 3 × ChampionDmgBonus (Champion 효과 없음)
+      if (!bUnique) break;
+      m.stats.maxHp += calcPercentage(m.stats.maxHp, -75, 100);
+      m.hp = m.stats.maxHp;
+      addBonus(m, 'damagepercent', 3 * ctx.championDmgBonus);
+      addBonus(m, 'item_tohit_percent', 3 * ctx.championDmgBonus);
       break;
     }
     case UMOD.AURA:
@@ -371,6 +403,20 @@ export function applyUModInit(ctx: UModContext, m: UModTarget, umod: number, bUn
     default:
       break;
   }
+}
+
+/**
+ * 출처: MONSTERUNIQUE_UMod16_Champion — 레벨 −1, 경험치 − 2/5, 피해 constants[11]%·명중 constants[10]% × ChampionDmgBonus/100,
+ *   속도: Ghostly 없음, Fanatic clamp(2048/Velocity − 128, 10, 100), 그 밖 +20 %
+ */
+function umodChampion(ctx: UModContext, m: UModTarget, umod: number): void {
+  m.stats.level -= 1;
+  m.stats.exp -= Math.trunc((2 * m.stats.exp) / 5);
+  addBonus(m, 'damagepercent', Math.trunc((ctx.db.constant(11) * ctx.championDmgBonus) / 100));
+  addBonus(m, 'item_tohit_percent', Math.trunc((ctx.db.constant(10) * ctx.championDmgBonus) / 100));
+  if (m.type.velocity <= 0 || umod === UMOD.GHOSTLY) return;
+  if (umod === UMOD.FANATIC) addBonus(m, 'velocitypercent', Math.min(100, Math.max(10, Math.trunc(2048 / m.type.velocity) - 128)));
+  else addBonus(m, 'velocitypercent', 20);
 }
 
 /** 미니언 수 굴림. 출처: D2GAME_SpawnMinions_6FC6F440 — nMin + rand(nMax − nMin + 1) */
@@ -403,4 +449,6 @@ export const UMOD_STRING: Record<number, string> = {
   [UMOD.FIRE]: 'uniquefireenchanted', [UMOD.COLD]: 'monsteruniqueprop1', [UMOD.LIGHTNING]: 'monsteruniqueprop2', [UMOD.MANAHIT]: 'monsteruniqueprop3',
   [UMOD.SPECTRALHIT]: 'monsteruniqueprop4', [UMOD.TELEPORT]: 'monsteruniqueprop5', [UMOD.STONESKIN]: 'monsteruniqueprop6', [UMOD.MULTISHOT]: 'monsteruniqueprop7',
   [UMOD.THIEF]: 'monsteruniqueprop8', [UMOD.AURA]: 'monsteruniqueprop9', [UMOD.CHAMPION]: 'Champion',
+  // 확장팩 챔피언 종류 (string.tbl Ghostly · Fanatic · Possessed · Berserk "Berserker")
+  [UMOD.GHOSTLY]: 'Ghostly', [UMOD.FANATIC]: 'Fanatic', [UMOD.POSSESSED]: 'Possessed', [UMOD.BERSERK]: 'Berserk',
 };

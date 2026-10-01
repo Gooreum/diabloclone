@@ -9,6 +9,7 @@ import { buildGameData, withDifficulty } from '../../src/data/gamedata';
 import type { GameData } from '../../src/engine/game';
 import { rollMonsterStats } from '../../src/engine/monster';
 import { Rng } from '../../src/engine/rng';
+import { applyUModInit, UMOD, type UModTarget } from '../../src/engine/uniques';
 
 let tables: GameTables;
 let classic: GameData;
@@ -59,6 +60,54 @@ describe.skipIf(!hasGameData)('확장팩 공통 규칙', () => {
       expect(lod.objects!.levels.get(BLOOD_MOOR)!.monLvl).toBe(n(levelRow().MonLvl1Ex));
       const t = lod.monsters.get('zombie1');
       expect(rollMonsterStats(lod.monsters, t, new Rng(5), undefined, 99).level).toBe(t.level);
+    });
+  });
+  describe('확장팩 챔피언 수식어 (MonUMod version 100)', () => {
+    const roll = (d: GameData) => {
+      const t = d.monsters.get('zombie1');
+      const rng = new Rng(17);
+      const seen = new Set<number>();
+      for (let i = 0; i < 3000; i++) {
+        const r = d.uniques!.rollBossMods(t, rng, true);
+        if (r.champion) seen.add(r.umods[r.umods.length - 1]!);
+      }
+      return seen;
+    };
+    it('확장팩 게임은 챔피언 굴림에서 Ghostly·Fanatic·Possessed·Berserk 가 나온다', () => {
+      const seen = roll(lod);
+      for (const u of [UMOD.CHAMPION, UMOD.GHOSTLY, UMOD.FANATIC, UMOD.POSSESSED, UMOD.BERSERK]) expect(seen.has(u), String(u)).toBe(true);
+    });
+    it('클래식 게임은 Champion 만 (version 100 행 막힘)', () => {
+      expect([...roll(classic)]).toEqual([UMOD.CHAMPION]);
+    });
+
+    const target = (d: GameData): UModTarget => {
+      const t = d.monsters.get('zombie1');
+      const st = rollMonsterStats(d.monsters, t, new Rng(3));
+      return {
+        type: t, stats: { level: st.level, maxHp: st.maxHp, exp: st.exp, defense: st.defense }, hp: st.maxHp, rng: new Rng(4), flags: 0, nameSeed: 0,
+        bonus: {}, resist: { dm: 0, ma: 0, fi: 0, li: 0, co: 0, po: 0 }, hpRegen: true, skillsAdded: [],
+      } as unknown as UModTarget;
+    };
+    const ctx = () => ({ db: lod.uniques!, monsters: lod.monsters, difficulty: 0, championDmgBonus: 90 });
+    it('효과: Ghostly 물리 저항 80·냉기 피해, Fanatic 방어 −70 %, Possessed 생명 ×2, Berserk 생명 −75 %·피해 +270 % (Normal 90×3)', () => {
+      const g = target(lod);
+      applyUModInit(ctx(), g, UMOD.GHOSTLY, true);
+      expect(g.resist.dm).toBe(80);
+      expect((g.bonus.coldmaxdam ?? 0) > 0 && g.bonus.coldlength === 150).toBe(true);
+      expect(g.bonus.velocitypercent ?? 0).toBe(0);
+      const f = target(lod), def = f.stats.defense;
+      applyUModInit(ctx(), f, UMOD.FANATIC, true);
+      expect(f.stats.defense).toBe(Math.trunc((def * 30) / 100));
+      expect(f.bonus.velocitypercent ?? 0).toBeGreaterThanOrEqual(10);
+      const p = target(lod), hp = p.stats.maxHp;
+      applyUModInit(ctx(), p, UMOD.POSSESSED, true);
+      expect(p.stats.maxHp).toBe(hp * 2);
+      const b = target(lod), hpb = b.stats.maxHp, lvl = b.stats.level;
+      applyUModInit(ctx(), b, UMOD.BERSERK, true);
+      expect(b.stats.maxHp).toBeLessThan(hpb);
+      expect(b.bonus.damagepercent).toBe(270);
+      expect(b.stats.level).toBe(lvl);
     });
   });
 });

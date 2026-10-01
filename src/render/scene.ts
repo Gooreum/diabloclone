@@ -159,8 +159,8 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
       draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        // 그림자 전사: 어둡고 비치게. 근사(원작 미확인): 원작 그림자 팔레트 대신 밝기 0.25 · 50% 불투명
-        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit, m.mode !== 'DD' && !!d.shadowOf?.(m.typeId), m.shadow ? 0.25 : undefined);
+        // 그림자 전사: 어둡고 비치게. 근사(원작 미확인): 원작 그림자 팔레트 대신 밝기 0.45 · 75% 불투명
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit, m.mode !== 'DD' && !!d.shadowOf?.(m.typeId), m.shadow ? 0.45 : undefined);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });

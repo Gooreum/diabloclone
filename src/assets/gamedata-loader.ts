@@ -8,7 +8,7 @@ export const EXCEL_TABLES = ['weapons', 'armor', 'misc', 'ItemTypes', 'TreasureC
   'MagicPrefix', 'MagicSuffix', 'RarePrefix', 'RareSuffix', 'UniqueItems', 'SetItems', 'Sets', 'QualityItems', 'LowQualityItems', 'Properties', 'ItemStatCost', 'Gems', 'Inventory', 'Belts', 'npc', 'books',
   'Objects', 'ObjGroup', 'shrines', 'AutoMap', 'LvlTypes', 'states', 'Overlay',
   'MonSeq', 'MonUMod', 'SuperUniques', 'MonPreset', 'MonPlace', 'UniquePrefix', 'UniqueSuffix', 'UniqueAppellation',
-  'Hireling', 'HireDesc', 'gamble', 'CubeMain', 'Runes'];
+  'Hireling', 'HireDesc', 'gamble', 'CubeMain', 'Runes', 'MonEquip'];
 
 export async function loadGameData(assets: AssetLoader): Promise<{ data: GameData; tables: GameTables }> {
   await assets.preload([...EXCEL_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\global\\AnimData.d2']);

@@ -275,7 +275,7 @@ export class UnitGfx {
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
       // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
-      const blend = layer?.transparent ? layer.drawEffect : dim !== undefined ? 1 : -1;
+      const blend = layer?.transparent ? layer.drawEffect : dim !== undefined ? 0 : -1;
       sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright, lightAt: feet, ...(dim !== undefined ? { dim } : {}) });
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);

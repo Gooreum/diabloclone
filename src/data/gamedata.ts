@@ -12,6 +12,7 @@ import { ObjectDb } from '../engine/objects';
 import { UniqueDb } from '../engine/uniques';
 import { HirelingDb } from '../engine/hireling';
 import { CubeDb } from '../engine/cube';
+import { RunewordDb } from '../engine/runewords';
 import { parseGamble } from '../engine/shop';
 import { parseStateOverlays } from '../engine/states';
 import type { GameData } from '../engine/game';
@@ -50,6 +51,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src), op
     hirelings: new HirelingDb(tables.table('Hireling'), tables.table('HireDesc'), expansion),
     // 호라드릭 큐브 조합 (cubemain.txt — 유니크·세트 이름 입력은 uniqueitems / setitems index)
     cube: new CubeDb(tables.table('CubeMain'), items, treasure.gen.uniques.map((u) => u.name), treasure.gen.setItems.map((u) => u.name)),
+    runewords: new RunewordDb(tables.table('Runes')),
     gamble: parseGamble(items, tables.table('gamble')),
     stateOverlays: parseStateOverlays(tables.table('States'), tables.table('Overlay')),
     uniques: new UniqueDb(monsters, {

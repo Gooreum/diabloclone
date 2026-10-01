@@ -40,7 +40,7 @@ export interface SetDef { name: string; partial: Mod[][]; full: Mod[] }
 interface QualityItemDef { mods: Mod[]; armor: boolean; weapon: boolean; shield: boolean; scepter: boolean; wand: boolean; staff: boolean; bow: boolean; boots: boolean; gloves: boolean; belt: boolean }
 interface PropBlock { set: number; val: number; func: number; stat: string }
 
-const mods = (r: TxtRow, code: string, param: string, min: string, max: string, count: number, start = 1): Mod[] => {
+export const parseMods = (r: TxtRow, code: string, param: string, min: string, max: string, count: number, start = 1): Mod[] => {
   const out: Mod[] = [];
   for (let i = start; i < start + count; i++) {
     const c = r[code.replace('#', String(i))];
@@ -64,6 +64,8 @@ export interface GenContext {
   droppedUniques: Set<number>;
   /** 이더리얼 굴림 (확장팩만): roll 5% · always · never(기본) */
   ethereal?: 'roll' | 'always' | 'never';
+  /** 난이도 (0 Normal · 1 Nightmare · 2 Hell) — 확장팩 드롭 소켓 상한 */
+  difficulty?: number;
 }
 
 export class ItemGen {
@@ -102,7 +104,7 @@ export class ItemGen {
         idx, prefix, name: r.Name ?? '', spawnable: n(r.spawnable) === 1, rare: n(r.rare) === 1,
         level: n(r.level), maxLevel: n(r.maxlevel), levelReq: n(r.levelreq), classSpecific: r.classspecific ?? '',
         frequency: n(r.frequency), group: n(r.group), costAdd: n(r.add), costMult: n(r.multiply),
-        mods: mods(r, 'mod#code', 'mod#param', 'mod#min', 'mod#max', 3),
+        mods: parseMods(r, 'mod#code', 'mod#param', 'mod#min', 'mod#max', 3),
         itypes: [1, 2, 3, 4, 5, 6, 7].map((i) => r[`itype${i}`] ?? '').filter(Boolean),
         etypes: [1, 2, 3, 4, 5].map((i) => r[`etype${i}`] ?? '').filter(Boolean),
         // 클래식 필터 (version >= 100 은 확장팩), 이름 없는 행(Expansion 구분선)은 제외
@@ -121,23 +123,23 @@ export class ItemGen {
     this.uniques = t.uniqueitems.map((r, idx) => ({
       idx, name: r.index ?? '', costAdd: n(r['cost add']), costMult: n(r['cost mult']), enabled: n(r.enabled) === 1 && CLASSIC(r.version), ladder: n(r.ladder) === 1, rarity: n(r.rarity),
       noLimit: n(r.nolimit) === 1, lvl: n(r.lvl), lvlReq: n(r['lvl req']), code: r.code ?? '',
-      mods: mods(r, 'prop#', 'par#', 'min#', 'max#', 12), invFile: r.invfile ?? '',
+      mods: parseMods(r, 'prop#', 'par#', 'min#', 'max#', 12), invFile: r.invfile ?? '',
     }));
     const setVersion = new Map(t.sets.map((r) => [r.index ?? '', r.version]));
     for (const r of t.sets) {
       if (!r.index) continue;
       const partial: Mod[][] = [];
-      for (const k of [2, 3, 4, 5]) partial.push([...mods(r, `PCode${k}a`, `PParam${k}a`, `PMin${k}a`, `PMax${k}a`, 1), ...mods(r, `PCode${k}b`, `PParam${k}b`, `PMin${k}b`, `PMax${k}b`, 1)]);
-      this.sets.set(r.index, { name: r.name ?? r.index, partial, full: mods(r, 'FCode#', 'FParam#', 'FMin#', 'FMax#', 8) });
+      for (const k of [2, 3, 4, 5]) partial.push([...parseMods(r, `PCode${k}a`, `PParam${k}a`, `PMin${k}a`, `PMax${k}a`, 1), ...parseMods(r, `PCode${k}b`, `PParam${k}b`, `PMin${k}b`, `PMax${k}b`, 1)]);
+      this.sets.set(r.index, { name: r.name ?? r.index, partial, full: parseMods(r, 'FCode#', 'FParam#', 'FMin#', 'FMax#', 8) });
     }
     this.setItems = t.setitems.map((r, idx) => ({
       idx, name: r.index ?? '', costAdd: n(r['cost add']), costMult: n(r['cost mult']), set: r.set ?? '', code: r.item ?? '', rarity: n(r.rarity), lvl: n(r.lvl), lvlReq: n(r['lvl req']),
-      mods: mods(r, 'prop#', 'par#', 'min#', 'max#', 9), addFunc: n(r['add func']), invFile: r.invfile ?? '',
-      partial: [1, 2, 3, 4, 5].map((k) => [...mods(r, `aprop${k}a`, `apar${k}a`, `amin${k}a`, `amax${k}a`, 1), ...mods(r, `aprop${k}b`, `apar${k}b`, `amin${k}b`, `amax${k}b`, 1)]),
+      mods: parseMods(r, 'prop#', 'par#', 'min#', 'max#', 9), addFunc: n(r['add func']), invFile: r.invfile ?? '',
+      partial: [1, 2, 3, 4, 5].map((k) => [...parseMods(r, `aprop${k}a`, `apar${k}a`, `amin${k}a`, `amax${k}a`, 1), ...parseMods(r, `aprop${k}b`, `apar${k}b`, `amin${k}b`, `amax${k}b`, 1)]),
       ...(CLASSIC(setVersion.get(r.set ?? '')) && r.item ? {} : { rarity: -1 }),
     }));
     this.qualityItems = t.qualityitems.map((r) => ({
-      mods: mods(r, 'mod#code', 'mod#param', 'mod#min', 'mod#max', 2),
+      mods: parseMods(r, 'mod#code', 'mod#param', 'mod#min', 'mod#max', 2),
       armor: n(r.armor) === 1, weapon: n(r.weapon) === 1, shield: n(r.shield) === 1, scepter: n(r.scepter) === 1, wand: n(r.wand) === 1,
       staff: n(r.staff) === 1, bow: n(r.bow) === 1, boots: n(r.boots) === 1, gloves: n(r.gloves) === 1, belt: n(r.belt) === 1,
     }));
@@ -159,9 +161,9 @@ export class ItemGen {
       if (!r.code) continue;
       this.gems.set(r.code, {
         code: r.code,
-        weapon: mods(r, 'weaponMod#Code', 'weaponMod#Param', 'weaponMod#Min', 'weaponMod#Max', 3),
-        helm: mods(r, 'helmMod#Code', 'helmMod#Param', 'helmMod#Min', 'helmMod#Max', 3),
-        shield: mods(r, 'shieldMod#Code', 'shieldMod#Param', 'shieldMod#Min', 'shieldMod#Max', 3),
+        weapon: parseMods(r, 'weaponMod#Code', 'weaponMod#Param', 'weaponMod#Min', 'weaponMod#Max', 3),
+        helm: parseMods(r, 'helmMod#Code', 'helmMod#Param', 'helmMod#Min', 'helmMod#Max', 3),
+        shield: parseMods(r, 'shieldMod#Code', 'shieldMod#Param', 'shieldMod#Min', 'shieldMod#Max', 3),
       });
     }
     for (const r of t.skills) {
@@ -240,7 +242,7 @@ export class ItemGen {
       break;
     }
     item.quality = q;
-    if (q === QUALITY.NORMAL || q === QUALITY.SUPERIOR) this.rollSockets(item, base, itemRng, startSeed);
+    if (q === QUALITY.NORMAL || q === QUALITY.SUPERIOR) this.rollSockets(item, base, itemRng, startSeed, ctx.difficulty ?? 0);
     if (q === QUALITY.NORMAL) this.staffMods(item, base, itemRng);
     this.finishStats(item, base);
     if (this.expansion && ctx.ethereal && ctx.ethereal !== 'never') this.rollEthereal(item, base, itemRng, ctx.ethereal === 'always');
@@ -382,7 +384,8 @@ export class ItemGen {
     const rp = pick(this.rarePrefixes), rs = pick(this.rareSuffixes);
     if (!rp || !rs) return false;
     item.rareName = [rp.idx, rs.idx];
-    const count = [3, 4, 4, 5, 5, 5, 6, 6][Number(rng.next() & 7n) & 7] as number;
+    // 레어 주얼은 3~4 접사 (출처: D2MOO D2GAME_RollRareItem — ITEMS_MIN/MAX_AFFIXES_RARE_JEWEL)
+    const count = this.isType(base, 'jewl') ? 3 + rng.pick(2) : ([3, 4, 4, 5, 5, 5, 6, 6][Number(rng.next() & 7n) & 7] as number);
     let pDone = false, sDone = false;
     const chosen: { a: MagicAffix }[] = [];
     for (let i = 0; i < count && !(pDone && sDone); i++) {
@@ -508,14 +511,15 @@ export class ItemGen {
 
   // ---------------------------------------------------------------- 소켓 · 지팡이 스킬
 
-  private rollSockets(item: ItemInstance, base: ItemBase, rng: Rng, startSeed: number): void {
+  private rollSockets(item: ItemInstance, base: ItemBase, rng: Rng, startSeed: number, difficulty: number): void {
     if (!base.hasInv || base.stackable) return;
     const def = [...this.items.typeChain(base.type)].map((t) => this.items.types.get(t)).find((d) => d && (d.maxSock[0] || d.maxSock[1] || d.maxSock[2]));
     const tierIdx = item.ilvl <= 25 ? 0 : item.ilvl <= 40 ? 1 : 2;
     let maxS = Math.min(base.gemSockets, def?.maxSock[tierIdx] ?? 0);
     // 클래식: 최대 3, 몸통 갑옷은 소켓 굴림 자체가 없다
-    // 근사(원작 미확인): 확장팩은 3 상한·몸통 갑옷 제외를 풀고 itemtypes MaxSock·기본템 gemsockets 만 따른다
+    // 확장팩: 난이도 상한 Normal 3 · Nightmare 4 · Hell 6 (출처: D2MOO sub_6FC4D6B0)
     if (!this.expansion) maxS = Math.min(maxS, 3);
+    else maxS = Math.min(maxS, [3, 4, 6][difficulty] ?? 6);
     if (maxS <= 0) return;
     if (!this.expansion && this.isType(base, 'tors')) return;
     if (Number(rng.next() & 0xffffffffn) % 100 >= 33) return;

@@ -42,6 +42,7 @@ import {
 import { WaypointFlags } from './waypoints';
 import { AutomapReveal } from './automap';
 import { transmute, type CubeDb } from './cube';
+import type { RunewordDb } from './runewords';
 import { MERC_MODES, mercExpGain, mercLevelFor, mercStats, resurrectCost, type HirelingDb, type MercSave, type MercStats } from './hireling';
 import { ACT_TOWN_KEYS, NPC_DEFS, NpcServices, QUESTFLAG_A2Q0, QUESTFLAG_A2Q4, QUESTFLAG_A2Q6, QUESTFLAG_A3Q0, QUESTFLAG_A3Q6, TRAVEL, type HireCandidate, type NpcOption, type TradeHost } from './npc';
 import type { StoreItem } from './shop';
@@ -97,6 +98,8 @@ export interface GameData {
   hirelings?: HirelingDb;
   /** 호라드릭 큐브 조합 (cubemain.txt) */
   cube?: CubeDb;
+  /** 룬워드 (runes.txt, 확장팩 캐릭터만 완성) */
+  runewords?: RunewordDb;
   /** gamble.txt 선택표 (도박) */
   gamble?: GambleTable;
   /** states.txt 상태 → overlay.txt 그림 (상태 오버레이). 출처: states.txt overlay1~4, overlay.txt Filename/Frames */
@@ -509,6 +512,7 @@ export class Game {
     this.expTable = init.expTable;
     // 유니크 한 번만 드롭 규칙은 게임(판)마다 새로 시작 (출처: pGame->dwUniqueFlags)
     init.data?.treasure.droppedUniques.clear();
+    if (init.data) init.data.treasure.difficulty = init.difficulty ?? 0;
     // 위치가 있는 인벤토리는 그대로, 없는 것(x < 0, 예전 저장)은 빈 자리에 자동 배치
     const placed = (init.inventoryGrid ?? []).filter((p) => p.x >= 0);
     const loose = [...(init.inventoryGrid ?? []).filter((p) => p.x < 0).map((p) => p.item), ...(init.inventory ?? [])];
@@ -1519,11 +1523,19 @@ export class Game {
           this.questControl.itemDropped(found.item.code);
         }
         if (cmd.to.kind === 'socket') {
-          // 박힌 보석은 대상 종류에 맞는 속성을 갖는다 (gems.txt)
+          // 박힌 보석·룬은 대상 종류에 맞는 속성(gems.txt), 주얼은 자기 매직·레어 속성 그대로 (출처: D2MOO ItemMode.cpp 소켓 처리)
           const target = this.store.find(cmd.to.itemId);
           const tb = target ? this.data?.items.base(target.item.code) : undefined;
+          const gb = this.data?.items.base(found.item.code);
           const gen = this.data?.treasure.gen;
-          if (tb && gen) found.item.stats = gemStats(gen, found.item, tb);
+          if (tb && gb && gen && !this.data!.items.isType(gb, 'jewl')) found.item.stats = gemStats(gen, found.item, tb);
+          // 마지막 소켓을 채우면 룬워드 완성 (확장팩 캐릭터만) — T1 속성을 한 번 굴려 아이템 자체 속성으로 (출처: ITEMMODS_UpdateRuneword)
+          const rw = target && tb && gen && this.data?.expansion ? this.data.runewords?.match(this.data.items, target.item) : null;
+          if (rw && target && tb && gen) {
+            target.item.runeword = rw.idx;
+            gen.assignMods(target.item, tb, rw.mods, this.rng);
+            this.events.push({ type: 'runeword', itemId: target.item.id, runeword: rw.idx });
+          }
           this.statsDirty = true;
         }
         if (found.where.kind === 'equip' || cmd.to.kind === 'equip') this.statsDirty = true;

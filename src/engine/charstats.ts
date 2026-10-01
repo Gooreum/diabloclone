@@ -87,6 +87,16 @@ export function setBonusStats(equipped: ItemInstance[], gen: ItemGen | null, ite
 /** 세트 보너스 값은 고정(min=max 로 넘겨 굴림이 일어나지 않는다) */
 const noRoll = () => new Rng(1);
 
+/**
+ * 아이템 자체 스탯 (소켓에 박힌 보석·룬·주얼 속성 포함 — 박힌 물건의 속성은 부모 아이템 속성 목록에 합쳐진다).
+ * 출처: D2MOO D2GAME_ITEMS_UpdateItemStatlist (소켓 아이템 statlist 를 부모에 붙임)
+ */
+export function localStat(item: ItemInstance, stat: string): number {
+  let v = statOf(item, stat);
+  for (const g of item.socketed) v += statOf(g, stat);
+  return v;
+}
+
 /** 이더리얼 기본 피해 (던지기 피해 등 weaponDamage 밖에서 쓰는 기본값) */
 export const etherealBase = (item: ItemInstance, v: number): number => (item.ethereal ? Math.trunc((3 * v) / 2) : v);
 
@@ -100,15 +110,15 @@ export function weaponDamage(item: ItemInstance, base: ItemBase): { min: number;
     bmin = Math.max(Math.trunc((75 * bmin) / 100), 1);
     bmax = Math.max(Math.trunc((75 * bmax) / 100), 2);
   }
-  const edMin = statOf(item, 'item_mindamage_percent'), edMax = statOf(item, 'item_maxdamage_percent');
-  const min = Math.trunc((bmin * (100 + edMin)) / 100) + statOf(item, 'mindamage');
-  const max = Math.trunc((bmax * (100 + edMax)) / 100) + statOf(item, 'maxdamage');
+  const edMin = localStat(item, 'item_mindamage_percent'), edMax = localStat(item, 'item_maxdamage_percent');
+  const min = Math.trunc((bmin * (100 + edMin)) / 100) + localStat(item, 'mindamage');
+  const max = Math.trunc((bmax * (100 + edMax)) / 100) + localStat(item, 'maxdamage');
   return { min, max: Math.max(max, min + 1) };
 }
 
 /** 방어구 방어: 기본 × (100 + ED%)/100 + 추가 방어. 출처: Maxroll Defense */
 export function armorDefense(item: ItemInstance): number {
-  return Math.trunc((item.defense * (100 + statOf(item, 'item_armor_percent'))) / 100) + statOf(item, 'armorclass');
+  return Math.trunc((item.defense * (100 + localStat(item, 'item_armor_percent'))) / 100) + localStat(item, 'armorclass');
 }
 
 /**
@@ -131,14 +141,13 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
     if (isArmor) defense += armorDefense(it);
     if (items.isType(b, 'shld')) block += b.block;
     // 미감정 아이템은 기본 수치(방어·피해)만, 마법 속성은 감정 후 (근사: 원작 스탯 레이어 처리 미확인)
-    for (const s of it.identified ? it.stats : []) {
+    // 자기 속성 + 소켓에 박힌 것의 속성 (부모 아이템 속성으로 합쳐져 무기 ED%·방어구 방어는 그 아이템에만)
+    for (const s of [...(it.identified ? it.stats : []), ...it.socketed.flatMap((g) => g.stats)]) {
       if (s.param !== 0) continue;
       if (isWeapon && WEAPON_LOCAL.has(s.stat)) continue;
       if (isArmor && ARMOR_LOCAL.has(s.stat)) continue;
       add(s.stat, s.value);
     }
-    // 소켓 보석 속성은 캐릭터 전체에 (보석 방어·피해는 gems.txt 속성 그대로)
-    for (const g of it.socketed) for (const s of g.stats) if (s.param === 0) add(s.stat, s.value);
     if (slot === 'rarm' && isWeapon) {
       const d = weaponDamage(it, b);
       weaponMin = d.min;

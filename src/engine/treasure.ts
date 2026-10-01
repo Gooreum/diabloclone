@@ -60,6 +60,8 @@ export interface ItemInstance {
   edDefenseBase?: boolean;
   /** 이더리얼 (확장팩): 기본 피해·방어 ×1.5, 최대 내구 max/2+1, 수리 불가 — 출처: D2MOO ITEMMODS_ApplyEthereality / ITEMS_MakeEthereal */
   ethereal?: boolean;
+  /** 룬워드 (runes.txt 행 번호) — 완성 때 T1 속성이 stats 에 들어간다 */
+  runeword?: number;
 }
 
 interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare: number; rareDiv: number; rareMin: number; set: number; setDiv: number; setMin: number; magic: number; magicDiv: number; magicMin: number; hiQ: number; hiQDiv: number; normal: number; normalDiv: number }
@@ -74,6 +76,8 @@ export class TreasureDb {
   gen: ItemGen | null = null;
   /** 이번 게임에서 이미 나온 유니크 (nolimit 제외, 게임마다 초기화). 출처: pGame->dwUniqueFlags */
   readonly droppedUniques = new Set<number>();
+  /** 지금 게임 난이도 (Game 이 시작 때 정한다 — 확장팩 드롭 소켓 상한) */
+  difficulty = 0;
 
   /** 확장팩 캐릭터용: 확장팩 기본템(version 100)·투척 무기도 떨어진다 */
   readonly expansion: boolean;
@@ -301,7 +305,7 @@ export class TreasureDb {
     if (generate && this.gen && base.code !== 'gld') {
       // 원작은 아이템 시드(품질·접사)와 유닛 시드(기본 능력치)를 따로 쓴다
       const itemRng = new Rng(Number(rng.next() & 0xffffffffn) || 1);
-      this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques, ethereal: eth });
+      this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques, ethereal: eth, difficulty: this.difficulty });
     }
     // 출처: D2MOO D2Game ITEMS/Items.cpp — 수량 = rand(spawnstack − minstack) + minstack (spawnstack 이 없거나 작으면 max(minstack, maxstack))
     if (base.stackable) {

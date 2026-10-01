@@ -459,6 +459,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, cube: save?.cube ?? [], belt, gold: save?.gold ?? 0,
     stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}),
+    ...(save?.altWeapons ? { altWeapons: save.altWeapons } : {}), ...(save?.weaponSet ? { weaponSet: save.weaponSet } : {}), ...(save?.altSkills ? { altSkills: save.altSkills } : {}),
   });
   // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)
   const detachSound = attachSound(game, { assets, tables, data, cls });
@@ -872,6 +873,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       else if (act === 'char') toggleChar();
       else if (act === 'beltshow') hud.beltOpen = !hud.beltOpen;
       else if (act === 'clearmsg') messageLog.clear();
+      else if (act === 'swap') game.swapWeapons();
       // 원작: R = 달리기/걷기 (InputController 가 바꾼다), S = 스킬 고르기 (오른쪽)
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
@@ -914,7 +916,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         // Phase 7: 디아블로를 죽이면 다음 난이도 (game.difficultyUnlocked), 진행 값 (칭호)
         act: game.act, difficulty: game.difficulty, difficultyUnlocked: Math.max(save?.difficultyUnlocked ?? 0, game.difficultyUnlocked) as Difficulty, ...byDiff,
         // 난이도별 마지막 막 (이번 난이도 칸은 makeSave 가 act 로), 칭호 진행 값
-        actByDiff: save?.actByDiff, expansion: game.expansion, ...(save?.progression !== undefined || game.progression ? { progression: Math.max(save?.progression ?? 0, game.progression) } : {}),
+        actByDiff: save?.actByDiff, expansion: game.expansion,
+        altWeapons: st.altWeapons as Record<string, ItemInstance>, weaponSet: st.weaponSet, altSkills: game.altSkills, ...(save?.progression !== undefined || game.progression ? { progression: Math.max(save?.progression ?? 0, game.progression) } : {}),
       }));
       running = false;
       detachSound();

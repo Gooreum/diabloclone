@@ -19,7 +19,7 @@ import { addExperience, spendStat, HOTKEY_SLOTS, type Character, type ClassName,
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
 import { StateList, type StateOverlayDef } from './states';
-import { ItemStore } from './itemstore';
+import { ItemStore, WEAPON_SLOTS, type WeaponSlot } from './itemstore';
 import { computeDerived, itemSkillBonus, skillBonusOf, type Derived, type ItemSkillBonus } from './charstats';
 import { gemStats } from './itemgen';
 import type { TxtRow } from '../formats/txt';
@@ -115,6 +115,10 @@ export interface GameInit {
   expTable?: ExpTable;
   /** 장착 아이템 (itemtypes BodyLoc 코드 → 아이템: head neck tors rarm larm rrin lrin belt feet glov) */
   equipment?: Record<string, ItemInstance>;
+  /** 무기 바꾸기 (확장팩): 쉬는 세트·지금 세트·쉬는 세트에서 고른 스킬 */
+  altWeapons?: Partial<Record<WeaponSlot, ItemInstance>>;
+  weaponSet?: 0 | 1;
+  altSkills?: { left: number; right: number };
   inTown?: boolean;
   /** 인벤토리 — 자리 없이 주면 벨트/빈 자리에 자동 배치, 자리 있으면 그대로 */
   inventory?: ItemInstance[];
@@ -389,6 +393,8 @@ const missileStep = (vel: number): number => (vel / 32) * SUBTILES_PER_YARD;
 export class Game {
   readonly rng: Rng;
   readonly data: GameData | undefined;
+  /** 쉬는 무기 세트에서 고른 왼쪽·오른쪽 스킬 (원작 LoD: 세트마다 스킬을 따로 기억) */
+  altSkills: { left: number; right: number };
   /** 확장팩 캐릭터 (확장팩 데이터 판본으로 시작) */
   get expansion(): boolean {
     return this.data?.expansion ?? false;
@@ -506,7 +512,8 @@ export class Game {
     // 위치가 있는 인벤토리는 그대로, 없는 것(x < 0, 예전 저장)은 빈 자리에 자동 배치
     const placed = (init.inventoryGrid ?? []).filter((p) => p.x >= 0);
     const loose = [...(init.inventoryGrid ?? []).filter((p) => p.x < 0).map((p) => p.item), ...(init.inventory ?? [])];
-    this.store = new ItemStore(init.data?.items, { inventory: placed, stash: init.stash, cube: init.cube, belt: init.belt, equipment: init.equipment });
+    this.store = new ItemStore(init.data?.items, { inventory: placed, stash: init.stash, cube: init.cube, belt: init.belt, equipment: init.equipment, altWeapons: init.altWeapons, weaponSet: init.weaponSet });
+    this.altSkills = init.altSkills ? { ...init.altSkills } : { left: init.character?.leftSkill ?? SKILL_ATTACK, right: init.character?.rightSkill ?? SKILL_ATTACK };
     for (const it of loose) {
       const b = init.data?.items.base(it.code);
       if (b) {
@@ -742,6 +749,24 @@ export class Game {
    * 이미 시체가 있으면 원작은 여러 개를 두지만(최대 15) 여기서는 이전 시체 아이템을 합친다 (근사).
    * 출처: D2GAME_CORPSE_Handler_6FC7FBD0 — STAT_EXPERIENCE = 75 × expLoss / 100
    */
+  /**
+   * 무기 바꾸기 (원작 확장팩 W · 인벤토리 I/II 탭): 쓰는 무기 세트를 바꾸고 세트마다 기억한 스킬로.
+   * 클래식 캐릭터·죽은 상태·커서에 아이템을 든 상태에서는 하지 않는다.
+   * 근사(원작 미확인): 하던 동작은 그대로 두고 다음 동작부터 새 무기, 바꾸는 소리 없음
+   */
+  swapWeapons(): boolean {
+    const c = this.character;
+    if (!this.expansion || !c || this.isDead || this.store.cursor) return false;
+    this.store.swapWeapons();
+    const cur = { left: c.leftSkill, right: c.rightSkill };
+    c.leftSkill = this.altSkills.left;
+    c.rightSkill = this.altSkills.right;
+    this.altSkills = cur;
+    this.statsDirty = true;
+    this.events.push({ type: 'weaponSwap', set: this.store.weaponSet });
+    return true;
+  }
+
   private makeCorpse(): void {
     const p = this.player;
     const items: Partial<Record<string, ItemInstance>> = { ...(this.corpse?.items ?? {}) };
@@ -752,6 +777,13 @@ export class Game {
       if (!it) continue;
       items[items[slot] ? `${slot}#${extra++}` : slot] = it;
       delete st.equipment[slot];
+    }
+    // 쉬는 무기 세트도 시체에 (alt:rarm / alt:larm)
+    for (const s of WEAPON_SLOTS) {
+      const it = st.altWeapons[s];
+      if (!it) continue;
+      items[items[`alt:${s}`] ? `alt:${s}#${extra++}` : `alt:${s}`] = it;
+      delete st.altWeapons[s];
     }
     if (st.cursor) {
       items[`cursor#${extra++}`] = st.cursor;
@@ -774,7 +806,9 @@ export class Game {
     for (const [key, it] of Object.entries(cp.items)) {
       if (!it) continue;
       const slot = key.split('#')[0] as keyof typeof st.equipment;
-      if (slot in { head: 1, neck: 1, tors: 1, rarm: 1, larm: 1, rrin: 1, lrin: 1, belt: 1, feet: 1, glov: 1 } && !st.equipment[slot]) st.equipment[slot] = it;
+      const alt = slot.startsWith('alt:') ? (slot.slice(4) as WeaponSlot) : null;
+      if (alt && WEAPON_SLOTS.includes(alt) && !st.altWeapons[alt]) st.altWeapons[alt] = it;
+      else if (slot in { head: 1, neck: 1, tors: 1, rarm: 1, larm: 1, rrin: 1, lrin: 1, belt: 1, feet: 1, glov: 1 } && !st.equipment[slot]) st.equipment[slot] = it;
       else if (!st.inv.autoAdd(it)) this.dropItem(it, p.x, p.y);
     }
     if (cp.exp > 0) this.gainExperience(cp.exp);

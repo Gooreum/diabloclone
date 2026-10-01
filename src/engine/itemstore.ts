@@ -27,7 +27,14 @@ export interface StoreInit {
   cube?: Placed[];
   belt?: (ItemInstance | null)[];
   equipment?: Partial<Record<string, ItemInstance>>;
+  /** 쉬는 무기 세트 (확장팩 무기 바꾸기) */
+  altWeapons?: Partial<Record<WeaponSlot, ItemInstance>>;
+  weaponSet?: 0 | 1;
 }
+
+/** 무기 바꾸기로 바뀌는 칸 */
+export type WeaponSlot = 'rarm' | 'larm';
+export const WEAPON_SLOTS: readonly WeaponSlot[] = ['rarm', 'larm'];
 
 export class ItemStore {
   readonly inv: Grid;
@@ -37,6 +44,13 @@ export class ItemStore {
   readonly belt: (ItemInstance | null)[];
   readonly equipment: Partial<Record<BodyLoc, ItemInstance>>;
   cursor: ItemInstance | null = null;
+  /**
+   * 무기 바꾸기 (원작 확장팩 W · 인벤토리 I/II 탭): 쉬는 세트. 쓰는 세트는 equipment.rarm/larm 그대로라
+   * 능력치·그림·공격 코드는 바뀌지 않는다. 쉬는 세트는 능력치에 들어가지 않는다 (원작과 같다)
+   */
+  readonly altWeapons: Partial<Record<WeaponSlot, ItemInstance>>;
+  /** 지금 쓰는 세트 (0 = I, 1 = II) */
+  weaponSet: 0 | 1;
   private readonly items: ItemDb | undefined;
 
   constructor(items: ItemDb | undefined, init: StoreInit = {}) {
@@ -46,6 +60,20 @@ export class ItemStore {
     this.cube = new Grid(CUBE_W, CUBE_H, init.cube ? [...init.cube] : []);
     this.belt = Array.from({ length: BELT_SLOTS }, (_, i) => init.belt?.[i] ?? null);
     this.equipment = { ...(init.equipment as Partial<Record<BodyLoc, ItemInstance>>) };
+    this.altWeapons = { ...init.altWeapons };
+    this.weaponSet = init.weaponSet === 1 ? 1 : 0;
+  }
+
+  /** 쓰는 무기 세트와 쉬는 세트를 맞바꾼다 */
+  swapWeapons(): void {
+    for (const s of WEAPON_SLOTS) {
+      const on = this.equipment[s], off = this.altWeapons[s];
+      if (off) this.equipment[s] = off;
+      else delete this.equipment[s];
+      if (on) this.altWeapons[s] = on;
+      else delete this.altWeapons[s];
+    }
+    this.weaponSet = this.weaponSet ? 0 : 1;
   }
 
   /** 벨트 사용 가능 칸 수 (장착 벨트에 따라 4/8/12/16) */

@@ -67,6 +67,10 @@ export interface CharacterSave {
   progression?: number;
   /** 확장팩 캐릭터 (원작 "Expansion Character" — 확장팩 아이템·규칙·무기 바꾸기). 없으면 클래식 */
   expansion?: boolean;
+  /** 무기 바꾸기 (확장팩): 쉬는 세트(rarm/larm), 지금 세트 0/1, 쉬는 세트에서 고른 스킬 */
+  altWeapons?: Record<string, ItemInstance>;
+  weaponSet?: 0 | 1;
+  altSkills?: { left: number; right: number };
   savedAt: number;
 }
 
@@ -102,6 +106,9 @@ export interface SaveItems {
   actByDiff?: number[];
   progression?: number;
   expansion?: boolean;
+  altWeapons?: Record<string, ItemInstance>;
+  weaponSet?: 0 | 1;
+  altSkills?: { left: number; right: number };
 }
 
 /** 웨이포인트 목록 정리: 0 포함, 정수 0~254, 중복 없이 정렬 */
@@ -191,6 +198,9 @@ export function makeSave(name: string, character: Character, gold: number, items
     actByDiff,
     ...(progression !== undefined ? { progression } : {}),
     ...(items.expansion ? { expansion: true } : {}),
+    ...(items.altWeapons && Object.keys(items.altWeapons).length ? { altWeapons: structuredClone(items.altWeapons) } : {}),
+    ...(items.weaponSet === 1 ? { weaponSet: 1 as const } : {}),
+    ...(items.altSkills ? { altSkills: { left: items.altSkills.left, right: items.altSkills.right } } : {}),
     savedAt: now,
   };
 }
@@ -278,6 +288,16 @@ export function parseSave(text: string): CharacterSave {
   else delete s.progression;
   if (s.expansion === true) s.expansion = true;
   else delete s.expansion;
+  // 무기 바꾸기: rarm/larm 만, 세트 0/1, 스킬은 정수
+  if (s.altWeapons && typeof s.altWeapons === 'object') {
+    const alt: Record<string, ItemInstance> = {};
+    for (const k of ['rarm', 'larm']) if (s.altWeapons[k]) alt[k] = s.altWeapons[k];
+    for (const it of Object.values(alt)) normalizeItem(it);
+    if (Object.keys(alt).length) s.altWeapons = alt;
+    else delete s.altWeapons;
+  } else delete s.altWeapons;
+  if (s.weaponSet !== 1) delete s.weaponSet;
+  if (!s.altSkills || !Number.isInteger(s.altSkills.left) || !Number.isInteger(s.altSkills.right)) delete s.altSkills;
   return s as CharacterSave;
 }
 

@@ -65,6 +65,8 @@ export interface CharacterSave {
    * Phase 7 (퀘스트) 이 막 완료 때 올린다. 예전 저장은 없음
    */
   progression?: number;
+  /** 확장팩 캐릭터 (원작 "Expansion Character" — 확장팩 아이템·규칙·무기 바꾸기). 없으면 클래식 */
+  expansion?: boolean;
   savedAt: number;
 }
 
@@ -74,6 +76,8 @@ export interface HeroSummary {
   difficultyUnlocked: Difficulty;
   /** 클래식 칭호 (Sir/Dame, Lord/Lady, Baron/Baroness — 없으면 '') */
   title: string;
+  /** 확장팩 캐릭터 */
+  expansion: boolean;
 }
 
 export interface SaveItems {
@@ -97,6 +101,7 @@ export interface SaveItems {
   /** 난이도별 마지막 막 (이번 게임 난이도 칸은 act 로 덮는다) */
   actByDiff?: number[];
   progression?: number;
+  expansion?: boolean;
 }
 
 /** 웨이포인트 목록 정리: 0 포함, 정수 0~254, 중복 없이 정렬 */
@@ -185,6 +190,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     questFlagsByDiff: byDiff.questFlagsByDiff,
     actByDiff,
     ...(progression !== undefined ? { progression } : {}),
+    ...(items.expansion ? { expansion: true } : {}),
     savedAt: now,
   };
 }
@@ -270,6 +276,8 @@ export function parseSave(text: string): CharacterSave {
   const prog = cleanProgression(s.progression);
   if (prog !== undefined) s.progression = prog;
   else delete s.progression;
+  if (s.expansion === true) s.expansion = true;
+  else delete s.expansion;
   return s as CharacterSave;
 }
 
@@ -280,6 +288,7 @@ export const summarize = (s: CharacterSave): HeroSummary => ({
   name: s.name, cls: s.character.cls, level: s.character.level, savedAt: s.savedAt,
   difficultyUnlocked: toDifficulty(s.difficultyUnlocked),
   title: heroTitle(FEMALE.includes(s.character.cls), s.progression ?? toDifficulty(s.difficultyUnlocked) * 4),
+  expansion: s.expansion === true,
 });
 
 /** 캐릭터 이름 규칙 근사(원작 세부 규칙 미확인): 2~15자, 영문자와 _ - 만, 첫 글자는 영문자 */

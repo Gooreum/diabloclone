@@ -389,6 +389,10 @@ const missileStep = (vel: number): number => (vel / 32) * SUBTILES_PER_YARD;
 export class Game {
   readonly rng: Rng;
   readonly data: GameData | undefined;
+  /** 확장팩 캐릭터 (확장팩 데이터 판본으로 시작) */
+  get expansion(): boolean {
+    return this.data?.expansion ?? false;
+  }
   readonly character: Character | undefined;
   readonly classStats: ClassStats | undefined;
   private readonly expTable: ExpTable | undefined;

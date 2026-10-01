@@ -29,7 +29,7 @@ describe('저장/불러오기', () => {
     const back = parseSave(serializeSave(s));
     expect(back).toEqual(s);
     expect(back.inventory[0]).toMatchObject({ x: 3, y: 1 });
-    expect(summarize(back)).toEqual({ name: 'Conan', cls: 'Barbarian', level: 3, savedAt: 1000, difficultyUnlocked: 0, title: '' });
+    expect(summarize(back)).toEqual({ name: 'Conan', cls: 'Barbarian', level: 3, savedAt: 1000, difficultyUnlocked: 0, title: '', expansion: false });
   });
   it('저장 시점의 스냅샷이다 (원본 객체를 이후에 바꿔도 저장본은 그대로)', () => {
     const c = structuredClone(ch);
@@ -53,5 +53,22 @@ describe('저장/불러오기', () => {
     expect(validHeroName('a')).toBe(false);
     expect(validHeroName('1abc')).toBe(false);
     expect(validHeroName('Bad Name')).toBe(false);
+  });
+});
+
+describe('확장팩 캐릭터 저장', () => {
+  it('expansion 은 저장·불러오기·요약에 그대로, 없으면 클래식', () => {
+    const x = parseSave(serializeSave(makeSave('Xpac', ch, 0, { inventory: [], equipment: {}, expansion: true })));
+    expect(x.expansion).toBe(true);
+    expect(summarize(x).expansion).toBe(true);
+    const c = parseSave(serializeSave(makeSave('Clas', ch, 0, { inventory: [], equipment: {} })));
+    expect(c.expansion).toBeUndefined();
+    expect(summarize(c).expansion).toBe(false);
+  });
+
+  it('잘못된 값은 클래식으로 본다', () => {
+    const raw = JSON.parse(serializeSave(makeSave('Bad', ch, 0, { inventory: [], equipment: {} }))) as Record<string, unknown>;
+    raw.expansion = 'yes';
+    expect(parseSave(JSON.stringify(raw)).expansion).toBeUndefined();
   });
 });

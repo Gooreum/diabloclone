@@ -5,7 +5,7 @@ import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
 import { blobRange, MpqStore } from './assets/local-mpq';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
-import { withDifficulty } from './data/gamedata';
+import { buildGameData, withDifficulty } from './data/gamedata';
 import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
 import { actLevels, actPalettePath, actWorldPaths, buildActWorld, levelKey, WORLD_TABLES, type ActWorld, type WorldLevel } from './data/world';
@@ -113,6 +113,10 @@ declare global {
 }
 
 interface Shared {
+  /** 설치 판본 (확장팩 캐릭터를 만들 수 있나, 800 조작판 그림이 있나) */
+  edition: Edition;
+  /** 캐릭터 판본별 데이터 (확장팩 캐릭터 = 확장팩 아이템 규칙). 확장팩용은 처음 쓸 때 만든다 */
+  dataFor(expansion: boolean): GameData;
   assets: AssetLoader; data: GameData; tables: GameTables; pal: Palette; anim: AnimData; canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; host: HTMLElement; stage: HTMLElement; art: UiArt; loading: LoadingScreen; cursor: GameCursor;
   /** 월드(타일·유닛·미사일) 캔버스와 그리기 출구 — UI 캔버스(#game) 아래 */
   worldCanvas: HTMLCanvasElement; worldSink: SpriteSink;
@@ -250,7 +254,9 @@ async function boot(): Promise<void> {
   const anim = AnimData.parse(assets.read(ANIMDATA) as Uint8Array);
   // WebGL2 를 못 쓰면 예전처럼 2D 캔버스로 그린다
   const worldSink: SpriteSink = GlSink.create(worldCanvas) ?? new Canvas2dSink(worldCanvas.getContext('2d') as CanvasRenderingContext2D, gamePal);
-  const shared: Shared = { assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor, prefetched: new Set([0]), worldCanvas, worldSink };
+  let lodData: GameData | null = null;
+  const dataFor = (expansion: boolean): GameData => (expansion ? (lodData ??= buildGameData(assets, tables, { expansion: true })) : data);
+  const shared: Shared = { edition: src.edition, dataFor, assets, data, tables, pal: gamePal, anim, canvas, ctx, host, stage, art: new UiArt(assets, gamePal), loading, cursor, prefetched: new Set([0]), worldCanvas, worldSink };
   void shared.art.preload(CURSOR_ART);
 
   const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
@@ -315,9 +321,11 @@ async function boot(): Promise<void> {
     const difficulty = (choice.kind === 'load' ? Math.min(choice.difficulty ?? 0, save?.difficultyUnlocked ?? 0) : 0) as Difficulty;
     // 그 난이도의 마지막 막 마을에서 시작 (그 막 월드가 아직 없으면 Act 1). 그 막 파일은 로딩 전에 미리 읽는다
     const startAct = startActFor(save, difficulty);
+    // 확장팩 캐릭터: 저장에 적힌 값, 새 캐릭터는 만들기 화면의 체크 (확장팩 판본에서만)
+    const expansion = save ? save.expansion === true : choice.kind === 'new' && choice.expansion === true && shared.edition === 'lod';
     if (save && actAvailable(startAct)) await prefetchAct(shared, startAct);
     // 원작: 게임을 시작하면 로딩 화면 (월드 만들기 동안)
-    const game = await loading.around(ctx, () => play(shared, choice.name, cls, save, difficulty));
+    const game = await loading.around(ctx, () => play(shared, choice.name, cls, save, difficulty, expansion));
     await game;
   }
 }
@@ -369,9 +377,9 @@ async function installPresets(id: string | null): Promise<string | null> {
 }
 
 /** 한 판 진행. Save and Exit 하면 resolve */
-function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null, difficulty: Difficulty = 0): Promise<void> {
-  // 난이도 판 표 (monstats (N)/(H), SuperUniques TC(N), levels MonLvl2/3·상자 TC) — 월드 만들기와 Game 이 같이 쓴다
-  const data = withDifficulty(sh.data, difficulty);
+function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | null, difficulty: Difficulty = 0, expansion = false): Promise<void> {
+  // 난이도 판 표 (monstats (N)/(H), SuperUniques TC(N), levels MonLvl2/3·상자 TC) — 월드 만들기와 Game 이 같이 쓴다. 확장팩 캐릭터는 확장팩 판
+  const data = withDifficulty(sh.dataFor(expansion), difficulty);
   const { tables, assets, pal, anim, canvas, ctx, stage, art, loading, cursor, worldCanvas, worldSink } = sh;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
   const renderers: Record<string, WorldRenderer> = {};
@@ -905,7 +913,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         // Phase 7: 디아블로를 죽이면 다음 난이도 (game.difficultyUnlocked), 진행 값 (칭호)
         act: game.act, difficulty: game.difficulty, difficultyUnlocked: Math.max(save?.difficultyUnlocked ?? 0, game.difficultyUnlocked) as Difficulty, ...byDiff,
         // 난이도별 마지막 막 (이번 난이도 칸은 makeSave 가 act 로), 칭호 진행 값
-        actByDiff: save?.actByDiff, ...(save?.progression !== undefined || game.progression ? { progression: Math.max(save?.progression ?? 0, game.progression) } : {}),
+        actByDiff: save?.actByDiff, expansion: game.expansion, ...(save?.progression !== undefined || game.progression ? { progression: Math.max(save?.progression ?? 0, game.progression) } : {}),
       }));
       running = false;
       detachSound();

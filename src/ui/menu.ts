@@ -24,7 +24,7 @@ import { HotLayer, type HRect } from './hotspot';
 import { HeroStore } from './storage';
 import { drawText } from './text';
 
-export type MenuResult = { kind: 'new'; name: string; cls: ClassName } | { kind: 'load'; name: string; difficulty: Difficulty };
+export type MenuResult = { kind: 'new'; name: string; cls: ClassName; expansion?: boolean } | { kind: 'load'; name: string; difficulty: Difficulty };
 
 const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;

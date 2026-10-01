@@ -6,7 +6,7 @@ import type { TxtRow } from '../formats/txt';
 import type { ItemDb } from '../engine/items';
 import type { ItemGen } from '../engine/itemgen';
 import { statOf } from '../engine/itemgen';
-import { armorDefense, weaponDamage } from '../engine/charstats';
+import { armorDefense, etherealBase, weaponDamage } from '../engine/charstats';
 import { requirements } from '../engine/inventory';
 import { QUALITY, type ItemInstance } from '../engine/treasure';
 
@@ -113,7 +113,7 @@ export class ItemText {
       const d = weaponDamage(item, b);
       const two = b.maxDam === 0 && b.twoHandMaxDam > 0;
       out.push({ text: `${this.str(two ? 'ItemStats1m' : 'ItemStats1l')} ${d.min} ${this.str('ItemStast1k')} ${d.max}`, color: white });
-      if (b.throwMaxDam) out.push({ text: `${this.str('ItemStats1n')} ${b.throwMinDam} ${this.str('ItemStast1k')} ${b.throwMaxDam}`, color: white });
+      if (b.throwMaxDam) out.push({ text: `${this.str('ItemStats1n')} ${etherealBase(item, b.throwMinDam)} ${this.str('ItemStast1k')} ${etherealBase(item, b.throwMaxDam)}`, color: white });
     }
     if (b.stackable && item.quantity > 0) out.push({ text: `${this.str('ItemStats1i')} ${item.quantity}`, color: white });
     if (item.maxDurability > 0) out.push({ text: `${this.str('ItemStats1d')} ${item.durability} ${this.str('ItemStats1j')} ${item.maxDurability}`, color: white });

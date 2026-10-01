@@ -214,8 +214,9 @@ function checkInput(ctx: CubeCtx, recipe: CubeRecipe, idx: number, list: ItemIns
     if (inp.uniqueIdx !== undefined && it.uniqueIdx !== inp.uniqueIdx) return;
     if (inp.setIdx !== undefined && it.setIdx !== inp.setIdx) return;
     if (inp.nos ? it.sockets > 0 : inp.sock && it.sockets <= 0) return;
-    // 클래식 아이템은 에테리얼이 없다
-    if (inp.eth) return;
+    // 이더리얼 입력 조건 (출처: PLRTRADE_CheckCubeInput eth / noe)
+    if (inp.eth && !it.ethereal) return;
+    if (inp.noe && it.ethereal) return;
     if (inp.bas ? it.code !== b.normCode : inp.exc ? it.code !== b.uberCode : inp.eli && it.code !== b.ultraCode) return;
     // 결과가 소켓을 더하는 조합이면 첫 입력은 소켓을 가질 수 있어야 (ITEMS_GetMaxSockets)
     if (idx === 0 && out0 && (out0.kind === 'useitem' || out0.kind === 'usetype') && out0.sock && b.gemSockets <= 0) return;
@@ -293,7 +294,8 @@ function makeOutput(ctx: CubeCtx, o: CubeOutput, ref: CubeItemRef): ItemInstance
     } else if (o.kind === 'code') base = o.code ? ctx.items.base(o.code) : undefined;
     else if (o.kind === 'type') base = o.type ? randomOfType(ctx, o.type, level) : undefined;
     if (!base) return null;
-    out = t.createItem(base, level, ctx.rng, (quality || QUALITY.NORMAL) as Quality, true);
+    // 큐브 결과는 eth 표시가 있을 때만 이더리얼 (출처: PLRTRADE_CreateCubeOutputs — ALWAYSETH / NEVERETH)
+    out = t.createItem(base, level, ctx.rng, (quality || QUALITY.NORMAL) as Quality, true, o.eth ? 'always' : 'never');
     // 소켓: sock 이 없거나 수가 정해져 있으면 생성 때 소켓 없음 (ITEMDROPFLAG_NOSOCKETS)
     if (!o.sock || o.qty) {
       out.sockets = 0;

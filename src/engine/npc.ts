@@ -402,7 +402,8 @@ export class NpcServices {
     const price = transactionCost(it, 'sell', ctx);
     let resell = !this.gamble;
     if (it.quality === QUALITY.INFERIOR && h.data.treasure.gen?.lowQualityNames[it.lowQualityIdx ?? -1] === 'Cracked') resell = false;
-    if (isBroken(it) || it.socketed.length > 0) resell = false;
+    // 이더리얼은 되사기 목록에 오르지 않는다 (출처: D2MOO SUnitNpc.cpp)
+    if (isBroken(it) || it.socketed.length > 0 || it.ethereal) resell = false;
     const perm = b.permStore && !!b.vendors[NPC_DEFS[npc]?.vendor ?? ''];
     if (h.difficulty !== 0 && ['hp4', 'hp5', 'mp4', 'mp5'].includes(b.code)) resell = false;
     if (resell && !perm) {

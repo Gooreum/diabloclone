@@ -129,10 +129,12 @@ export function requirements(items: ItemDb, item: ItemInstance): { level: number
   const b = items.base(item.code);
   const pct = item.identified ? statOf(item, 'item_req_percent') : 0;
   const req = (v: number) => Math.max(0, Math.trunc((v * (100 + pct)) / 100));
+  // 이더리얼: 힘·민첩 요구 −10 (출처: D2MOO D2Common Items.cpp 요구치 계산)
+  const eth = item.ethereal ? 10 : 0;
   return {
     level: Math.max(b?.levelReq ?? 0, item.levelReq ?? 0),
-    str: req(b?.reqStr ?? 0),
-    dex: req(b?.reqDex ?? 0),
+    str: Math.max(0, req(b?.reqStr ?? 0) - eth),
+    dex: Math.max(0, req(b?.reqDex ?? 0) - eth),
   };
 }
 

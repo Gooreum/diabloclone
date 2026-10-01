@@ -62,6 +62,8 @@ export interface ItemTables {
 /** 품질 적용에 쓰는 게임 상태 (유니크 한 번만 드롭 규칙) */
 export interface GenContext {
   droppedUniques: Set<number>;
+  /** 이더리얼 굴림 (확장팩만): roll 5% · always · never(기본) */
+  ethereal?: 'roll' | 'always' | 'never';
 }
 
 export class ItemGen {
@@ -241,6 +243,15 @@ export class ItemGen {
     if (q === QUALITY.NORMAL || q === QUALITY.SUPERIOR) this.rollSockets(item, base, itemRng, startSeed);
     if (q === QUALITY.NORMAL) this.staffMods(item, base, itemRng);
     this.finishStats(item, base);
+    if (this.expansion && ctx.ethereal && ctx.ethereal !== 'never') this.rollEthereal(item, base, itemRng, ctx.ethereal === 'always');
+  }
+
+  /** 출처: D2MOO ITEMS_MakeEthereal — 무기·방어구, 내구 있음, 하급·세트·퀘스트 아님, rand % 100 < 5 (강제면 굴림 없이) */
+  private rollEthereal(item: ItemInstance, base: ItemBase, rng: Rng, force: boolean): void {
+    if (!(this.isType(base, 'weap') || this.isType(base, 'armo')) || base.noDurability || item.maxDurability <= 0) return;
+    if (item.quality === QUALITY.INFERIOR || item.quality === QUALITY.SET || base.quest) return;
+    if (!force && Number(rng.next() & 0xffffffffn) % 100 >= 5) return;
+    makeEthereal(item, base);
   }
 
   /**
@@ -633,6 +644,17 @@ export class ItemGen {
  * 소켓에 박힌 보석의 속성: 무기면 weaponMod, 방패면 shieldMod, 그 외(투구·몸통 갑옷)는 helmMod.
  * 출처: gems.txt 컬럼, D2MOO ITEMMODS_AssignProperty PROPMODE_GEM (gemapplytype)
  */
+/**
+ * 이더리얼로 만든다. 출처: D2MOO ITEMS_MakeEthereal (최대 내구 = max/2 + 1, 현재 내구 = 최대),
+ * ITEMMODS_ApplyEthereality (방어구 기본 방어 3*base/2 — 무기 기본 피해 ×1.5 는 weaponDamage 가 ethereal 로 계산)
+ */
+export function makeEthereal(item: ItemInstance, base: ItemBase): void {
+  item.ethereal = true;
+  item.maxDurability = Math.trunc(item.maxDurability / 2) + 1;
+  item.durability = item.maxDurability;
+  if (base.category === 'armor') item.defense = Math.trunc((3 * item.defense) / 2);
+}
+
 export function gemStats(gen: ItemGen, gem: ItemInstance, target: ItemBase): ItemStat[] {
   const g = gen.gems.get(gem.code);
   if (!g) return [];

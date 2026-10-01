@@ -58,6 +58,8 @@ export interface ItemInstance {
   inferiorDamage?: boolean;
   /** 방어% 접사로 기본 방어가 maxac + 1 로 올라감 */
   edDefenseBase?: boolean;
+  /** 이더리얼 (확장팩): 기본 피해·방어 ×1.5, 최대 내구 max/2+1, 수리 불가 — 출처: D2MOO ITEMMODS_ApplyEthereality / ITEMS_MakeEthereal */
+  ethereal?: boolean;
 }
 
 interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare: number; rareDiv: number; rareMin: number; set: number; setDiv: number; setMin: number; magic: number; magicDiv: number; magicMin: number; hiQ: number; hiQDiv: number; normal: number; normalDiv: number }
@@ -221,7 +223,7 @@ export class TreasureDb {
       }
       let q = this.rollQuality(dropBase, mlvl, frame.mods, rng, magicFind);
       if (opts.quality && q < opts.quality && !this.items.types.get(dropBase.type)?.normal && dropBase.category !== 'misc') q = opts.quality as Quality;
-      out.push(this.createItem(dropBase, mlvl, rng, q, true));
+      out.push(this.createItem(dropBase, mlvl, rng, q, true, 'roll'));
     }
     return out;
   }
@@ -275,7 +277,11 @@ export class TreasureDb {
 
   /** 출처: D2MOO D2GAME_InitItemStats — 골드 = max(rand(5×ilvl) + ilvl, 1), 내구도 = dur/2 + rand(dur/2), 방어 = minac + rand(maxac−minac+1) */
   /** generate = true 면 품질·접사·소켓 생성 (몬스터 드롭 등). 시작 장비처럼 기본 아이템만 필요하면 false */
-  createItem(base: ItemBase, ilvl: number, rng: Rng, quality: Quality, generate = false): ItemInstance {
+  /**
+   * eth: 이더리얼 — 'roll' 몬스터·물체 드롭 (5%), 'always' 큐브 eth 결과, 'never' 그 밖
+   * 근사(원작 미확인): 상점·도박·퀘스트 보상은 이더리얼이 되지 않는다 (원작 ITEMDROPFLAG_NEVERETH 경로 미확인)
+   */
+  createItem(base: ItemBase, ilvl: number, rng: Rng, quality: Quality, generate = false, eth: 'roll' | 'always' | 'never' = 'never'): ItemInstance {
     const item: ItemInstance = {
       id: this.nextId++, code: base.code, quality, ilvl, identified: quality <= QUALITY.SUPERIOR,
       quantity: 1, durability: 0, maxDurability: 0, defense: 0, invW: base.invWidth, invH: base.invHeight, levelReq: base.levelReq,
@@ -295,7 +301,7 @@ export class TreasureDb {
     if (generate && this.gen && base.code !== 'gld') {
       // 원작은 아이템 시드(품질·접사)와 유닛 시드(기본 능력치)를 따로 쓴다
       const itemRng = new Rng(Number(rng.next() & 0xffffffffn) || 1);
-      this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques });
+      this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques, ethereal: eth });
     }
     // 출처: D2MOO D2Game ITEMS/Items.cpp — 수량 = rand(spawnstack − minstack) + minstack (spawnstack 이 없거나 작으면 max(minstack, maxstack))
     if (base.stackable) {

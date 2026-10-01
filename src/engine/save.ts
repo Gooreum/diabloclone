@@ -220,6 +220,8 @@ export function normalizeItem(it: ItemInstance): ItemInstance {
   x.sockets ??= 0;
   x.socketed ??= [];
   x.stats ??= [];
+  if (x.ethereal !== true) delete x.ethereal;
+  x.socketed.forEach(normalizeItem);
   delete (x as { affixesPending?: boolean }).affixesPending;
   return x;
 }

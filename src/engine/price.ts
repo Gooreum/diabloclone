@@ -4,7 +4,7 @@
 // 주의: 원작 변수 이름은 NPC 기준 — nSellCost = NPC 가 파는 값(플레이어가 사는 값), nBuyCost = NPC 가 사는 값(플레이어가 파는 값).
 // 원작은 32비트 정수 연산(곱셈 오버플로를 피하려고 65535 초과 시 곱셈 순서를 바꿈) — 여기서는 JS 정수로 같은 순서의 나눗셈 절단만 재현.
 import type { ItemBase, ItemDb } from './items';
-import type { ItemGen } from './itemgen';
+import { statOf, type ItemGen } from './itemgen';
 import { QUALITY, type ItemInstance } from './treasure';
 import type { TxtRow } from '../formats/txt';
 
@@ -64,6 +64,8 @@ export const isBroken = (it: ItemInstance) => it.maxDurability > 0 && it.durabil
 export function isRepairable(items: ItemDb, it: ItemInstance): boolean {
   const b = items.base(it.code);
   if (!b || !it.identified) return false;
+  // 이더리얼은 수리할 수 없다 (원작 표시 "Ethereal (Cannot be Repaired)")
+  if (it.ethereal) return false;
   const t = items.types.get(b.type);
   if (!t?.repair) return false;
   if (t.throwable && b.stackable) return true;
@@ -201,6 +203,11 @@ export function transactionCost(item: ItemInstance, kind: Transaction, ctx: Pric
     const gc = Math.trunc((items.base(g.code)?.cost ?? 0) / 2);
     x = { s: x.s + gc, b: x.b + gc, r: x.r + gc };
   }
+  // 출처: D2MOO ITEMS_CalculateTransactionCost — 이더리얼·직업 전용(itemtypes Class) 아이템은 NPC 가 사는 값(nBuyCost) / 4 씩,
+  //   이더리얼이 내구 0 이면 파는 값 0 (내구 있음 · 파괴 불가 아님)
+  if (item.ethereal) x.b = Math.trunc(x.b / 4);
+  if ([...items.typeChain(b.type)].some((t) => items.types.get(t)?.classCode)) x.b = Math.trunc(x.b / 4);
+  if (kind === 'sell' && item.ethereal && hasDurability(b, item) && statOf(item, 'item_indesctructible') <= 0 && item.durability <= 0) x.b = 0;
   if (kind === 'repair' && !(isQuiver && type?.throwable)) {
     if (hasDurability(b, item)) {
       // 원작 코드는 R *= (max − dur) / max (정수 나눗셈 먼저면 항상 0) — 의도된 비율로 계산 (근사: 원작 연산 순서 미확인)

@@ -87,10 +87,15 @@ export function setBonusStats(equipped: ItemInstance[], gen: ItemGen | null, ite
 /** 세트 보너스 값은 고정(min=max 로 넘겨 굴림이 일어나지 않는다) */
 const noRoll = () => new Rng(1);
 
+/** 이더리얼 기본 피해 (던지기 피해 등 weaponDamage 밖에서 쓰는 기본값) */
+export const etherealBase = (item: ItemInstance, v: number): number => (item.ethereal ? Math.trunc((3 * v) / 2) : v);
+
 /** 무기 실제 피해 (정수, 1H 기준): 기본 × (100 + 무기 ED%)/100 + 무기 최소/최대 추가, 하급은 75%. 출처: Maxroll Damage Calculation */
 export function weaponDamage(item: ItemInstance, base: ItemBase): { min: number; max: number } {
-  let bmin = base.maxDam > 0 ? base.minDam : base.twoHandMinDam;
-  let bmax = base.maxDam > 0 ? base.maxDam : base.twoHandMaxDam;
+  // 이더리얼: 기본 피해 3*base/2, ED% 는 그 위에 (출처: D2MOO ITEMMODS_ApplyEthereality)
+  const eth = (v: number) => (item.ethereal ? Math.trunc((3 * v) / 2) : v);
+  let bmin = eth(base.maxDam > 0 ? base.minDam : base.twoHandMinDam);
+  let bmax = eth(base.maxDam > 0 ? base.maxDam : base.twoHandMaxDam);
   if (item.inferiorDamage) {
     bmin = Math.max(Math.trunc((75 * bmin) / 100), 1);
     bmax = Math.max(Math.trunc((75 * bmax) / 100), 2);

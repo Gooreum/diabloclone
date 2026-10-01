@@ -5,20 +5,21 @@
 // 근사(원작 미확인): 원작은 기능마다 키 두 개(Key/Button One·Two) — 여기서는 하나만, Micromap 기본 키 V, Clear Messages 기본 키 N
 // 출처: string.tbl CfgSkill1~8 "Skill 1~8", 원작 기본 키 F1~F8 (스킬 단축키)
 // 출처: 확장팩 string Cfgswapweapons "Swap Weapons", 원작 확장팩 기본 키 W (확장팩 캐릭터만 동작)
+// 출처: 확장팩 string Cfghireling "Hireling Screen", 원작 확장팩 기본 키 O (용병 창 — 확장팩만 동작)
 export const SKILL_SLOTS = ['skill1', 'skill2', 'skill3', 'skill4', 'skill5', 'skill6', 'skill7', 'skill8'] as const;
 export type SkillSlot = (typeof SKILL_SLOTS)[number];
-export const KEY_ACTIONS = ['char', 'inv', 'tree', 'quest', 'automap', 'minimap', 'run', 'skillpick', 'belt1', 'belt2', 'belt3', 'belt4', 'beltshow', 'showitems', 'clearmsg', 'swap', ...SKILL_SLOTS] as const;
+export const KEY_ACTIONS = ['char', 'inv', 'tree', 'quest', 'automap', 'minimap', 'run', 'skillpick', 'belt1', 'belt2', 'belt3', 'belt4', 'beltshow', 'showitems', 'clearmsg', 'swap', 'hireling', ...SKILL_SLOTS] as const;
 export type KeyAction = (typeof KEY_ACTIONS)[number];
 
 export const KEY_LABEL: Record<KeyAction, string> = {
   char: 'CfgCharacter', inv: 'CfgInventory', tree: 'CfgSkillTree', quest: 'CfgQuestLog', automap: 'CfgAutoMap', minimap: 'CfgMiniMap', run: 'CfgRunLock',
-  skillpick: 'CfgSkillPick', belt1: 'CfgBelt1', belt2: 'CfgBelt2', belt3: 'CfgBelt3', belt4: 'CfgBelt4', beltshow: 'CfgBeltShow', showitems: 'CfgShowItems', clearmsg: 'Cfgcleartextmsg', swap: 'Cfgswapweapons',
+  skillpick: 'CfgSkillPick', belt1: 'CfgBelt1', belt2: 'CfgBelt2', belt3: 'CfgBelt3', belt4: 'CfgBelt4', beltshow: 'CfgBeltShow', showitems: 'CfgShowItems', clearmsg: 'Cfgcleartextmsg', swap: 'Cfgswapweapons', hireling: 'Cfghireling',
   skill1: 'CfgSkill1', skill2: 'CfgSkill2', skill3: 'CfgSkill3', skill4: 'CfgSkill4', skill5: 'CfgSkill5', skill6: 'CfgSkill6', skill7: 'CfgSkill7', skill8: 'CfgSkill8',
 };
 
 export const DEFAULT_KEYS: Record<KeyAction, string> = {
   char: 'C', inv: 'I', tree: 'T', quest: 'Q', automap: 'Tab', minimap: 'V', run: 'R', skillpick: 'S',
-  belt1: '1', belt2: '2', belt3: '3', belt4: '4', beltshow: '`', showitems: 'Alt', clearmsg: 'N', swap: 'W',
+  belt1: '1', belt2: '2', belt3: '3', belt4: '4', beltshow: '`', showitems: 'Alt', clearmsg: 'N', swap: 'W', hireling: 'O',
   skill1: 'F1', skill2: 'F2', skill3: 'F3', skill4: 'F4', skill5: 'F5', skill6: 'F6', skill7: 'F7', skill8: 'F8',
 };
 
@@ -32,7 +33,9 @@ const NAMED: Record<string, string> = {
 const STORE_KEY = 'd2clone.keys';
 
 /** 이벤트 → 저장용 키 이름 (글자는 대문자, ~ 와 ` 는 같은 키) */
-export function keyName(e: { key: string }): string {
+export function keyName(e: { key: string; code?: string }): string {
+  // Shift + 숫자 (확장팩 Shift+벨트 = 용병에게 물약): '!' 대신 눌린 숫자 키로
+  if (e.code && /^Digit\d$/.test(e.code)) return e.code.slice(5);
   const k = e.key;
   if (k === '~' || k === '`') return '`';
   if (k === 'Dead') return '`';
@@ -75,12 +78,12 @@ export class KeyBindings {
     this.map = { ...DEFAULT_KEYS };
   }
 
-  actionOf(e: { key: string }): KeyAction | null {
+  actionOf(e: { key: string; code?: string }): KeyAction | null {
     const k = keyName(e);
     return KEY_ACTIONS.find((a) => this.map[a] === k) ?? null;
   }
 
-  is(e: { key: string }, a: KeyAction): boolean {
+  is(e: { key: string; code?: string }, a: KeyAction): boolean {
     return !!this.map[a] && this.map[a] === keyName(e);
   }
 

@@ -43,7 +43,7 @@ import { CubePanel } from './ui/cubepanel';
 import { UiArt } from './ui/art';
 import { d2text, drawText } from './ui/text';
 import { ItemText } from './ui/itemtext';
-import { InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
+import { drawTooltip, InventoryPanel, ItemIcons, parseInvLayout } from './ui/invpanel';
 import { itemClassCode, playerWclass, requirements } from './engine/inventory';
 import { CLASS_CODE } from './engine/skills/db';
 import { playerLayers } from './render/appearance';
@@ -57,7 +57,8 @@ import { drawMonsterBar, drawNameBar, MonsterNamer } from './ui/monbar';
 import { StorePanel } from './ui/storepanel';
 import { HirePanel, NpcMenu, pickGossip, stripSpeed, TalkBox } from './ui/npcpanel';
 import { QuestPanel } from './ui/questpanel';
-import { MercBar } from './ui/mercbar';
+import { MERC_BAR, MercBar } from './ui/mercbar';
+import { ConfirmBox, MercPanel } from './ui/mercpanel';
 import { attachSound } from './audio/sound';
 import { sound } from './audio/sound';
 import { GameCursor, CURSOR_ART } from './ui/cursor';
@@ -97,6 +98,8 @@ declare global {
         hud: ControlPanel; charPanel: CharPanel; skillTree: SkillTree; stash: StashPanel; gameMenu: Panels; art: UiArt;
         /** e2e (Phase 6): 호라드릭 큐브 창 */
         cube: CubePanel;
+        /** e2e (확장팩): 용병 창 (O) · 고용 교체 확인 */
+        merc: MercPanel; hireConfirm: ConfirmBox;
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
       };
@@ -532,6 +535,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 원작 DC6 컨트롤 패널 (HUD)·보관함
   const hud = new ControlPanel(art, icons, data.skills, sh.edition);
   const stashPanel = new StashPanel(art, icons);
+  // 확장팩 용병 창 (O · 초상화 오른쪽 클릭), 고용 교체 확인
+  const mercPanel = new MercPanel(art, icons);
+  const hireConfirm = new ConfirmBox();
+  let toggleMercPanel: () => void = () => undefined;
   // 호라드릭 큐브 창 (원작 supertransmogrifier.dc6)
   const cubePanel = new CubePanel(art, icons);
   // NPC: 메뉴·대사·상점(원작 buysell.dc6)·고용 목록, 왼쪽 위 용병 초상 (원작 rogueicon.dc6)
@@ -565,6 +572,21 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     game.enqueue({ type: 'goldTransfer', to: kind === 'drop' ? 'ground' : kind === 'deposit' ? 'stash' : 'inventory', amount }));
   input.intercept = (x, y, button, shift) => {
     if (goldPopup.open) return true;
+    // 고용 교체 확인 (원작 VerifyTransaction9): Hire 면 고용, 그 밖은 취소
+    const cf = hireConfirm.click(x, y);
+    if (cf) {
+      if (cf === 'yes' && hireConfirm.pending !== null) game.enqueue({ type: 'hire', index: hireConfirm.pending });
+      hireConfirm.pending = null;
+      return true;
+    }
+    // 확장팩 용병 초상: 오른쪽 클릭 = 용병 창 (hireiconinfo2), 물약을 든 채 클릭 = 용병이 마신다 (hireiconinfo1)
+    const mSnap = data.expansion ? game.snapshot().merc : null;
+    if (mSnap && !mSnap.dead && x >= MERC_BAR.x && y >= MERC_BAR.y && x < MERC_BAR.x + MERC_BAR.w && y < MERC_BAR.y + MERC_BAR.h) {
+      const c0 = game.store.cursor;
+      if (button === 2) toggleMercPanel();
+      else if (c0) game.enqueue({ type: 'mercPotion', itemId: c0.id });
+      return true;
+    }
     // 컨트롤 패널 (원작: 패널 위 클릭은 월드로 가지 않는다)
     const cur0 = game.store.cursor;
     const ha = hud.click(x, y, hudState(), button);
@@ -614,6 +636,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 근사(원작 미확인): 보관함이 열린 채 바깥 클릭 = 닫고 이동
       stashPanel.open = false;
     }
+    // 용병 창 (확장팩): 칸 왼쪽 클릭 = 든 아이템 주기 (칸은 아이템 종류로) / 빈 손이면 그 칸 장비 들기 (원작 Rcv0x61)
+    const mh = mercPanel.hit(x, y);
+    if (mh) {
+      if (mh.kind === 'close') mercPanel.open = false;
+      else if (mh.kind === 'slot' && button === 0) {
+        if (game.store.cursor) game.enqueue({ type: 'mercItem' });
+        else if (game.merc?.items?.[mh.slot]) game.enqueue({ type: 'mercItem', slot: mh.slot });
+      }
+      return true;
+    }
     // 퀘스트 로그 패널 (원작: 열린 동안 아이콘 클릭 = 고르기, 닫기 단추)
     const qp = questPanel.click(x, y);
     if (qp === 'close') {
@@ -640,7 +672,11 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     }
     if (inter?.mode === 'hire') {
       const r = hirePanel.click(x, y);
-      if (typeof r === 'number') game.enqueue({ type: 'hire', index: r });
+      // 확장팩: 이미 용병이 있으면 원작처럼 교체를 묻는다 (VerifyTransaction9 — 예전 용병과 장비는 사라진다)
+      if (typeof r === 'number') {
+        if (data.expansion && game.merc) hireConfirm.pending = r;
+        else game.enqueue({ type: 'hire', index: r });
+      }
       if (r !== null) return true;
       game.enqueue({ type: 'closeNpc' });
       return true;
@@ -794,8 +830,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         })
       : null;
     // 원작: 왼쪽 패널 자리(캐릭터·퀘스트·웨이포인트·보관함·상점) 와 오른쪽(인벤토리·스킬 트리)은 하나씩만
-    const openLeft = (which: 'char' | 'quest' | 'stash' | 'cube' | null) => {
+    const openLeft = (which: 'char' | 'quest' | 'stash' | 'cube' | 'merc' | null) => {
       charPanel.open = which === 'char';
+      mercPanel.open = which === 'merc';
       if (which !== 'quest') questPanel.open = false;
       stashPanel.open = which === 'stash';
       if (cubePanel.open && which !== 'cube') game.enqueue({ type: 'closeCube' });
@@ -807,6 +844,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (skillPanels) skillPanels.open = which === 'tree';
     };
     const toggleChar = () => openLeft(charPanel.open ? null : 'char');
+    // 용병 창: 확장팩에서 살아 있는 용병이 있을 때만
+    toggleMercPanel = () => {
+      const m = game.snapshot().merc;
+      if (!data.expansion || ((!m || m.dead) && !mercPanel.open)) return;
+      openLeft(mercPanel.open ? null : 'merc');
+    };
     const toggleTree = () => openRight(skillPanels?.open ? null : 'tree');
     const toggleInv = () => openRight(invPanel.open ? null : 'inv');
     // Alt (Show Items) 누르고 있는 동안 바닥 아이템 이름 모두
@@ -861,7 +904,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         return;
       }
       // 원작: Esc 는 열린 패널부터 모두 닫는다
-      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || stashPanel.open || cubePanel.open || invPanel.open || skillPanels?.open || hud.beltOpen)) {
+      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || mercPanel.open || stashPanel.open || cubePanel.open || invPanel.open || skillPanels?.open || hud.beltOpen)) {
         wpPanel.open = false;
         questPanel.open = false;
         hud.beltOpen = false;
@@ -886,13 +929,19 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         else panels.toggleMenu();
       } else if (act === 'inv') toggleInv();
       // 원작 벨트 단축키 1~4 (아래 줄)
-      else if (act === 'belt1' || act === 'belt2' || act === 'belt3' || act === 'belt4') game.enqueue({ type: 'useBelt', slot: Number(act.slice(4)) - 1 });
+      else if (act === 'belt1' || act === 'belt2' || act === 'belt3' || act === 'belt4') {
+        // 확장팩: Shift + 벨트 키 = 그 물약을 용병에게
+        const slot = Number(act.slice(4)) - 1, bit = game.store.belt[slot];
+        if (e.shiftKey && data.expansion && bit && game.mercUnit()) game.enqueue({ type: 'mercPotion', itemId: bit.id });
+        else game.enqueue({ type: 'useBelt', slot });
+      }
       // 원작 단축키: T 스킬 트리, C 캐릭터, ~ 벨트 펼치기, N 메시지 지우기
       else if (act === 'tree') toggleTree();
       else if (act === 'char') toggleChar();
       else if (act === 'beltshow') hud.beltOpen = !hud.beltOpen;
       else if (act === 'clearmsg') messageLog.clear();
       else if (act === 'swap') game.swapWeapons();
+      else if (act === 'hireling') toggleMercPanel();
       // 원작: R = 달리기/걷기 (InputController 가 바꾼다), S = 스킬 고르기 (오른쪽)
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
@@ -967,7 +1016,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
           store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, itemText, quest: questPanel, rain,
-          hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel,
+          hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel, merc: mercPanel, hireConfirm,
           gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
         },
       };
@@ -1102,7 +1151,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const corpseLook = cpItems ? { equip: { ...BODY, ...playerLayers(data.items, cpItems) }, wclass: 'HTH' } : undefined;
       // 가리킨 유닛 (지난 프레임 클릭 상자 — 패널·메뉴 위면 없음). 원작: 가리킨 유닛·오브젝트를 밝게
       const mm = input.mouse;
-      const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || !!cubePanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
+      const overUi = !mm || panels.menuOpen || goldPopup.open || !!invPanel.hit(mm.x, mm.y) || !!stashPanel.hit(mm.x, mm.y) || !!mercPanel.hit(mm.x, mm.y) || !!cubePanel.hit(mm.x, mm.y) || mm.y >= 553 || (!!skillPanels?.open && mm.x >= 400 && mm.y >= 60 && mm.y < 492) || (charPanel.open && mm.x < 400 && mm.y >= 60 && mm.y < 492);
       hoverNow = overUi || !mm ? null : input.hoverAt(mm.x, mm.y);
       const view = views.get(game.act) ?? actView(startAct);
       // 막 팔레트 (타일·유닛 색은 그리는 쪽이 팔레트로 입힌다)
@@ -1181,6 +1230,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       storePanel.draw(ctx, s.player.gold, str, input.mouse, (it) => itemText.lines(it, reqCtx), (it) => game.priceOf(it, 'buy'));
       if (inter?.mode === 'menu') npcMenu.draw(ctx, inter, npcName(inter.typeId), str, input.mouse);
       if (inter?.mode === 'hire') hirePanel.draw(ctx, inter.hire, s.player.gold, str, input.mouse);
+      if (!inter || inter.mode !== 'hire') hireConfirm.pending = null;
       // 메뉴가 떠 있으면 대사 상자는 그 아래 (근사: 원작은 대사 동안 메뉴를 숨긴다)
       talkBox.draw(ctx, now, inter?.mode === 'menu' ? npcMenu.bottom + 8 : 90);
       mercBar.draw(ctx, s.merc, s.merc ? str(s.merc.name) : '');
@@ -1189,6 +1239,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 왼쪽 패널 자리: 캐릭터·보관함·웨이포인트·퀘스트 / 오른쪽: 스킬 트리·인벤토리
       charPanel.draw(ctx, input.mouse);
       stashPanel.draw(ctx, game.store, game.stashGold, ch.level, str, input.mouse, (it) => itemText.lines(it, reqCtx));
+      // 용병 창: 요구치는 용병 능력치로 (원작 ITEMS_CheckRequirements(용병)), 용병이 죽거나 없으면 닫는다
+      if (mercPanel.open && (!s.merc || s.merc.dead)) mercPanel.open = false;
+      const mercReq = { level: s.merc?.level ?? 0, str: s.merc?.stats?.str ?? 0, dex: s.merc?.stats?.dex ?? 0, cls: '' };
+      mercPanel.draw(ctx, s.merc, str, input.mouse, !!game.store.cursor, (it) => itemText.lines(it, mercReq));
       if (cubePanel.open && !game.cubeOpen) cubePanel.open = false;
       cubePanel.draw(ctx, game.store, str, input.mouse, (it) => itemText.lines(it, reqCtx), now);
       // 웨이포인트에서 멀어지면 패널을 닫는다 (원작 SUNIT_ResetInteractInfo)
@@ -1200,12 +1254,17 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       // 원작 DC6 컨트롤 패널
       hud.draw(ctx, hudState());
       goldPopup.draw(ctx);
+      hireConfirm.draw(ctx, str);
+      // 용병 초상 안내 (확장팩 hireiconinfo1·2)
+      const mm0 = input.mouse;
+      if (data.expansion && mm0 && s.merc && !s.merc.dead && !game.store.cursor && mm0.x >= MERC_BAR.x && mm0.y >= MERC_BAR.y && mm0.x < MERC_BAR.x + MERC_BAR.w && mm0.y < MERC_BAR.y + MERC_BAR.h)
+        drawTooltip(ctx, [{ text: str('hireiconinfo1'), color: '#ffffff' }, { text: str('hireiconinfo2').replace('%s', keyBindings.label(keyBindings.map.hireling, str)), color: '#ffffff' }], mm0.x, mm0.y + 60);
       invPanel.drawCursor(ctx, game.store, input.mouse);
       panels.draw(ctx, now);
       // 레벨 이동 로딩 화면 (원작: 계단·입구·웨이포인트·포털)
       loading.draw(ctx, now);
       // 원작 커서: 아이템을 들면 그 그림, 감정 = 돋보기, 수리 모드 = 망치, 가리키면 손 애니메이션
-      const overInv = !!input.mouse && !!(invPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? stashPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? cubePanel.itemAt(game.store, input.mouse.x, input.mouse.y));
+      const overInv = !!input.mouse && !!(invPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? stashPanel.itemAt(game.store, input.mouse.x, input.mouse.y) ?? mercPanel.itemAt(s.merc, input.mouse.x, input.mouse.y) ?? cubePanel.itemAt(game.store, input.mouse.x, input.mouse.y));
       cursor.draw(ctx, art, input.mouse, cursor.pick({
         holding: !!game.store.cursor, identify: identifyWith !== null,
         repair: storePanel.mode === 'repair' && !!inter && inter.mode === 'trade' && !panels.menuOpen,

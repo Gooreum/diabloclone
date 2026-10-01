@@ -20,3 +20,19 @@ describe('단축키 설정 — 스킬 Skill 1~8', () => {
     expect(k.actionOf({ key: 'c' })).toBe('skill2');
   });
 });
+
+describe('단축키 설정 — 확장팩 용병 창 (Hireling Screen)', () => {
+  it('기본 키는 원작 확장팩처럼 O, 다른 키로 바꿀 수 있다', () => {
+    const k = new KeyBindings();
+    expect(k.map.hireling).toBe('O');
+    expect(k.actionOf({ key: 'o' })).toBe('hireling');
+    k.set('hireling', 'H');
+    expect(k.actionOf({ key: 'h' })).toBe('hireling');
+    expect(k.actionOf({ key: 'o' })).toBeNull();
+  });
+  it('Shift + 숫자 (! @ …)도 벨트 키로 읽는다 (Shift+벨트 = 용병에게 물약)', () => {
+    const k = new KeyBindings();
+    expect(k.actionOf({ key: '!', code: 'Digit1' })).toBe('belt1');
+    expect(k.actionOf({ key: '$', code: 'Digit4' })).toBe('belt4');
+  });
+});

@@ -105,7 +105,8 @@ const BAR_ROW = { labelX: 110, barX: 400, w: 290, h: 33 } as const;
 const OPT_ROW = { labelX: 60, valueX: 740 } as const;
 /** 단축키 목록 틀 */
 const CTRL = { x: 100, y: 64, w: 600, h: 420, rowTop: 104, rowH: 22, keyDX: 160 } as const;
-const KEY_ROWS = 12;
+/** 두 줄로 나눈 한 줄 수 (항목 25 개 → 13) */
+const KEY_ROWS = Math.ceil(KEY_ACTIONS.length / 2);
 
 export class Panels {
   private readonly art: UiArt;

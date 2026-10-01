@@ -56,6 +56,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src), op
     stateOverlays: parseStateOverlays(tables.table('States'), tables.table('Overlay')),
     stateGroups: parseStateGroups(tables.table('States')),
     overlays: parseOverlays(tables.table('Overlay')),
+    monEquip: tables.table('MonEquip'),
     uniques: new UniqueDb(monsters, {
       monUMod: tables.table('MonUMod'), superUniques: tables.table('SuperUniques'), monPreset: tables.table('MonPreset'), monPlace: tables.table('MonPlace'),
       prefix: tables.table('UniquePrefix'), suffix: tables.table('UniqueSuffix'), appellation: tables.table('UniqueAppellation'),

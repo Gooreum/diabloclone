@@ -2,6 +2,7 @@
 import type { MonsterStats, MonsterType, MonSeqFrame } from '../monster';
 import type { Pt } from '../geom';
 import type { Rng } from '../rng';
+import type { ItemInstance } from '../treasure';
 import type { StateList } from '../states';
 import type { NpcState } from './npc';
 
@@ -171,6 +172,8 @@ export interface PetInfo {
   /** 센트리: 남은 쏠 횟수 (−1 = 아직 안 셈, AI 첫 생각에서 Skill1 calc4), Death Sentry 가 마지막으로 터뜨린 시체 */
   shots?: number;
   lastCorpse?: number;
+  /** 그림자 (Shadow Warrior/Master): 주인 직업, 장비 (monequip), Master 여부, 주인의 그림자 스킬 레벨, 이번에 쓸 스킬 */
+  shadow?: { cls: string; equipment: Record<string, ItemInstance>; master: boolean; ownerSkillLvl: number; use?: { id: number; lvl: number } };
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean; id?: number }

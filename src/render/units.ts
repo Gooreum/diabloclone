@@ -251,7 +251,8 @@ export class UnitGfx {
    * 합성 그리기. 밝기는 발밑 (x, y) 한 점에서 잰다 (원작: 유닛 전체가 한 밝기).
    * shadow = 먼저 불투명 레이어를 발밑 기준으로 눕힌 그림자로 그린다 (monstats2 Shadow).
    */
-  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false, shadow = false): { x: number; y: number; w: number; h: number } | null {
+  /** @param dim 밝기 배율·반투명 (그림자 전사: 어둡고 비치게) */
+  draw(sink: SpriteSink, comp: Composite, dir64: number, frame: number, x: number, y: number, bright = false, shadow = false, dim?: number): { x: number; y: number; w: number; h: number } | null {
     const cof = comp.cof;
     const d = dir64ToFile(dir64, cof.directions);
     const f = ((frame % cof.framesPerDirection) + cof.framesPerDirection) % cof.framesPerDirection;
@@ -274,8 +275,8 @@ export class UnitGfx {
       const fr = dir?.frames[Math.min(f, dir.frames.length - 1)];
       if (!dir || !fr) continue;
       // 반투명 레이어 (COF transparent + drawEffect: 0~2 = 75/50/25% 불투명, 3·5·6 = 더하기, 4 = 곱하기). 색 바꿈 표는 그리는 쪽이 적용
-      const blend = layer?.transparent ? layer.drawEffect : -1;
-      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright, lightAt: feet });
+      const blend = layer?.transparent ? layer.drawEffect : dim !== undefined ? 1 : -1;
+      sink.draw({ id: `u${lg.id}:${d}:${f}`, w: dir.box.width, h: dir.box.height, pixels: fr.pixels }, x + dir.box.left, y + dir.box.top, { shift: comp.shift, blend, bright, lightAt: feet, ...(dim !== undefined ? { dim } : {}) });
       l0 = Math.min(l0, x + dir.box.left);
       t0 = Math.min(t0, y + dir.box.top);
       r0 = Math.max(r0, x + dir.box.left + dir.box.width);

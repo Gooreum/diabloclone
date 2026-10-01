@@ -570,3 +570,60 @@ describe.skipIf(!hasLod)('Phase 3 — 센트리', () => {
     expect(traps(inner)).toHaveLength(0);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 4 — 그림자', () => {
+  const shadows = (inner: Inner) => inner.pets.filter((p) => p.pet?.shadow && p.mode !== 'DT' && p.mode !== 'DD');
+  const summon = (g: Game, name: string) => {
+    g.enqueue({ type: 'useSkill', skill: S(name).id, hand: 'right', x: 20.5, y: 20.5 });
+    for (let i = 0; i < 30; i++) g.tick();
+  };
+
+  it('Shadow Warrior 5레벨: 레벨 = 주인 레벨, 생명 × (1 + par1·4/100), 저항 min(lvl·4, 75), monequip 장비 (ces·btl + 주인 갑옷·투구)', () => {
+    const { g, inner } = game({ skills: { 'Shadow Warrior': 5 }, level: 24, equipment: { rarm: item('ktr'), tors: item('lea'), head: item('cap') } });
+    const base = lod.monsters.get('shadowwarrior');
+    summon(g, 'Shadow Warrior');
+    const [sw] = shadows(inner);
+    expect(sw).toBeDefined();
+    expect(sw!.stats.level).toBe(24);
+    expect(sw!.resist.fi - base.resist.fi).toBe(20);
+    const eq = sw!.pet!.shadow!.equipment;
+    expect([eq.rarm?.code, eq.larm?.code, eq.tors?.code, eq.head?.code]).toEqual(['ces', 'btl', 'lea', 'cap']);
+    const one = game({ skills: { 'Shadow Warrior': 1 }, level: 24 });
+    summon(one.g, 'Shadow Warrior');
+    const [w1] = shadows(one.inner);
+    expect(w1!.resist.fi).toBe(base.resist.fi);
+    const sw5 = S('Shadow Warrior');
+    expect(sw!.stats.maxHp).toBeGreaterThan(w1!.stats.maxHp * (1 + ((sw5.params[0]! * 4) / 100)) * 0.7);
+  });
+
+  it('petmax 1: 두 번 소환해도 그림자는 하나, 스냅샷에 주인 직업·장비', () => {
+    const { g, inner } = game({ skills: { 'Shadow Warrior': 3 } });
+    summon(g, 'Shadow Warrior');
+    for (let i = 0; i < 160; i++) g.tick();
+    summon(g, 'Shadow Warrior');
+    expect(shadows(inner)).toHaveLength(1);
+    const snap = g.snapshot().monsters.find((m) => m.id === shadows(inner)[0]!.id)!;
+    expect(snap.shadow?.cls).toBe('Assassin');
+    expect(snap.shadow?.equipment.rarm?.code).toBe('ces');
+  });
+
+  it('그림자가 근처 적을 공격한다', () => {
+    const { g, inner } = game({ skills: { 'Shadow Warrior': 10, 'Tiger Strike': 5 } });
+    g.character!.rightSkill = S('Tiger Strike').id;
+    summon(g, 'Shadow Warrior');
+    const z = dummy(g, 24.5, 22.5);
+    z.stats.defense = 0;
+    z.stats.level = 1;
+    for (let i = 0; i < 300 && z.hp >= 100000; i++) g.tick();
+    expect(z.hp).toBeLessThan(100000);
+    expect(shadows(inner)).toHaveLength(1);
+  });
+
+  it('Shadow Master: 주인이 배운 어쌔신 스킬 (패시브 제외) 을 쓴다', () => {
+    const { g, inner } = game({ skills: { 'Shadow Master': 1, 'Tiger Strike': 4, 'Fire Trauma': 2, 'Claw Mastery': 3 } });
+    summon(g, 'Shadow Master');
+    const [sm] = shadows(inner);
+    const list = (g as unknown as { shadowSkills(p: MonsterUnit): { s: { name: string }; lvl: number }[] }).shadowSkills(sm!);
+    expect(list.map((x) => x.s.name).sort()).toEqual(['Fire Trauma', 'Shadow Master', 'Tiger Strike']);
+  });
+});

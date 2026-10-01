@@ -31,6 +31,8 @@ export interface SceneDeps {
   hover?: { kind: string; id: number } | null;
   /** 몬스터 그림자 여부 (monstats2 Shadow). 없으면 그림자 없음 */
   shadowOf?: (typeId: string) => boolean;
+  /** 그림자 전사 외형: 주인 직업 토큰·무기 클래스·장비 레이어 */
+  shadowLook?: (shadow: NonNullable<SnapMonster['shadow']>) => { token: string; wclass: string; equip: Record<string, string> };
 }
 
 /** 오브젝트 COF 레이어는 모두 기본 외형 'lit' (출처: objects.txt HD~S8 = 레이어 사용 여부, 원작 오브젝트 DCC 이름 <토큰><레이어>LIT<모드>HTH) */
@@ -46,9 +48,19 @@ const animFrame = (anim: AnimData, key: string, modeTick: number, loop = true): 
 type SnapMonster = Readonly<WorldSnapshot>['monsters'][number];
 
 /** 몬스터 그림 사양 (없으면 null, 색 바꿈 표를 불러오는 중이면 undefined) */
-function monsterSpec(d: Pick<SceneDeps, 'units' | 'monsters'>, m: SnapMonster): CompositeSpec | null | undefined {
+/** 그림자 전사 몬스터 모드 → 캐릭터 모드 (죽기·시체는 맨손 COF 만) */
+function shadowSpec(d: Pick<SceneDeps, 'shadowLook'>, m: SnapMonster): CompositeSpec | null {
+  if (!m.shadow || !d.shadowLook) return null;
+  const look = d.shadowLook(m.shadow);
+  const mode = m.anim?.mode ?? m.mode;
+  return { root: 'CHARS', token: look.token, mode, wclass: mode === 'DT' || mode === 'DD' ? 'HTH' : look.wclass, equip: look.equip };
+}
+
+function monsterSpec(d: Pick<SceneDeps, 'units' | 'monsters' | 'shadowLook'>, m: SnapMonster): CompositeSpec | null | undefined {
   const t = d.monsters?.types.get(m.typeId);
   if (!t) return null;
+  const sh = shadowSpec(d, m);
+  if (sh) return sh;
   const equip: Record<string, string> = {};
   // 레이어 외형: 엔진이 고른 변형 (원작 레벨 몬스터 영역의 외형 세트)
   for (const [layer, variants] of Object.entries(t.layers)) {
@@ -141,13 +153,14 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
     // 싸움에서 곧 쓸 동작(맞기·공격·걷기·죽기) 그림을 지금 방향으로 미리 해석해 둔다 (처음 맞을 때 그림이 늦게 와 깜박이지 않게)
     if (m.mode === 'NU' || m.mode === 'WL') for (const pre of PRELOAD_MODES) d.units.warm({ ...spec, mode: pre }, m.dir);
     const loop = !(m.mode === 'DT' || m.mode === 'DD') && ['NU', 'WL', 'RN'].includes(m.mode);
-    const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
+    const frame = m.anim ? m.anim.frame : m.mode === 'DD' ? 0 : spec.root === 'CHARS' ? animFrame(d.anim, `${spec.token}${mode}${spec.wclass}`, m.modeTick, loop) : animFrame(d.anim, `${t.code}${mode}${t.baseW}`, m.modeTick, loop);
     out.push({
       depth: m.x + m.y,
       draw: (sink, cm) => {
         const p = toCanvas(cm, m.x, m.y);
         const lit = !!d.hover && (d.hover.kind === 'monster' || d.hover.kind === 'npc' || d.hover.kind === 'corpse') && d.hover.id === m.id;
-        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit, m.mode !== 'DD' && !!d.shadowOf?.(m.typeId));
+        // 그림자 전사: 어둡고 비치게. 근사(원작 미확인): 원작 그림자 팔레트 대신 밝기 0.25 · 50% 불투명
+        if (shown) d.units.draw(sink, shown.comp, shown.dir, frame, p.x, p.y, lit, m.mode !== 'DD' && !!d.shadowOf?.(m.typeId), m.shadow ? 0.25 : undefined);
         // 마을 NPC: 말을 걸 수 있으면 클릭 상자 (장식 유닛은 없음)
         if (m.npc) {
           if (m.interact) picks.push({ kind: 'npc', id: m.id, x: p.x - 20, y: p.y - 80, w: 40, h: 85 });

@@ -9,7 +9,7 @@ import { Rng } from './rng';
 import type { AnimData } from '../formats/animdata';
 import { actionFrame } from '../formats/animdata';
 import type { ItemBase, ItemDb } from './items';
-import { QUALITY, type ItemInstance, type TreasureDb } from './treasure';
+import { QUALITY, type ItemInstance, type Quality, type TreasureDb } from './treasure';
 import type { MonsterDb, MonsterStats, MonsterType, MonSeqFrame } from './monster';
 import { aiDistance, isInMeleeRange, modeTiming, rollGetHit, rollMonsterStats } from './monster';
 import { aiName, escape, hasAi, idle, MONMODE_INDEX, think, thinkNpc, walkToTarget, type AiWorld, type MonCast, type MonMode, type MonsterUnit, type NpcPathNode, type PetInfo, type SkillTarget } from './ai';
@@ -109,6 +109,8 @@ export interface GameData {
   stateGroups?: Map<string, number>;
   /** overlay.txt 이름(소문자) → 그림 (무술 차지 prgoverlay) */
   overlays?: Map<string, StateOverlayDef>;
+  /** monequip.txt (그림자 전사·마스터 장비) */
+  monEquip?: TxtRow[];
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -240,6 +242,8 @@ export interface MonsterSnapshot {
   npc?: boolean; interact?: boolean; merc?: boolean; quest?: boolean;
   /** 대상이 될 수 없음 (하늘을 나는 Vulture 등 — 원작 UNITFLAG_TARGETABLE 꺼짐) */
   untargetable?: boolean;
+  /** 그림자 (Shadow Warrior/Master): 주인 직업 그림 + 그림자 장비로 그린다 */
+  shadow?: { cls: string; equipment: Record<string, ItemInstance> };
 }
 /** NPC 와 대화 중 (메뉴·상점·도박·고용 목록) */
 export interface InteractionSnapshot {
@@ -981,6 +985,7 @@ export class Game {
           flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
           ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
           ...(m.hidden ? { untargetable: true } : {}),
+          ...(m.pet?.shadow ? { shadow: { cls: m.pet.shadow.cls, equipment: m.pet.shadow.equipment } } : {}),
         };
       }),
       items: this.ground.map((g) => ({ id: g.item.id, code: g.item.code, quality: g.item.quality, quantity: g.item.quantity, x: g.x, y: g.y })),
@@ -3611,6 +3616,7 @@ export class Game {
       case 43: return this.shockWeb(s, lvl, cast.tx, cast.ty);
       case 44: return this.bladeSentinel(s, lvl, cast.tx, cast.ty);
       case 45: return this.placeSentry(s, lvl, cast.tx, cast.ty);
+      case 49: return this.summonShadow(s, lvl);
       case 34:
       case 35: return this.chargeUp(cast, live, index);
       case 42: return this.dragonTalon(cast, live);
@@ -4203,6 +4209,159 @@ export class Game {
         // sentry lightning · death sentry ltng: 대상으로 번개 (srvmissile)
         if (def) this.spawnPlayerMissile(def, msk, lvl, t.x, t.y, t.id, opts);
     }
+  }
+
+  /**
+   * Shadow Warrior / Shadow Master: 펫 레벨 = 주인 레벨. 스킬 레벨 > 1 이면 최대 생명 × (1 + par1·(lvl−1)/100),
+   * aurastat1~6 은 모두 aurastatcalc2 값, passivestat1~5 는 모두 passivecalc2 값 (원작 그대로 — 인덱스 [1] 고정).
+   * 장비 = monequip.txt (스킬 레벨 이하 행부터, 칸마다 하나 무작위, '    ' 는 주인 아이템 복사), 아이템 레벨 = par5 + (lvl−1)·par6.
+   * 출처: SkillAss.cpp SKILLS_SrvDo049_ShadowWarrior_Master / sub_6FCF9580
+   */
+  private summonShadow(s: SkillRecord, lvl: number): void {
+    const data = this.data, calc = data?.skillCalc, c = this.character, p = this.player;
+    if (!data || !calc || !c || !s.summon) return;
+    const ownerLvl = this.skillLevel(s);
+    const pet = this.summonPet(s, lvl, s.summon, p.x + 1, p.y + 1, s.petType, {
+      shadow: { cls: c.cls, equipment: {}, master: s.srvDoFunc === 49 && s.summon.toLowerCase() === 'shadowmaster', ownerSkillLvl: ownerLvl },
+    }, { level: c.level, noBonus: true });
+    if (!pet) return;
+    const o = this.owner();
+    if (lvl > 1) {
+      pet.stats.maxHp += Math.trunc((pet.stats.maxHp * (s.params[0] ?? 0) * (lvl - 1)) / 100);
+      pet.hp = pet.stats.maxHp;
+      const av = s.auraStats[1] ? calc.eval(s, s.auraStats[1].calc, lvl, o) : 0;
+      const pv = s.passiveStats[1] ? calc.eval(s, s.passiveStats[1].calc, lvl, o) : 0;
+      const st: Record<string, number> = {};
+      for (const a of s.auraStats) st[a.stat] = av;
+      for (const ps of s.passiveStats) st[ps.stat] = pv;
+      for (const [k, v] of Object.entries(st)) {
+        if (RESIST_STAT[k]) pet.resist[RESIST_STAT[k] as keyof MonsterUnit['resist']] += v;
+        else if (k === 'tohit') {
+          pet.stats.a1.toHit += v;
+          pet.stats.a2.toHit += v;
+        } else if (k === 'skill_armor_percent') pet.stats.defense += Math.trunc((pet.stats.defense * v) / 100);
+      }
+    }
+    // 장비 (monequip.txt)
+    const ilvl = Math.max(1, Math.min(99, (s.params[4] ?? 0) + (lvl - 1) * (s.params[5] ?? 0)));
+    const rows = (data.monEquip ?? []).filter((r) => r.monster === pet.type.id);
+    let i = 0;
+    while (i < rows.length && Number(rows[i]?.level ?? 0) > lvl) i++;
+    const eq = (pet.pet as PetInfo).shadow!.equipment;
+    const QUAL: Record<number, Quality> = { 1: QUALITY.INFERIOR, 2: QUALITY.NORMAL, 3: QUALITY.SUPERIOR, 4: QUALITY.MAGIC, 5: QUALITY.SET, 6: QUALITY.RARE, 7: QUALITY.UNIQUE };
+    for (; i < rows.length; i++) {
+      const r = rows[i] as TxtRow;
+      const slots = [1, 2, 3].map((k) => ({ code: r[`item${k}`] ?? '', loc: r[`loc${k}`] ?? '', mod: Number(r[`mod${k}`] ?? 0) })).filter((x) => x.loc);
+      if (!slots.length) continue;
+      const pick = slots[pet.rng.pick(slots.length)] as { code: string; loc: string; mod: number };
+      if (eq[pick.loc]) continue;
+      const code = pick.code.trim() || this.equipment[pick.loc as keyof typeof this.equipment]?.code;
+      const base = code ? data.items.base(code) : undefined;
+      if (!base) continue;
+      eq[pick.loc] = data.treasure.createItem(base, ilvl, new Rng(Number(this.rng.next() & 0xffffffffn) || 1), QUAL[pick.mod] ?? QUALITY.NORMAL, true);
+    }
+    if (s.auraState) pet.states.set(s.auraState, Infinity, {}, { id: s.id, lvl });
+    pet.nextThink = this.tickCount + 20;
+  }
+
+  /** 그림자가 쓸 스킬: Warrior = 주인 왼쪽·오른쪽 스킬 (주인 레벨/2 + 그림자 스킬 레벨/3), Master = 주인 어쌔신 스킬 전부 (clamp(소환 레벨/2 + 주인 레벨/2, 1, 24)) */
+  private shadowSkills(pet: MonsterUnit): { s: SkillRecord; lvl: number }[] {
+    const sh = pet.pet?.shadow, c = this.character, db = this.data?.skills;
+    if (!sh || !c || !db) return [];
+    const out: { s: SkillRecord; lvl: number }[] = [];
+    if (sh.master) {
+      for (const s of db.classSkills('Assassin')) {
+        const own = this.skillLevel(s);
+        if (own > 0 && !s.passive) out.push({ s, lvl: Math.max(1, Math.min(24, Math.trunc(sh.ownerSkillLvl / 2) + Math.trunc(own / 2))) });
+      }
+      return out;
+    }
+    for (const id of [c.leftSkill, c.rightSkill]) {
+      const s = this.skillRecord(id);
+      if (s) out.push({ s, lvl: Math.max(1, Math.trunc(this.skillLevel(s) / 2) + Math.trunc(sh.ownerSkillLvl / 3)) });
+    }
+    return out;
+  }
+
+  /**
+   * 그림자 AI: 주인에게서 멀면 따라가고, 적이 있으면 스킬을 골라 쓴다. 근접 거리면 clamp(aip3 − 2·스킬 레벨, 5, 100) % 로 일반 공격.
+   * 어쌔신 스킬이 아니면 일반 공격. 출처: AiThink.cpp AITHINK_Fn105_ShadowWarrior / ShadowWarriorCheckUseSkill / Fn106 (Master)
+   * 근사(원작 미확인): Master 의 점수제(저항·요구 레벨·aibonus) 대신 배운 스킬 중 무작위, 함정·그림자 소환은 쓰지 않는다
+   */
+  private thinkShadow(pet: MonsterUnit): void {
+    const sh = pet.pet?.shadow, p = this.player, ap = pet.type.aiParams;
+    if (!sh) return;
+    pet.nextThink = this.tickCount + 5;
+    const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
+    if (toOwner > 25) return this.warpPet(pet);
+    const enemy = this.inTown || toOwner > (ap[1] ?? 30) ? undefined : this.monstersNear(pet.x, pet.y, ap[0] ?? 40).find((m) => !m.pet && Math.hypot(m.x - p.x, m.y - p.y) < 20);
+    if (!enemy) {
+      pet.targetId = undefined;
+      if (toOwner > 5) this.petMoveTo(pet, p.x + (pet.rng.pick(5) - 2), p.y + (pet.rng.pick(5) - 2), toOwner > 8);
+      return;
+    }
+    pet.targetId = enemy.id;
+    const melee = isInMeleeRange(pet.x, pet.y, pet.type.sizeX, pet.type.meleeRange, enemy.x, enemy.y, enemy.type.sizeX);
+    const list = this.shadowSkills(pet).filter((x) => x.s.charclass === 'ass' && ![44, 45, 49].includes(x.s.srvDoFunc));
+    let pick = list.length ? list[pet.rng.pick(list.length)] : undefined;
+    if (melee && pet.rng.pick(100) < Math.max(5, Math.min(100, (ap[2] ?? 60) - 2 * Math.max(sh.ownerSkillLvl, 1)))) pick = undefined;
+    const needMelee = !pick || pick.s.range === 'h2h';
+    if (needMelee && !melee) return this.petMoveTo(pet, enemy.x, enemy.y, true);
+    sh.use = pick ? { id: pick.s.id, lvl: pick.lvl } : undefined;
+    const mode: MonMode = pick && (pick.s.anim === 'SC' || pick.s.anim === 'S2') ? 'SC' : pet.rng.pick(2) ? 'A2' : 'A1';
+    this.startMonsterMode(pet, pet.type.modes.has(mode) ? mode : 'A1');
+    pet.dir = dir64(enemy.x - pet.x, enemy.y - pet.y);
+  }
+
+  /** 그림자 스킬 효과 (판정 프레임). 근사(원작 미확인): 무술은 차지를 쌓지 않는 근접 (피니셔 피해 % 만), 원거리·버프는 그림자 자리에서 */
+  private shadowEffect(pet: MonsterUnit, t: MonsterUnit): void {
+    const sh = pet.pet?.shadow, data = this.data, calc = data?.skillCalc;
+    if (!sh || !data || !calc) return;
+    const use = sh.use, s = use ? this.skillRecord(use.id) : undefined, lvl = use?.lvl ?? 1;
+    const o = this.owner();
+    const from = { x: pet.x, y: pet.y };
+    if (s && s.range !== 'h2h') {
+      if (s.srvDoFunc === 18 || s.srvDoFunc === 47 || s.srvStFunc === 28) {
+        const stats: Record<string, number> = {};
+        for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+        pet.states.set(s.auraState, this.tickCount + Math.max(25, calc.eval(s, s.auraLenCalc, lvl, o)), stats, { id: s.id, lvl });
+        return;
+      }
+      const inAir = s.srvMissile ? data.missiles.get(s.srvMissile) : undefined;
+      if (inAir?.srvHitFunc === 36) return this.throwLob(inAir, s, lvl, t.x, t.y, from);
+      if (s.srvDoFunc === 43) {
+        const def = data.missiles.get(progressiveMissile(s, 0));
+        if (def) this.throwLob(def, s, lvl, t.x, t.y, from);
+        return;
+      }
+      if (s.srvDoFunc === 48) {
+        const def = data.missiles.get(progressiveMissile(s, 0));
+        if (def) this.spawnPlayerMissile(def, s, lvl, t.x, t.y, t.id, { srcDam: 0, useSkillDamage: true, from });
+        return;
+      }
+      if (s.srvDoFunc === 33) return this.psychicHammer(s, lvl, t);
+      if (s.srvDoFunc === 51) return this.mindBlast(s, lvl, t.x, t.y);
+    }
+    // 근접: 그림자 오른손 무기 피해 (없으면 monstats A1), 피니셔는 피해 % (Dragon Talon·Flight par1 + (lvl−1)·par2, Dragon Claw calc1)
+    if (!isInMeleeRange(pet.x, pet.y, pet.type.sizeX, pet.type.meleeRange, t.x, t.y, t.type.sizeX, 1)) return;
+    const atk = pet.stats.a1;
+    if (!rollPercent(hitChance(atk.toHit, this.monsterDefense(t, false), pet.stats.level, t.stats.level), pet.rng)) {
+      this.events.push({ type: 'miss', targetId: t.id });
+      return;
+    }
+    const w = sh.equipment.rarm ? data.items.base(sh.equipment.rarm.code) : undefined;
+    const ed = sh.equipment.rarm?.stats.reduce((a, x) => a + (x.stat === 'item_maxdamage_percent' ? x.value : 0), 0) ?? 0;
+    const pct = !s ? 0 : s.srvDoFunc === 42 || s.srvDoFunc === 52 ? linearPct(s.params[0] ?? 0, s.params[1] ?? 0, lvl) : s.srvDoFunc === 46 ? calc.calc(s, 1, lvl, o) : 0;
+    const d = emptyDamage();
+    const base = rollDamage(w ? { min: w.minDam, max: w.maxDam } : { min: atk.min, max: atk.max }, pet.rng);
+    d.phys = Math.trunc((base * 256 * (100 + ed + pct)) / 100);
+    d.hitClass = pet.type.hitClass;
+    const pmax = pet.states.stat('poisonmaxdam');
+    if (pmax > 0) {
+      d.pois += pet.states.stat('poisonmindam') + pet.rng.pick(Math.max(1, pmax - pet.states.stat('poisonmindam')));
+      d.poisLen = pet.states.stat('skill_poison_override_length');
+    }
+    this.damageMonster(t, d, 'pet', pet.id);
   }
 
   /** Blade Creeper 이동: A ↔ B 왕복 (AITHINK_Fn102 — 속도 15). 근사(원작 미확인): 벽은 무시하고 직선 */
@@ -7750,9 +7909,11 @@ export class Game {
       else if (stat === 'velocitypercent') pv.velocitypercent = (pv.velocitypercent ?? 0) + v;
       else if (RESIST_STAT[stat]) res[RESIST_STAT[stat] as keyof MonsterUnit['resist']] += v;
     };
-    for (const ps of s.passiveStats) bonus(ps.stat, calc.eval(s, ps.calc, lvl, o));
-    for (const a of s.auraStats) bonus(a.stat, calc.eval(s, a.calc, lvl, o));
-    stats.maxHp += Math.trunc((stats.maxHp * calc.calc(s, 1, lvl, o)) / 100);
+    if (!opt.noBonus) {
+      for (const ps of s.passiveStats) bonus(ps.stat, calc.eval(s, ps.calc, lvl, o));
+      for (const a of s.auraStats) bonus(a.stat, calc.eval(s, a.calc, lvl, o));
+      stats.maxHp += Math.trunc((stats.maxHp * calc.calc(s, 1, lvl, o)) / 100);
+    }
     const id = this.nextUnitId++;
     const pet: MonsterUnit = { ...this.newMonsterUnit(id, type, stats, rng, spot.x + 0.5, spot.y + 0.5), corpseUsed: true, pet: info };
     for (const k of Object.keys(res) as (keyof typeof res)[]) pet.resist[k] += res[k];
@@ -7847,7 +8008,7 @@ export class Game {
         continue;
       }
       if (info.hireling && this.updateMercAction(pet)) continue;
-      if (pet.mode === 'A1' || pet.mode === 'A2' || pet.mode === 'GH') {
+      if (pet.mode === 'A1' || pet.mode === 'A2' || pet.mode === 'GH' || (info.shadow && pet.mode === 'SC')) {
         if (!pet.hitDone && this.tickCount - pet.modeStart >= pet.hitTick) {
           pet.hitDone = true;
           if (info.hireling) this.mercShoot(pet);
@@ -7868,6 +8029,10 @@ export class Game {
       if (this.tickCount < pet.nextThink) continue;
       if (info.hireling) {
         this.thinkMerc(pet);
+        continue;
+      }
+      if (info.shadow) {
+        this.thinkShadow(pet);
         continue;
       }
       pet.nextThink = this.tickCount + Math.max(3, Math.trunc(pet.type.aiDelay / 3));
@@ -7917,6 +8082,10 @@ export class Game {
     const info = pet.pet as PetInfo;
     const t = pet.targetId !== undefined ? this.monsters.find((m) => m.id === pet.targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
     if (!t) return;
+    if (info.shadow) {
+      this.shadowEffect(pet, t);
+      return;
+    }
     if (info.missile) {
       const def = this.data?.missiles.get(info.missile);
       if (!def) return;
@@ -10616,7 +10785,7 @@ interface MeleeSpec {
 }
 
 /** 소환 선택 사항: 정확한 칸(뼈 감옥), 기본 생명(Decoy·Hydra), 펫 레벨(Decoy·Revive) */
-interface SummonOpts { exact?: boolean; hpBase?: number; level?: number }
+interface SummonOpts { exact?: boolean; hpBase?: number; level?: number; /** 스킬 passivestat·aurastat·calc1 생명 보너스를 붙이지 않는다 (그림자 — SrvDo049 가 따로) */ noBonus?: boolean }
 
 /** 저항 스탯 이름 → 몬스터 저항 칸 */
 /** 피해 칸(물리·원소·마법)을 pct % 로. 출처: SUnitDmg.cpp — nDamagePercent != 100 이면 양수 피해 칸마다 MONSTERUNIQUE_CalculatePercentage (길이 칸 제외) */

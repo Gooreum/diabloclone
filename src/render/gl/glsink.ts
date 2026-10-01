@@ -282,7 +282,7 @@ export class GlSink implements SpriteSink {
     }
     const blend = o?.shadow ? SHADOW_BLEND : QuadBatch.normBlend(o?.blend);
     if (o?.shadow) glStats.shadows++;
-    this.batch.push(slot.page, blend, x, y, img.w, img.h, slot.x, slot.y, row, o?.bright ? 1.6 : 1, o?.lightAt ?? o?.shadow, o?.shadow);
+    this.batch.push(slot.page, blend, x, y, img.w, img.h, slot.x, slot.y, row, o?.bright ? 1.6 : (o?.dim ?? 1), o?.lightAt ?? o?.shadow, o?.shadow);
   }
 
   end(): void {

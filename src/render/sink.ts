@@ -16,6 +16,8 @@ export interface DrawOpts {
   blend?: number;
   /** 가리킨 유닛 밝게 */
   bright?: boolean;
+  /** 밝기 배율 (그림자 전사 — 1 보다 작으면 어둡게). 2D 대체 경로는 무시 */
+  dim?: number;
   /** 빛을 재는 화면 점 (유닛·오브젝트·벽 = 발밑). 없으면 픽셀마다 (바닥) */
   lightAt?: { x: number; y: number };
   /** 그림자로 그린다: 발밑 화면 점 기준으로 눕혀 검정 반투명 (2D 대체 경로는 그리지 않는다) */

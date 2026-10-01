@@ -422,6 +422,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 조명: 원작 표 (levels IsInside · monstats2 Light/Shadow · missiles Light · objects Lit)
   const lightTables = new LightTables({ levels: tables.table('Levels'), monStats: tables.table('MonStats'), monStats2: tables.table('MonStats2'), missiles: tables.table('Missiles'), objects: tables.table('Objects') });
   const shadowOf = (typeId: string) => lightTables.monsterShadow(typeId);
+  // 그림자 전사: 주인 직업 그림 + 그림자 장비 (원작 클라이언트가 투명 몸통 k9 에 입혀 그린다)
+  const shadowLook = (sh: { cls: string; equipment: Record<string, ItemInstance> }) => ({
+    token: CLASS_TOKEN[sh.cls as ClassName] ?? 'AI', wclass: playerWclass(data.items, sh.equipment), equip: { ...BODY, ...playerLayers(data.items, sh.equipment) },
+  });
   // 비: levels.txt Rain = 1 인 레벨에서 가끔 (weather.ts)
   const rainLevels = new Set(tables.table('Levels').filter((r) => r.Rain === '1').map((r) => Number(r.Id)));
   const rain = new Rain(seed ^ 0x5eed);
@@ -1115,7 +1119,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       (renderers[game.levelId] as WorldRenderer).render(
         worldSink,
         cam,
-        buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow, shadowOf }, input.pickBoxes),
+        buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow, shadowOf, shadowLook }, input.pickBoxes),
       );
       // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
       const worldPx = captureWaiters.length ? readWorld() : null;

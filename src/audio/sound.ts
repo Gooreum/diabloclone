@@ -599,7 +599,8 @@ class GameListener {
         void s.play('cursor_identify_item');
         break;
       case 'noRoom':
-        void s.play(`${cls}_cantcarry_1`);
+        // 원작 sounds.txt: 어쌔신만 assassin_cant_carry (cantcarry_1 행 없음)
+        void s.play(cls === 'assassin' ? 'assassin_cant_carry' : `${cls}_cantcarry_1`);
         break;
       case 'noMana':
         void s.play(`${cls}_needmana_1`);

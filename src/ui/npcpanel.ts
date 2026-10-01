@@ -21,7 +21,7 @@ export function stripSpeed(s: string): string {
 /** 대사 고르기: 처음이면 소개(클래스별 소개가 있으면 그것), 아니면 GossipN 중 하나 */
 export function pickGossip(str: Str, prefix: string, cls: string, intro: boolean, pick: number): string {
   const has = (k: string) => str(k) !== k;
-  const ab = ({ Amazon: 'Ama', Sorceress: 'Sor', Necromancer: 'Nec', Paladin: 'Pal', Barbarian: 'Bar' } as Record<string, string>)[cls] ?? '';
+  const ab = ({ Amazon: 'Ama', Sorceress: 'Sor', Necromancer: 'Nec', Paladin: 'Pal', Barbarian: 'Bar', Druid: 'Dru', Assassin: 'Ass' } as Record<string, string>)[cls] ?? '';
   if (intro) {
     // 막 소개 대사 (막에 처음 온 날): HratliActIntroGossip1 · TyraelActIntroGossip1 · CainAct3IntroGossip1 · MeshifAct3IntroBarGossip1 …
     const base = prefix.replace(/Act\d$/, '');

@@ -5,7 +5,11 @@
 import type { TxtRow } from '../formats/txt';
 
 export const CLASSIC_CLASSES = ['Amazon', 'Sorceress', 'Necromancer', 'Paladin', 'Barbarian'] as const;
-export type ClassName = (typeof CLASSIC_CLASSES)[number];
+/** 확장팩 직업 (확장팩 캐릭터만 — 원작 LoD) */
+export const EXPANSION_CLASSES = ['Druid', 'Assassin'] as const;
+export const ALL_CLASSES = [...CLASSIC_CLASSES, ...EXPANSION_CLASSES] as const;
+export type ClassName = (typeof ALL_CLASSES)[number];
+export const isExpansionClass = (c: ClassName): boolean => (EXPANSION_CLASSES as readonly string[]).includes(c);
 export type StatName = 'str' | 'dex' | 'vit' | 'ene';
 
 const n = (v: string | undefined): number => Number(v ?? 0) || 0;

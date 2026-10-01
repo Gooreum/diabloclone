@@ -364,7 +364,7 @@ export const npcGreetingSound = (typeId: string): string[] => [`${npcSoundName(t
  *  intro 면 클래스별 소개 (akara_act1_intro_sor 등) 가 있으면 그것, 없으면 act1_intro. */
 export function npcGossipSound(typeId: string, gossipPrefix: string, cls: string, intro: boolean, pick: number, hasString: (k: string) => boolean, act = 1): string[] {
   const npc = npcSoundName(typeId);
-  const ab = ({ Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar' } as Record<string, string>)[cls] ?? '';
+  const ab = ({ Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar', Druid: 'dru', Assassin: 'ass' } as Record<string, string>)[cls] ?? '';
   if (intro) return [`${npc}_act${act}_intro_${ab}`, `${npc}_act${act}_intro`];
   const nums: number[] = [];
   for (let i = 1; i <= 12; i++) if (hasString(`${gossipPrefix}Gossip${i}`)) nums.push(i);

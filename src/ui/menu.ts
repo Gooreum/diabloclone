@@ -54,6 +54,9 @@ const HERO: Record<ClassName, { dir: string; pre: string; x: number; y: number; 
   Barbarian: { dir: 'barbarian', pre: 'BA', x: 400, y: 330, desc: 'He is unequaled in close-quarters combat\nand mastery of weapons.' },
   Paladin: { dir: 'paladin', pre: 'PA', x: 521, y: 338, desc: 'He is a natural party leader, holy man,\nand blessed warrior.' },
   Sorceress: { dir: 'sorceress', pre: 'SO', x: 626, y: 352, desc: 'She has mastered the elemental magicks --\nfire, lightning, and ice.' },
+  // 확장팩 직업 (d2exp FrontEnd\assassin·druid). 근사(원작 미확인): 위치는 OpenDiablo2 값
+  Assassin: { dir: 'assassin', pre: 'AS', x: 231, y: 365, desc: 'Schooled in the Martial Arts, her\nmind and body are deadly weapons.' },
+  Druid: { dir: 'druid', pre: 'DZ', x: 720, y: 370, desc: 'Commanding the forces of nature, he\nsummons wild beasts and raging storms.' },
 };
 type Anim = 'NU1' | 'NU2' | 'FW' | 'NU3' | 'BW';
 const heroFile = (c: ClassName, a: Anim, overlay = false) => `${FE}${HERO[c].dir}\\${HERO[c].pre}${a}${overlay ? 's' : ''}.dc6`;

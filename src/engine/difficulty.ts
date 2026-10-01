@@ -112,14 +112,16 @@ export function applyResistPenalty(raw: number, cap: number, penalty: number): n
 }
 
 /**
- * 클래식 칭호 (캐릭터 선택·게임 안 이름 앞). progression = 원작 .d2s 진행 값 (클래식: 막 하나를 끝낼 때마다 +1, 4·8·12 에서 칭호).
+ * 칭호 (캐릭터 선택·게임 안 이름 앞). progression = 원작 .d2s 진행 값 (막 하나를 끝낼 때마다 +1 — 클래식 4·8·12, 확장팩 5·10·15 에서 칭호).
  * 출처: The Arreat Summit — Character Titles (클래식 소프트코어: Sir/Dame → Lord/Lady → Baron/Baroness,
- *       하드코어: Count/Countess → Duke/Duchess → King/Queen)
+ *       하드코어: Count/Countess → Duke/Duchess → King/Queen; 확장팩: Slayer → Champion → Patriarch/Matriarch,
+ *       하드코어 Destroyer → Conqueror → Guardian)
  * 근사(원작 미확인): 진행 값 대신 난이도 해금 단계만 있으면 (해금 난이도 × 4) 로 본다
  */
-export function heroTitle(female: boolean, progression: number, hardcore = false): string {
-  const tier = Math.min(3, Math.trunc(progression / 4));
+export function heroTitle(female: boolean, progression: number, hardcore = false, expansion = false): string {
+  const tier = Math.min(3, Math.trunc(progression / (expansion ? 5 : 4)));
   if (tier <= 0) return '';
+  if (expansion) return (hardcore ? ['Destroyer', 'Conqueror', 'Guardian'] : ['Slayer', 'Champion', female ? 'Matriarch' : 'Patriarch'])[tier - 1] as string;
   const male = hardcore ? ['Count', 'Duke', 'King'] : ['Sir', 'Lord', 'Baron'];
   const fem = hardcore ? ['Countess', 'Duchess', 'Queen'] : ['Dame', 'Lady', 'Baroness'];
   return (female ? fem : male)[tier - 1] as string;

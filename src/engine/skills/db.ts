@@ -10,7 +10,7 @@ const flag = (v: string | undefined): boolean => n(v) === 1;
 const calc = (v: string | undefined): CalcNode | null => parseCalc(v);
 
 // 출처: 원작 skills.txt charclass 코드
-export const CLASS_CODE: Record<ClassName, string> = { Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar' };
+export const CLASS_CODE: Record<ClassName, string> = { Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar', Druid: 'dru', Assassin: 'ass' };
 
 export interface SkillRecord {
   id: number;

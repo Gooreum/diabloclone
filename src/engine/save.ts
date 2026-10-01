@@ -309,12 +309,13 @@ export function parseSave(text: string): CharacterSave {
 }
 
 /** 여성 클래스 (칭호 Dame/Lady/Baroness) */
-const FEMALE: readonly ClassName[] = ['Amazon', 'Sorceress'];
+/** 여성 직업 (칭호) */
+export const FEMALE: readonly ClassName[] = ['Amazon', 'Sorceress', 'Assassin'];
 
 export const summarize = (s: CharacterSave): HeroSummary => ({
   name: s.name, cls: s.character.cls, level: s.character.level, savedAt: s.savedAt,
   difficultyUnlocked: toDifficulty(s.difficultyUnlocked),
-  title: heroTitle(FEMALE.includes(s.character.cls), s.progression ?? toDifficulty(s.difficultyUnlocked) * 4),
+  title: heroTitle(FEMALE.includes(s.character.cls), s.progression ?? toDifficulty(s.difficultyUnlocked) * (s.expansion ? 5 : 4), false, s.expansion === true),
   expansion: s.expansion === true,
 });
 

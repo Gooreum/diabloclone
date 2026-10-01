@@ -60,7 +60,7 @@ import { LEVEL } from './drlg/types';
 export type PlayerMode = string;
 
 // 출처: 원작 MPQ 경로 data\global\CHARS\<토큰>\ (AM, SO, NE, PA, BA)
-export const CLASS_TOKEN: Record<ClassName, string> = { Amazon: 'AM', Sorceress: 'SO', Necromancer: 'NE', Paladin: 'PA', Barbarian: 'BA' };
+export const CLASS_TOKEN: Record<ClassName, string> = { Amazon: 'AM', Sorceress: 'SO', Necromancer: 'NE', Paladin: 'PA', Barbarian: 'BA', Druid: 'DZ', Assassin: 'AI' };
 const PLAYER_SIZE = 2;
 const PICKUP_RANGE = 2;
 /** 근사(원작 미확인): 봉인 보스가 봉인을 연 플레이어에게서 생기는 거리 한도 (서브타일) — 800×600 화면 안 */
@@ -2261,8 +2261,9 @@ export class Game {
       return;
     }
     const cls = c.cls;
-    const lifeBonus = (v: number) => (cls === 'Barbarian' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
-    const manaBonus = (v: number) => (cls === 'Sorceress' || cls === 'Necromancer' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' ? v + (v >> 1) : v);
+    // 출처: D2MOO ITEMS_GetBonusLifeBasedOnClass / ITEMS_GetBonusManaBasedOnClass (어쌔신 ×1.5 · 드루이드 마나 ×2)
+    const lifeBonus = (v: number) => (cls === 'Barbarian' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' || cls === 'Assassin' ? v + (v >> 1) : v);
+    const manaBonus = (v: number) => (cls === 'Sorceress' || cls === 'Necromancer' || cls === 'Druid' ? 2 * v : cls === 'Amazon' || cls === 'Paladin' || cls === 'Assassin' ? v + (v >> 1) : v);
     const doubled = (stat: number) => stat > 0 && this.rng.pick(100) < Math.trunc(this.rng.pick(stat) / 2);
     if (b.pSpell === 3) {
       for (const us of b.useStats) {
@@ -7875,7 +7876,7 @@ export class Game {
     const data = this.data, db = data?.cube, c = this.character;
     if (!this.cubeOpen || !data || !db || !c) return false;
     const inCube = this.store.cube.items.map((p) => p.item);
-    const cls = ({ Amazon: 'ama', Sorceress: 'sor', Necromancer: 'nec', Paladin: 'pal', Barbarian: 'bar' } as Record<string, string>)[c.cls] ?? '';
+    const cls = CLASS_CODE[c.cls] ?? '';
     const r = transmute(db, { items: data.items, treasure: data.treasure, rng: this.rng, playerLevel: c.level, difficulty: this.difficulty, cls, expansion: data.expansion ?? false }, inCube);
     if (!r || r.special === 'cow') {
       this.events.push({ type: 'transmuteFailed', count: inCube.length, ...(r?.special ? { special: r.special } : {}) });

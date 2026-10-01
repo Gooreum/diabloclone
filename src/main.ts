@@ -13,10 +13,10 @@ import { ACT_COUNT, actAvailable } from './engine/drlg/acts';
 import type { GameTables } from './data/tables';
 import { CLASS_TOKEN, Game, type GameData } from './engine/game';
 import { ENGINE_FPS } from './engine/index';
-import { classStats, createCharacter, expTable, type ClassName } from './engine/player';
+import { classStats, createCharacter, expTable, isExpansionClass, type ClassName } from './engine/player';
 import { QUALITY, type ItemInstance } from './engine/treasure';
 import { Rng } from './engine/rng';
-import { makeSave, mergeDifficulty, parseSave, startActFor, summarize, type CharacterSave } from './engine/save';
+import { FEMALE, makeSave, mergeDifficulty, parseSave, startActFor, summarize, type CharacterSave } from './engine/save';
 import { heroTitle, type Difficulty } from './engine/difficulty';
 import { questNameKey } from './engine/quests/messages-acts';
 import { characterOwner } from './engine/skills/rules';
@@ -290,8 +290,10 @@ async function boot(): Promise<void> {
     looks.clear();
     for (const sv of saves) {
       const eq = sv.equipment;
-      const wclass = ((eq.rarm ? data.items.base(eq.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
-      looks.set(sv.name, { token: CLASS_TOKEN[sv.character.cls], wclass, equip: { ...BODY, ...playerLayers(data.items, eq) } });
+      // 확장팩 캐릭터는 확장팩 아이템 표 (손톱·가죽 투구 등)
+      const d = dataFor(sv.expansion === true && src.edition === 'lod');
+      const wclass = ((eq.rarm ? d.items.base(eq.rarm.code)?.wclass : undefined) ?? 'hth').toUpperCase();
+      looks.set(sv.name, { token: CLASS_TOKEN[sv.character.cls], wclass, equip: { ...BODY, ...playerLayers(d.items, eq) } });
     }
     return saves.map(summarize).sort((a, b) => b.savedAt - a.savedAt);
   };
@@ -325,7 +327,8 @@ async function boot(): Promise<void> {
     // 그 난이도의 마지막 막 마을에서 시작 (그 막 월드가 아직 없으면 Act 1). 그 막 파일은 로딩 전에 미리 읽는다
     const startAct = startActFor(save, difficulty);
     // 확장팩 캐릭터: 저장에 적힌 값, 새 캐릭터는 만들기 화면의 체크 (확장팩 판본에서만)
-    const expansion = save ? save.expansion === true : choice.kind === 'new' && choice.expansion === true && shared.edition === 'lod';
+    // 확장팩 직업(드루이드·어쌔신)은 늘 확장팩 캐릭터 (원작 LoD)
+    const expansion = save ? save.expansion === true || isExpansionClass(save.character.cls) : choice.kind === 'new' && (choice.expansion === true || isExpansionClass(choice.cls)) && shared.edition === 'lod';
     if (save && actAvailable(startAct)) await prefetchAct(shared, startAct);
     // 원작: 게임을 시작하면 로딩 화면 (월드 만들기 동안)
     const game = await loading.around(ctx, () => play(shared, choice.name, cls, save, difficulty, expansion));
@@ -1052,7 +1055,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
               messageLog.push(`${str(questNameKey(Number(ev.quest)))} — ${str('qstsComplete')}`, performance.now(), 'gold');
             } else if (ev.type === 'gameCompleted') {
               // Phase 7: 클래식 엔딩 (원작 엔딩 영상 대신 문구 — string.tbl Killdiablo1~3 + 칭호). 근사(원작 미확인): 표시 방식
-              const title = heroTitle(cls === 'Amazon' || cls === 'Sorceress', Math.max(save?.progression ?? 0, game.progression));
+              const title = heroTitle(FEMALE.includes(cls), Math.max(save?.progression ?? 0, game.progression), false, game.expansion);
               messageLog.push(str('Killdiablo1'), performance.now(), 'gold');
               messageLog.push(str('KillDiablo2'), performance.now(), 'gold');
               if (title) messageLog.push(`${str('KillDiablo3')} ${title} ${name}`, performance.now(), 'gold');

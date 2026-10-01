@@ -39,6 +39,8 @@ export class ItemText {
   private readonly str: (k: string) => string;
   private readonly desc = new Map<string, StatDesc>();
   private readonly classSkillsStr = new Map<number, string>();
+  /** 탭 스킬 문자열 키 (직업 × 8 + 탭 → "StrSkillTab|StrClassOnly") */
+  private readonly tabSkillsStr = new Map<number, string>();
   private readonly skillName = new Map<number, { name: string; cls: string }>();
   /** 룬워드 이름 (확장팩) — main 이 GameData.runewords 를 넣는다 */
   runewords?: RunewordDb;
@@ -54,7 +56,12 @@ export class ItemText {
       this.desc.set(r.Stat, { func: Number(r.descfunc), val: Number(r.descval || 0), pos: r.descstrpos ?? '', neg: r.descstrneg ?? '', str2: r.descstr2 ?? '', priority: Number(r.descpriority || 0) });
     }
     // 클래스 Id 순서 = charstats 행 순서 (Amazon 0 … Barbarian 4)
-    charstats.forEach((r, i) => r.StrAllSkills && this.classSkillsStr.set(i, str(r.StrAllSkills)));
+    // 'Expansion' 구분 행은 빼고 센다 (확장팩 charstats — 드루이드 5 · 어쌔신 6, CLASS_INDEX 와 같은 순서)
+    charstats.filter((r) => r.class && r.class !== 'Expansion').forEach((r, i) => {
+      if (r.StrAllSkills) this.classSkillsStr.set(i, str(r.StrAllSkills));
+      // 탭 스킬 (item_addskill_tab param = 직업 × 8 + 탭): StrSkillTab1~3 + StrClassOnly
+      for (let t = 0; t < 3; t++) if (r[`StrSkillTab${t + 1}`]) this.tabSkillsStr.set(i * 8 + t, `${r[`StrSkillTab${t + 1}`]}|${r.StrClassOnly ?? ''}`);
+    });
     const descs = new Map(skilldesc.map((d) => [d.skilldesc ?? '', d]));
     for (const r of skills) {
       const d = descs.get(r.skilldesc ?? '');
@@ -120,6 +127,11 @@ export class ItemText {
         return secs >= 1 ? sprintf(this.str('ModStre9u'), 1, secs) : sprintf(this.str('ModStre9t'), Math.trunc(value / 100));
       }
       case 13: return `+${value} ${this.classSkillsStr.get(param) ?? txt}`;
+      case 14: {
+        // 탭 스킬: "+%d to Summoning Skills" + " (Druid Only)" (charstats StrSkillTab · StrClassOnly)
+        const [tab, only] = (this.tabSkillsStr.get(param) ?? '').split('|');
+        return tab ? `${sprintf(this.str(tab), value)}${only ? ` ${this.str(only)}` : ''}` : null;
+      }
       case 15: {
         // 스킬 발동: "%d%% Chance to cast level %d %s on striking" (확률, 레벨 = layer & 63, 스킬 = layer >> 6)
         const sk = this.skillName.get(param >> 6);

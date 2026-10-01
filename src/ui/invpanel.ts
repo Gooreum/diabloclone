@@ -18,6 +18,8 @@ import { UI, type UiArt } from './art';
 import { d2text, drawText } from './text';
 
 const INVCHAR = `${UI}PANEL\\invchar.dc6`;
+/** 확장팩 캐릭터 인벤토리 (d2exp — 무기 칸 위 I/II 탭이 있는 판). 프레임 구성은 invchar 와 같다 (256/64 × 256/176) */
+const INVCHAR6 = `${UI}PANEL\\invchar6.dc6`;
 const GOLDBTN = `${UI}PANEL\\goldcoinbtn.dc6`;
 const CLOSEBTN = `${UI}PANEL\\buysellbtn.dc6`;
 const GOLD = { btnX: 84, btnY: 392, x: 106, y: 392, w: 91, h: 18 } as const;
@@ -102,12 +104,16 @@ export class InventoryPanel {
   /** 쓸 수 있는 아이템인가 (요구치) — 아니면 빨간 바탕 */
   usable: ((it: ItemInstance) => boolean) | null = null;
 
-  constructor(layout: InvLayout, icons: ItemIcons, text: ItemText, art: UiArt | null = null) {
+  /** 확장팩 캐릭터 (invchar6 — 무기 바꾸기 탭) */
+  readonly expansion: boolean;
+
+  constructor(layout: InvLayout, icons: ItemIcons, text: ItemText, art: UiArt | null = null, expansion = false) {
     this.layout = layout;
     this.icons = icons;
     this.text = text;
     this.art = art;
-    void art?.preload([INVCHAR, GOLDBTN, CLOSEBTN]);
+    this.expansion = expansion;
+    void art?.preload([expansion ? INVCHAR6 : INVCHAR, GOLDBTN, CLOSEBTN]);
   }
 
   hit(x: number, y: number): PanelHit {
@@ -155,7 +161,7 @@ export class InventoryPanel {
     if (!this.open) return;
     const L = this.layout, g = L.grid, P = L.panel;
     ctx.save();
-    if (!this.art?.drawPanel(ctx, INVCHAR, P.l, P.t, 4)) {
+    if (!this.art?.drawPanel(ctx, this.expansion ? INVCHAR6 : INVCHAR, P.l, P.t, 4)) {
       ctx.fillStyle = 'rgba(12,10,8,0.94)';
       ctx.fillRect(P.l, P.t, P.r - P.l, P.b - P.t);
     }

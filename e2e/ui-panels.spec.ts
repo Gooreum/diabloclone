@@ -466,7 +466,9 @@ test('Phase 12 UI: 로딩·커서·금화 창·Alt 이름표·가리킨 유닛·
       return { ...s, player: { ...s.player, states: [...s.player.states, 'staminapot'] } };
     };
     setTimeout(() => {
-      const d = (document.getElementById('game') as HTMLCanvasElement).getContext('2d')!.getImageData(200, 580, 1, 1).data;
+      // 스태미나 칸 안쪽 (판본별 배치 — 확장팩 800 조작판은 위치가 다르다)
+      const sb = window.__game!.ui!.hud.L.stamina;
+      const d = (document.getElementById('game') as HTMLCanvasElement).getContext('2d')!.getImageData(sb.x + 6, sb.y + 9, 1, 1).data;
       g.snapshot = orig;
       res([d[0]!, d[1]!, d[2]!]);
     }, 200);

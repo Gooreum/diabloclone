@@ -17,11 +17,18 @@ import type { Character, ExpTable } from '../engine/player';
 import type { ItemStore } from '../engine/itemstore';
 import type { SkillDb, SkillRecord } from '../engine/skills/db';
 import type { ItemIcons } from './invpanel';
+import type { Edition } from '../assets/edition';
 import { UI, type UiArt } from './art';
 import { d2text, drawText } from './text';
 
 export const PANEL = `${UI}PANEL\\`;
 const CTRL = `${PANEL}ctrlpnl7.dc6`;
+/**
+ * 확장팩 800 조작판 (d2exp): 7조각 117×104 / 128×55 ×3 / 86×55 / 117×104 / 128×55.
+ * 출처(좌표): 조각 폭을 그대로 이으면 0 | 왼쪽 스킬 48 | 165 | 293 | 421 | 549(86폭) | 오른쪽 스킬 635 | 683(오른쪽 구체 받침) = 800.
+ * 조각 6 은 쓰지 않는다 (근사(원작 미확인): 클래식 조각 5 처럼 왼쪽이 투명한 대체 조각으로 보임)
+ */
+const CTRL800 = `${PANEL}800ctrlpnl7.dc6`;
 const GLOBE = `${PANEL}hlthmana.dc6`;
 const OVERLAP = `${PANEL}overlap.dc6`;
 const RUN = `${PANEL}runbutton.dc6`;
@@ -38,8 +45,18 @@ export function skillIconPath(charclass: string): string {
 }
 
 // 800×600 배치 (위 머리말 참고)
-export const HUD = {
-  f0: { x: 0, y: 496 }, f1: { x: 165, y: 545 }, f2: { x: 293, y: 545 }, f3: { x: 421, y: 545 }, plate: { x: 475, y: 545, w: 160 }, f4: { x: 683, y: 496 },
+type Pt = { readonly x: number; readonly y: number };
+type Box = Pt & { readonly w: number; readonly h: number };
+export interface HudLayout {
+  f0: Pt; f1: Pt; f2: Pt; f3: Pt; f3x: Pt; plate: Pt & { readonly w: number }; f4: Pt;
+  lskill: Pt; rskill: Pt; lifeGlobe: Pt; manaGlobe: Pt;
+  exp: Box; stamina: Box; run: Box; menuBtn: Box;
+  belt: { readonly xs: readonly [number, number, number, number]; readonly y: number; readonly w: number; readonly h: number };
+  mini: Box; newStats: Pt; newSkill: Pt;
+}
+
+export const HUD: HudLayout = {
+  f0: { x: 0, y: 496 }, f1: { x: 165, y: 545 }, f2: { x: 293, y: 545 }, f3: { x: 421, y: 545 }, f3x: { x: 549, y: 545 }, plate: { x: 475, y: 545, w: 160 }, f4: { x: 683, y: 496 },
   lskill: { x: 117, y: 552 }, rskill: { x: 635, y: 552 },
   lifeGlobe: { x: 37, y: 499 }, manaGlobe: { x: 703, y: 499 },
   exp: { x: 176, y: 560, w: 117, h: 3 },
@@ -49,7 +66,25 @@ export const HUD = {
   belt: { xs: [342, 373, 405, 435], y: 561, w: 30, h: 30 },
   mini: { x: 314, y: 519, w: 173, h: 26 },
   newStats: { x: 175, y: 506 }, newSkill: { x: 595, y: 506 },
-} as const;
+};
+
+/**
+ * 확장팩 800 조작판 배치. 출처(좌표): 800ctrlpnl7.dc6 를 위 자리에 이어 그린 뒤 픽셀 직접 측정 —
+ *   경험치 칸 안쪽 x 256~374 y 560~562, 달리기 칸 x 257~270, 스태미나 칸 안쪽 x 274~375 y 571~587,
+ *   미니 패널 단추 칸 x 392~406 y 562~586, 벨트 칸 경계 x 422·453·484·515·545 (안쪽 y 561~589),
+ *   십자 무늬 빈 칸 2개 안쪽 x 206~235 / 563~592 y 562~592 (30×30 = level.dc6 크기 → 레벨 업 단추 자리)
+ * 근사(원작 미확인): 레벨 업 단추를 십자 칸에 두는 것 (그림 크기가 꼭 맞아 그렇게 봄), 미니 패널 위치는 클래식과 같게
+ */
+export const HUD800: HudLayout = {
+  ...HUD,
+  exp: { x: 256, y: 560, w: 119, h: 3 },
+  stamina: { x: 274, y: 571, w: 102, h: 17 },
+  run: { x: 255, y: 570, w: 16, h: 20 },
+  menuBtn: { x: 392, y: 562, w: 15, h: 24 },
+  belt: { xs: [423, 454, 485, 516], y: 561, w: 30, h: 30 },
+  mini: { x: 314, y: 519, w: 173, h: 26 },
+  newStats: { x: 206, y: 562 }, newSkill: { x: 563, y: 562 },
+};
 
 export type MiniButton = 'char' | 'inv' | 'tree' | 'party' | 'automap' | 'message' | 'quest' | 'menu';
 const MINI_BUTTONS: MiniButton[] = ['char', 'inv', 'tree', 'party', 'automap', 'message', 'quest', 'menu'];
@@ -99,11 +134,18 @@ export class ControlPanel {
   private readonly skills: SkillDb | undefined;
   private menuRects: { id: number; r: Rect }[] = [];
 
-  constructor(art: UiArt, icons: ItemIcons, skills: SkillDb | undefined) {
+  /** 확장팩 설치면 원작 800 조작판 (원작 LoD 는 800×600 에서 클래식 캐릭터도 이 판을 쓴다) */
+  private readonly lod: boolean;
+  /** 판본별 배치 (클래식 근사 / 확장팩 800 조작판 실측) */
+  readonly L: HudLayout;
+
+  constructor(art: UiArt, icons: ItemIcons, skills: SkillDb | undefined, edition: Edition = 'classic') {
     this.art = art;
     this.icons = icons;
     this.skills = skills;
-    void art.preload(HUD_ART);
+    this.lod = edition === 'lod';
+    this.L = this.lod ? HUD800 : HUD;
+    void art.preload(this.lod ? [...HUD_ART, CTRL800] : HUD_ART);
   }
 
   private skillIcon(ctx: CanvasRenderingContext2D, id: number, x: number, y: number, pressed = false): void {
@@ -135,8 +177,8 @@ export class ControlPanel {
     const list = this.menuSkills(st, hand);
     list.forEach((s, i) => {
       const row = Math.floor(i / 10), col = i % 10;
-      const y = HUD.lskill.y - 48 * (row + 1) - 4;
-      const x = hand === 'right' ? HUD.rskill.x - col * 48 : HUD.lskill.x + col * 48;
+      const y = this.L.lskill.y - 48 * (row + 1) - 4;
+      const x = hand === 'right' ? this.L.rskill.x - col * 48 : this.L.lskill.x + col * 48;
       this.menuRects.push({ id: s.id, r: { x, y, w: 48, h: 48 } });
     });
   }
@@ -155,12 +197,12 @@ export class ControlPanel {
 
   /** e2e: 버튼 가운데 */
   center(what: 'lskill' | 'rskill' | 'run' | 'menuBtn' | MiniButton | 'newStats' | 'newSkill'): { x: number; y: number } {
-    if (what === 'lskill' || what === 'rskill') return { x: HUD[what].x + 24, y: HUD[what].y + 24 };
-    if (what === 'run') return { x: HUD.run.x + 8, y: HUD.run.y + 10 };
-    if (what === 'menuBtn') return { x: HUD.menuBtn.x + 7, y: HUD.menuBtn.y + 12 };
-    if (what === 'newStats' || what === 'newSkill') return { x: HUD[what].x + 15, y: HUD[what].y + 15 };
+    if (what === 'lskill' || what === 'rskill') return { x: this.L[what].x + 24, y: this.L[what].y + 24 };
+    if (what === 'run') return { x: this.L.run.x + 8, y: this.L.run.y + 10 };
+    if (what === 'menuBtn') return { x: this.L.menuBtn.x + 7, y: this.L.menuBtn.y + 12 };
+    if (what === 'newStats' || what === 'newSkill') return { x: this.L[what].x + 15, y: this.L[what].y + 15 };
     const i = MINI_BUTTONS.indexOf(what);
-    return { x: HUD.mini.x + 4 + i * 21 + 10, y: HUD.mini.y + 3 + 10 };
+    return { x: this.L.mini.x + 4 + i * 21 + 10, y: this.L.mini.y + 3 + 10 };
   }
 
   click(x: number, y: number, st: HudState, button = 0): HudAction | null {
@@ -172,27 +214,27 @@ export class ControlPanel {
       const hit = this.menuRects.find((m) => inRect(m.r, x, y));
       this.skillMenu = null;
       if (hit) return { kind: 'setSkill', hand, id: hit.id };
-      if (inRect({ ...HUD.lskill, w: 48, h: 48 }, x, y) || inRect({ ...HUD.rskill, w: 48, h: 48 }, x, y)) return { kind: 'panel' };
+      if (inRect({ ...this.L.lskill, w: 48, h: 48 }, x, y) || inRect({ ...this.L.rskill, w: 48, h: 48 }, x, y)) return { kind: 'panel' };
     }
-    if (this.miniOpen && inRect(HUD.mini, x, y)) {
-      const i = Math.floor((x - HUD.mini.x - 4) / 21);
+    if (this.miniOpen && inRect(this.L.mini, x, y)) {
+      const i = Math.floor((x - this.L.mini.x - 4) / 21);
       const b = MINI_BUTTONS[i];
       return b ? { kind: 'mini', button: b } : { kind: 'panel' };
     }
-    if (st.ch.statPoints > 0 && inRect({ ...HUD.newStats, w: 30, h: 30 }, x, y)) return { kind: 'newStats' };
-    if (st.ch.skillPoints > 0 && inRect({ ...HUD.newSkill, w: 30, h: 30 }, x, y)) return { kind: 'newSkill' };
-    if (y < HUD.f1.y && !inRect({ x: 0, y: HUD.f0.y, w: 117, h: 104 }, x, y) && !inRect({ x: HUD.f4.x, y: HUD.f4.y, w: 117, h: 104 }, x, y)) return null;
+    if (st.ch.statPoints > 0 && inRect({ ...this.L.newStats, w: 30, h: 30 }, x, y)) return { kind: 'newStats' };
+    if (st.ch.skillPoints > 0 && inRect({ ...this.L.newSkill, w: 30, h: 30 }, x, y)) return { kind: 'newSkill' };
+    if (y < this.L.f1.y && !inRect({ x: 0, y: this.L.f0.y, w: 117, h: 104 }, x, y) && !inRect({ x: this.L.f4.x, y: this.L.f4.y, w: 117, h: 104 }, x, y)) return null;
     // 구체 받침의 투명한 윗부분(구체 바깥)은 월드 클릭으로 통과
-    if (y < HUD.f1.y) {
-      const g = x < 400 ? HUD.lifeGlobe : HUD.manaGlobe;
+    if (y < this.L.f1.y) {
+      const g = x < 400 ? this.L.lifeGlobe : this.L.manaGlobe;
       const dx = x - (g.x + 40), dy = y - (g.y + 40);
-      if (dx * dx + dy * dy > 42 * 42 && y < HUD.f0.y + 57) return null;
+      if (dx * dx + dy * dy > 42 * 42 && y < this.L.f0.y + 57) return null;
     }
-    if (inRect({ ...HUD.lskill, w: 48, h: 48 }, x, y)) return { kind: 'skillMenu', hand: 'left' };
-    if (inRect({ ...HUD.rskill, w: 48, h: 48 }, x, y)) return { kind: 'skillMenu', hand: 'right' };
-    if (inRect(HUD.run, x, y)) return { kind: 'run' };
-    if (inRect(HUD.menuBtn, x, y)) return { kind: 'minipanel' };
-    for (let i = 0; i < 4; i++) if (inRect({ x: HUD.belt.xs[i] ?? 0, y: HUD.belt.y, w: HUD.belt.w, h: HUD.belt.h }, x, y)) return { kind: 'belt', slot: i };
+    if (inRect({ ...this.L.lskill, w: 48, h: 48 }, x, y)) return { kind: 'skillMenu', hand: 'left' };
+    if (inRect({ ...this.L.rskill, w: 48, h: 48 }, x, y)) return { kind: 'skillMenu', hand: 'right' };
+    if (inRect(this.L.run, x, y)) return { kind: 'run' };
+    if (inRect(this.L.menuBtn, x, y)) return { kind: 'minipanel' };
+    for (let i = 0; i < 4; i++) if (inRect({ x: this.L.belt.xs[i] ?? 0, y: this.L.belt.y, w: this.L.belt.w, h: this.L.belt.h }, x, y)) return { kind: 'belt', slot: i };
     void button;
     return { kind: 'panel' };
   }
@@ -200,7 +242,7 @@ export class ControlPanel {
   /** 펼친 벨트 줄 칸 (줄 1 부터, 화면 좌표) */
   beltCell(slot: number): Rect {
     const row = Math.floor(slot / 4), col = slot % 4;
-    return { x: HUD.belt.xs[col] ?? 0, y: HUD.belt.y - row * 32, w: HUD.belt.w, h: HUD.belt.h };
+    return { x: this.L.belt.xs[col] ?? 0, y: this.L.belt.y - row * 32, w: this.L.belt.w, h: this.L.belt.h };
   }
 
   /** 펼친 벨트 윗줄 클릭 (패널보다 먼저) */
@@ -210,13 +252,13 @@ export class ControlPanel {
     for (let i = 4; i < cap; i++) if (inRect(this.beltCell(i), x, y)) return { kind: 'belt', slot: i };
     const top = this.beltCell(cap - 1);
     // 펼친 틀 안의 빈 곳도 패널 (월드로 가지 않음)
-    if (cap > 4 && inRect({ x: HUD.belt.xs[0] - 3, y: top.y - 3, w: HUD.belt.xs[3] + HUD.belt.w - HUD.belt.xs[0] + 6, h: HUD.belt.y - top.y }, x, y)) return { kind: 'panel' };
+    if (cap > 4 && inRect({ x: this.L.belt.xs[0] - 3, y: top.y - 3, w: this.L.belt.xs[3] + this.L.belt.w - this.L.belt.xs[0] + 6, h: this.L.belt.y - top.y }, x, y)) return { kind: 'panel' };
     return null;
   }
 
   /** 벨트 칸 번호 (마우스 아래) */
   beltAt(x: number, y: number): number | null {
-    for (let i = 0; i < 4; i++) if (inRect({ x: HUD.belt.xs[i] ?? 0, y: HUD.belt.y, w: HUD.belt.w, h: HUD.belt.h }, x, y)) return i;
+    for (let i = 0; i < 4; i++) if (inRect({ x: this.L.belt.xs[i] ?? 0, y: this.L.belt.y, w: this.L.belt.w, h: this.L.belt.h }, x, y)) return i;
     return null;
   }
 
@@ -231,61 +273,70 @@ export class ControlPanel {
   draw(ctx: CanvasRenderingContext2D, st: HudState): void {
     const a = this.art, p = st.snap.player, ch = st.ch;
     // 패널 조각
-    a.draw(ctx, CTRL, 0, HUD.f0.x, HUD.f0.y);
-    a.draw(ctx, CTRL, 1, HUD.f1.x, HUD.f1.y);
-    a.draw(ctx, CTRL, 2, HUD.f2.x, HUD.f2.y);
-    a.draw(ctx, CTRL, 3, HUD.f3.x, HUD.f3.y);
-    const f2 = a.frame(CTRL, 2), f3 = a.frame(CTRL, 3);
-    if (f2 && f3) drawPlate(ctx, f2.img as CanvasImageSource, f3.img as CanvasImageSource);
-    a.draw(ctx, CTRL, 4, HUD.f4.x, HUD.f4.y);
+    if (this.lod) {
+      a.draw(ctx, CTRL800, 0, this.L.f0.x, this.L.f0.y);
+      a.draw(ctx, CTRL800, 1, this.L.f1.x, this.L.f1.y);
+      a.draw(ctx, CTRL800, 2, this.L.f2.x, this.L.f2.y);
+      a.draw(ctx, CTRL800, 3, this.L.f3.x, this.L.f3.y);
+      a.draw(ctx, CTRL800, 4, this.L.f3x.x, this.L.f3x.y);
+      a.draw(ctx, CTRL800, 5, this.L.f4.x, this.L.f4.y);
+    } else {
+      a.draw(ctx, CTRL, 0, this.L.f0.x, this.L.f0.y);
+      a.draw(ctx, CTRL, 1, this.L.f1.x, this.L.f1.y);
+      a.draw(ctx, CTRL, 2, this.L.f2.x, this.L.f2.y);
+      a.draw(ctx, CTRL, 3, this.L.f3.x, this.L.f3.y);
+      const f2 = a.frame(CTRL, 2), f3 = a.frame(CTRL, 3);
+      if (f2 && f3) drawPlate(ctx, f2.img as CanvasImageSource, f3.img as CanvasImageSource);
+      a.draw(ctx, CTRL, 4, this.L.f4.x, this.L.f4.y);
+    }
     // 생명·마나 구체 (독에 걸리면 초록 구체 — hlthmana 프레임 2)
     const poisoned = p.states.includes('poison');
     // 빈 구체 (hlthmana 프레임 3, 어두운 유리) 를 먼저 곱하기 혼합으로 — 근사(원작 미확인): 원작 혼합 방식
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
-    a.draw(ctx, GLOBE, 3, HUD.lifeGlobe.x, HUD.lifeGlobe.y);
-    a.draw(ctx, GLOBE, 3, HUD.manaGlobe.x, HUD.manaGlobe.y);
+    a.draw(ctx, GLOBE, 3, this.L.lifeGlobe.x, this.L.lifeGlobe.y);
+    a.draw(ctx, GLOBE, 3, this.L.manaGlobe.x, this.L.manaGlobe.y);
     ctx.restore();
-    this.globe(ctx, poisoned ? 2 : 0, HUD.lifeGlobe.x, HUD.lifeGlobe.y, p.maxLife ? p.life / p.maxLife : 0);
-    this.globe(ctx, 1, HUD.manaGlobe.x, HUD.manaGlobe.y, p.maxMana ? p.mana / p.maxMana : 0);
-    a.draw(ctx, OVERLAP, 0, HUD.lifeGlobe.x - 1, HUD.lifeGlobe.y);
-    a.draw(ctx, OVERLAP, 1, HUD.manaGlobe.x, HUD.manaGlobe.y);
+    this.globe(ctx, poisoned ? 2 : 0, this.L.lifeGlobe.x, this.L.lifeGlobe.y, p.maxLife ? p.life / p.maxLife : 0);
+    this.globe(ctx, 1, this.L.manaGlobe.x, this.L.manaGlobe.y, p.maxMana ? p.mana / p.maxMana : 0);
+    a.draw(ctx, OVERLAP, 0, this.L.lifeGlobe.x - 1, this.L.lifeGlobe.y);
+    a.draw(ctx, OVERLAP, 1, this.L.manaGlobe.x, this.L.manaGlobe.y);
     // 경험치 막대: 이번 레벨 구간 진행률
     const lo = st.exp && p.level > 1 ? st.exp.threshold(p.level - 1) : 0;
     const hi = st.exp ? st.exp.threshold(p.level) : 1;
     const frac = Number.isFinite(hi) && hi > lo ? (p.experience - lo) / (hi - lo) : 1;
     ctx.fillStyle = '#c7b377';
-    ctx.fillRect(HUD.exp.x, HUD.exp.y, Math.round(HUD.exp.w * Math.max(0, Math.min(1, frac))), HUD.exp.h);
+    ctx.fillRect(this.L.exp.x, this.L.exp.y, Math.round(this.L.exp.w * Math.max(0, Math.min(1, frac))), this.L.exp.h);
     // 스태미나 막대 (원작: 노란 막대, 줄어들면 짧아짐 — 색 근사). 값 = 엔진 스냅숏 (아이템·버프 포함)
     // 출처: states.txt stambarblue — 스태미나 물약(staminapot)·신전(shrine_stamina) 상태면 파란 막대
     const sfrac = p.maxStamina ? p.stamina / p.maxStamina : 0;
     const blue = p.states.includes('staminapot') || p.states.includes('shrine_stamina');
     ctx.fillStyle = blue ? '#2848c8' : sfrac < 0.25 ? '#a02010' : '#b08a20';
-    ctx.fillRect(HUD.stamina.x, HUD.stamina.y + 3, Math.round(HUD.stamina.w * Math.max(0, Math.min(1, sfrac))), HUD.stamina.h - 6);
+    ctx.fillRect(this.L.stamina.x, this.L.stamina.y + 3, Math.round(this.L.stamina.w * Math.max(0, Math.min(1, sfrac))), this.L.stamina.h - 6);
     // 달리기/걷기 버튼 (프레임 0/1 걷기, 2/3 달리기)
     // 근사(원작 미확인): 스태미나가 바닥나 걷는 동안(스냅숏 running = false)은 걷기 모양
-    a.draw(ctx, RUN, st.run && (p.running || p.stamina >= 1) ? 2 : 0, HUD.run.x, HUD.run.y);
+    a.draw(ctx, RUN, st.run && (p.running || p.stamina >= 1) ? 2 : 0, this.L.run.x, this.L.run.y);
     // 미니 패널 버튼 (0 닫힘, 2 열림)
-    a.draw(ctx, MENUBTN, this.miniOpen ? 2 : 0, HUD.menuBtn.x, HUD.menuBtn.y);
+    a.draw(ctx, MENUBTN, this.miniOpen ? 2 : 0, this.L.menuBtn.x, this.L.menuBtn.y);
     // 스킬 버튼
-    this.skillIcon(ctx, ch.leftSkill, HUD.lskill.x, HUD.lskill.y, this.skillMenu === 'left');
-    this.skillIcon(ctx, ch.rightSkill, HUD.rskill.x, HUD.rskill.y, this.skillMenu === 'right');
+    this.skillIcon(ctx, ch.leftSkill, this.L.lskill.x, this.L.lskill.y, this.skillMenu === 'left');
+    this.skillIcon(ctx, ch.rightSkill, this.L.rskill.x, this.L.rskill.y, this.skillMenu === 'right');
     // 벨트 아래 줄 4칸
     for (let i = 0; i < 4; i++) {
       const it = st.store.belt[i];
       const img = it ? this.icons.get(it) : null;
-      const bx = HUD.belt.xs[i] ?? 0;
-      if (img) ctx.drawImage(img as CanvasImageSource, Math.round(bx + HUD.belt.w / 2 - img.width / 2), Math.round(HUD.belt.y + HUD.belt.h / 2 - img.height / 2));
+      const bx = this.L.belt.xs[i] ?? 0;
+      if (img) ctx.drawImage(img as CanvasImageSource, Math.round(bx + this.L.belt.w / 2 - img.width / 2), Math.round(this.L.belt.y + this.L.belt.h / 2 - img.height / 2));
     }
     // 펼친 벨트 (윗줄들)
     const cap = st.store.beltCapacity();
     if (this.beltOpen && cap > 4) {
       const top = this.beltCell(cap - 1);
-      const bx = (HUD.belt.xs[0] ?? 0) - 3, bw = (HUD.belt.xs[3] ?? 0) + HUD.belt.w - (HUD.belt.xs[0] ?? 0) + 6;
+      const bx = (this.L.belt.xs[0] ?? 0) - 3, bw = (this.L.belt.xs[3] ?? 0) + this.L.belt.w - (this.L.belt.xs[0] ?? 0) + 6;
       ctx.fillStyle = 'rgba(8,8,8,0.9)';
-      ctx.fillRect(bx, top.y - 3, bw, HUD.belt.y - top.y);
+      ctx.fillRect(bx, top.y - 3, bw, this.L.belt.y - top.y);
       ctx.strokeStyle = '#6b5a36';
-      ctx.strokeRect(bx + 0.5, top.y - 2.5, bw - 1, HUD.belt.y - top.y - 1);
+      ctx.strokeRect(bx + 0.5, top.y - 2.5, bw - 1, this.L.belt.y - top.y - 1);
       for (let i = 4; i < cap; i++) {
         const r = this.beltCell(i);
         ctx.strokeStyle = '#3a3222';
@@ -297,17 +348,17 @@ export class ControlPanel {
     }
     // 레벨 업 버튼
     if (ch.statPoints > 0) {
-      a.draw(ctx, LEVEL, 0, HUD.newStats.x, HUD.newStats.y);
-      drawText(ctx, st.str('strlvlup'), HUD.newStats.x + 15, HUD.newStats.y - 16, { align: 'center' });
+      a.draw(ctx, LEVEL, 0, this.L.newStats.x, this.L.newStats.y);
+      drawText(ctx, st.str('strlvlup'), this.L.newStats.x + 15, this.L.newStats.y - 16, { align: 'center' });
     }
     if (ch.skillPoints > 0) {
-      a.draw(ctx, LEVEL, 0, HUD.newSkill.x, HUD.newSkill.y);
-      drawText(ctx, st.str('strnewskl'), HUD.newSkill.x + 15, HUD.newSkill.y - 16, { align: 'center' });
+      a.draw(ctx, LEVEL, 0, this.L.newSkill.x, this.L.newSkill.y);
+      drawText(ctx, st.str('strnewskl'), this.L.newSkill.x + 15, this.L.newSkill.y - 16, { align: 'center' });
     }
     // 미니 패널
     if (this.miniOpen) {
-      a.draw(ctx, MINI, 0, HUD.mini.x, HUD.mini.y);
-      MINI_BUTTONS.forEach((_, i) => a.draw(ctx, MINIBTN, i * 2, HUD.mini.x + 4 + i * 21, HUD.mini.y + 3));
+      a.draw(ctx, MINI, 0, this.L.mini.x, this.L.mini.y);
+      MINI_BUTTONS.forEach((_, i) => a.draw(ctx, MINIBTN, i * 2, this.L.mini.x + 4 + i * 21, this.L.mini.y + 3));
     }
     // 스킬 고르기 목록
     this.layoutMenu(st);
@@ -335,17 +386,17 @@ export class ControlPanel {
     const p = st.snap.player, ch = st.ch;
     let text: string | null = null;
     const near = (g: { x: number; y: number }) => (m.x - g.x - 40) ** 2 + (m.y - g.y - 40) ** 2 < 40 * 40;
-    if (near(HUD.lifeGlobe)) text = fmt(st.str('panelhealth'), Math.floor(p.life), Math.floor(p.maxLife));
-    else if (near(HUD.manaGlobe)) text = fmt(st.str('panelmana'), Math.floor(p.mana), Math.floor(p.maxMana));
-    else if (inRect(HUD.stamina, m.x, m.y)) text = fmt(st.str('panelstamina'), Math.floor(p.stamina), Math.floor(p.maxStamina));
-    else if (inRect({ x: HUD.exp.x, y: HUD.exp.y - 3, w: HUD.exp.w, h: 9 }, m.x, m.y)) text = fmt(st.str('panelexp'), p.experience, st.exp ? st.exp.threshold(p.level) : 0);
-    else if (inRect(HUD.run, m.x, m.y)) text = st.str(st.run ? 'RunOff' : 'RunOn');
-    else if (this.miniOpen && inRect(HUD.mini, m.x, m.y)) {
-      const b = MINI_BUTTONS[Math.floor((m.x - HUD.mini.x - 4) / 21)];
+    if (near(this.L.lifeGlobe)) text = fmt(st.str('panelhealth'), Math.floor(p.life), Math.floor(p.maxLife));
+    else if (near(this.L.manaGlobe)) text = fmt(st.str('panelmana'), Math.floor(p.mana), Math.floor(p.maxMana));
+    else if (inRect(this.L.stamina, m.x, m.y)) text = fmt(st.str('panelstamina'), Math.floor(p.stamina), Math.floor(p.maxStamina));
+    else if (inRect({ x: this.L.exp.x, y: this.L.exp.y - 3, w: this.L.exp.w, h: 9 }, m.x, m.y)) text = fmt(st.str('panelexp'), p.experience, st.exp ? st.exp.threshold(p.level) : 0);
+    else if (inRect(this.L.run, m.x, m.y)) text = st.str(st.run ? 'RunOff' : 'RunOn');
+    else if (this.miniOpen && inRect(this.L.mini, m.x, m.y)) {
+      const b = MINI_BUTTONS[Math.floor((m.x - this.L.mini.x - 4) / 21)];
       if (b) text = st.str(MINI_STR[b]);
     } else {
       const hit = this.menuRects.find((q) => inRect(q.r, m.x, m.y));
-      const id = hit?.id ?? (inRect({ ...HUD.lskill, w: 48, h: 48 }, m.x, m.y) ? ch.leftSkill : inRect({ ...HUD.rskill, w: 48, h: 48 }, m.x, m.y) ? ch.rightSkill : null);
+      const id = hit?.id ?? (inRect({ ...this.L.lskill, w: 48, h: 48 }, m.x, m.y) ? ch.leftSkill : inRect({ ...this.L.rskill, w: 48, h: 48 }, m.x, m.y) ? ch.rightSkill : null);
       if (id !== null) text = this.skills?.byId.get(id)?.displayName ?? null;
     }
     if (!text) return;

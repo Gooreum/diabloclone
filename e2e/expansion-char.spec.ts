@@ -65,3 +65,28 @@ test('클래식 판본(D2_EDITION=classic 서버): 만들기 화면에 체크 �
   await page.click('#btn-sorceress');
   await expect(page.locator('#chk-expansion')).toHaveCount(0);
 });
+
+test('확장팩 화면: 원작 800 조작판, 확장팩 캐릭터 인벤토리 (invchar6)', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await create(page, uniqueName('Ui'), true);
+  await page.waitForTimeout(1500);
+  // 벨트 오른쪽 (근사 돌 판이 있던 475~635) 이 원작 조각으로 채워져 있다 — 밝은 픽셀이 있다
+  const lit = await page.evaluate(async () => {
+    const img = await window.__game!.capture!();
+    let n = 0, all = 0;
+    for (let y = 548; y < 598; y++) for (let x = 480; x < 630; x++) {
+      const i = (y * 800 + x) * 4;
+      all++;
+      if (img.data[i]! + img.data[i + 1]! + img.data[i + 2]! > 60) n++;
+    }
+    return n / all;
+  });
+  expect(lit).toBeGreaterThan(0.2);
+  await page.locator('#game').screenshot({ path: 'test-results/expansion-hud.png' });
+  await page.keyboard.press('i');
+  await page.waitForTimeout(500);
+  await page.locator('#game').screenshot({ path: 'test-results/expansion-inv.png' });
+  expect(errors).toEqual([]);
+});

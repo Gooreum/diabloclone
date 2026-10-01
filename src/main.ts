@@ -508,14 +508,14 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
   const icons = new ItemIcons(assets, pal, data.items);
-  const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art);
+  const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art, data.expansion ?? false);
   // 요구치를 못 채운 아이템은 빨간 바탕 (원작)
   invPanel.usable = (it) => {
     const r = requirements(data.items, it), c = game.character;
     return !c || (c.level >= r.level && game.effStat('str') >= r.str && game.effStat('dex') >= r.dex);
   };
   // 원작 DC6 컨트롤 패널 (HUD)·보관함
-  const hud = new ControlPanel(art, icons, data.skills);
+  const hud = new ControlPanel(art, icons, data.skills, sh.edition);
   const stashPanel = new StashPanel(art, icons);
   // 호라드릭 큐브 창 (원작 supertransmogrifier.dc6)
   const cubePanel = new CubePanel(art, icons);

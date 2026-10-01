@@ -156,3 +156,44 @@ describe.skipIf(!hasGameData)('주얼 · 소켓 속성', () => {
     lod.treasure.difficulty = 0;
   });
 });
+
+describe.skipIf(!hasGameData)('참 · 그림 변형', () => {
+  const lifeCharm = (d: GameData, lvlReq = 0): ItemInstance => {
+    const c = make(d, 'cm1', QUALITY.MAGIC);
+    c.identified = true;
+    c.levelReq = lvlReq;
+    c.stats = [{ stat: 'maxhp', param: 0, value: 20 }];
+    return c;
+  };
+
+  it('인벤토리의 참은 최대 생명을 올리고, 보관함으로 옮기면 빠진다', () => {
+    const c = lifeCharm(lod);
+    const g = game(lod, []);
+    const base = g.derived()!.maxLife;
+    const g2 = game(lod, [lifeCharm(lod)]);
+    expect(g2.derived()!.maxLife).toBe(base + 20);
+    const id = g2.store.inventoryItems[0]!.id;
+    g2.enqueue({ type: 'moveItem', itemId: id, to: { kind: 'stash', x: 0, y: 0 } });
+    g2.tick();
+    expect(g2.store.inventoryItems.some((x) => x.id === id)).toBe(false);
+    expect(g2.derived()!.maxLife).toBe(base);
+    expect(c.code).toBe('cm1');
+  });
+
+  it('요구 레벨이 모자라거나 클래식 캐릭터면 효과가 없다', () => {
+    const base = game(lod, []).derived()!.maxLife;
+    expect(game(lod, [lifeCharm(lod, 99)]).derived()!.maxLife).toBe(base);
+    const cbase = game(classic, []).derived()!.maxLife;
+    expect(game(classic, [lifeCharm(classic)]).derived()!.maxLife).toBe(cbase);
+  });
+
+  it('반지·참·주얼은 itemtypes 그림 변형 중 하나를 갖는다 (여러 개가 나온다)', () => {
+    for (const code of ['rin', 'cm3', 'jew']) {
+      const seen = new Set<number | undefined>();
+      for (let i = 1; i <= 60; i++) seen.add(lod.treasure.createItem(lod.items.base(code)!, 40, new Rng(i), QUALITY.MAGIC, true).gfx);
+      const n = lod.items.types.get(lod.items.base(code)!.type)!.invGfx.length;
+      expect(seen.size).toBeGreaterThan(1);
+      expect([...seen].every((v) => v !== undefined && v >= 0 && v < n)).toBe(true);
+    }
+  });
+});

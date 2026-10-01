@@ -62,6 +62,8 @@ export interface ItemInstance {
   ethereal?: boolean;
   /** 룬워드 (runes.txt 행 번호) — 완성 때 T1 속성이 stats 에 들어간다 */
   runeword?: number;
+  /** 인벤토리 그림 변형 번호 (itemtypes InvGfx1~6 중, 0 부터) */
+  gfx?: number;
 }
 
 interface ItemRatio { unique: number; uniqueDiv: number; uniqueMin: number; rare: number; rareDiv: number; rareMin: number; set: number; setDiv: number; setMin: number; magic: number; magicDiv: number; magicMin: number; hiQ: number; hiQDiv: number; normal: number; normalDiv: number }
@@ -306,6 +308,10 @@ export class TreasureDb {
       // 원작은 아이템 시드(품질·접사)와 유닛 시드(기본 능력치)를 따로 쓴다
       const itemRng = new Rng(Number(rng.next() & 0xffffffffn) || 1);
       this.gen.applyQuality(item, base, quality, itemRng, rng, { droppedUniques: this.droppedUniques, ethereal: eth, difficulty: this.difficulty });
+      // 그림 변형: itemtypes VarInvGfx 중 하나 (아이템 시드 — 드롭 순서는 바뀌지 않는다)
+      // 근사(원작 미확인): 원작 굴림 시점·시드 미확인
+      const gfx = this.items.types.get(base.type)?.invGfx.length ?? 0;
+      if (gfx > 1) item.gfx = itemRng.pick(gfx);
     }
     // 출처: D2MOO D2Game ITEMS/Items.cpp — 수량 = rand(spawnstack − minstack) + minstack (spawnstack 이 없거나 작으면 max(minstack, maxstack))
     if (base.stackable) {

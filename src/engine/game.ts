@@ -20,7 +20,7 @@ import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, 
 import { adjustedExperience } from './experience';
 import { StateList, type StateOverlayDef } from './states';
 import { ItemStore, WEAPON_SLOTS, type WeaponSlot } from './itemstore';
-import { computeDerived, itemSkillBonus, skillBonusOf, type Derived, type ItemSkillBonus } from './charstats';
+import { computeDerived, itemSkillBonus, skillBonusOf, usableCharms, type Derived, type ItemSkillBonus } from './charstats';
 import { gemStats } from './itemgen';
 import type { TxtRow } from '../formats/txt';
 import type { NpcPrice } from './price';
@@ -1815,10 +1815,12 @@ export class Game {
   derived(): Derived | null {
     const c = this.character, cs = this.classStats, data = this.data;
     if (!c || !cs || !data) return null;
-    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}`;
+    // 확장팩: 인벤토리 참도 능력치에 (참이 들어오고 나가면 key 가 바뀐다)
+    const charms = data.expansion ? usableCharms(this.store.inventoryItems, data.items, c.level) : [];
+    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}:${charms.map((x) => x.id).join(',')}`;
     if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
-      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty);
-      this.itemSkillCache = itemSkillBonus(this.equipment, data.items, data.treasure.gen);
+      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty, charms);
+      this.itemSkillCache = itemSkillBonus(this.equipment, data.items, data.treasure.gen, charms);
       this.itemSkillVersion++;
       this.derivedKey = key;
       this.statsDirty = false;

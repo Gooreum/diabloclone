@@ -100,6 +100,8 @@ export interface ItemTypeDef {
   staffMods: string;
   /** 수리 가능 (itemtypes Repair) */
   repair: boolean;
+  /** 인벤토리 그림 변형 (itemtypes VarInvGfx 개수, InvGfx1~6 파일) — 반지·목걸이·참·주얼 */
+  invGfx: string[];
 }
 
 function vendorStock(r: TxtRow): Record<string, VendorStock> {
@@ -126,6 +128,7 @@ export class ItemDb {
         body: n(r.Body) === 1, bodyLoc1: r.BodyLoc1 ?? '', bodyLoc2: r.BodyLoc2 ?? '', beltable: n(r.Beltable) === 1,
         maxSock: [n(r.MaxSock1), n(r.MaxSock25), n(r.MaxSock40)],
         classCode: r.Class ?? '', storePage: r.StorePage ?? '', staffMods: r.StaffMods ?? '',
+        invGfx: [1, 2, 3, 4, 5, 6].slice(0, n(r.VarInvGfx)).map((i) => r[`InvGfx${i}`] ?? '').filter(Boolean),
       });
     }
     const add = (rows: TxtRow[], category: ItemCategory) => {

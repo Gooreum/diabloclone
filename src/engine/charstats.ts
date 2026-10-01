@@ -125,7 +125,19 @@ export function armorDefense(item: ItemInstance): number {
  * @param resistPenalty 클래식 난이도 저항 페널티 (Normal 0 / Nightmare −20 / Hell −50, difficultyRules().playerResistPenalty) —
  *   캐릭터 창 저항은 페널티를 뺀 값. 출처: SUnitDmg.cpp 저항 계산 (applyResistPenalty)
  */
-export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0): Derived {
+/**
+ * 효과가 있는 참 (확장팩): 인벤토리 격자 안의 charm 종류 · 안 부서짐 · 요구 레벨 만족 — 속성은 장착 아이템처럼 캐릭터 전체에.
+ * 출처: D2MOO ITEMS_IsCharmUsable (ITEMTYPE_CHARM, INVPAGE_INVENTORY, ITEMS_CheckRequirements)
+ */
+export function usableCharms(inventory: readonly ItemInstance[], items: ItemDb, level: number): ItemInstance[] {
+  return inventory.filter((it) => {
+    const b = items.base(it.code);
+    return !!b && items.isType(b, 'char') && it.identified && !isBroken(it) && level >= Math.max(b.levelReq, it.levelReq ?? 0);
+  });
+}
+
+/** @param charms 효과가 있는 참 (usableCharms) */
+export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0, charms: readonly ItemInstance[] = []): Derived {
   const sums = new Map<string, number>();
   const add = (s: string, v: number) => sums.set(s, (sums.get(s) ?? 0) + v);
   const equipped = Object.values(equipment);
@@ -155,6 +167,7 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
     }
   }
   for (const s of setBonusStats(equipped.filter((it) => !isBroken(it) && it.identified), gen, items)) if (s.param === 0) add(s.stat, s.value);
+  for (const c of charms) for (const s of c.stats) if (s.param === 0) add(s.stat, s.value);
   const get = (s: string) => sums.get(s) ?? 0;
   const str = ch.str + get('strength'), dex = ch.dex + get('dexterity'), vit = ch.vit + get('vitality'), ene = ch.ene + get('energy');
   // itemstatcost maxhp/maxmana 는 ValShift 8 (1/256) 이지만 여기서는 속성 값(정수) 그대로 저장한다
@@ -187,7 +200,7 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
  */
 export interface ItemSkillBonus { all: number; cls: Map<number, number>; tab: Map<number, number>; single: Map<number, number>; elem: Map<number, number> }
 
-export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null): ItemSkillBonus {
+export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, charms: readonly ItemInstance[] = []): ItemSkillBonus {
   const out: ItemSkillBonus = { all: 0, cls: new Map(), tab: new Map(), single: new Map(), elem: new Map() };
   const addTo = (m: Map<number, number>, k: number, v: number) => m.set(k, (m.get(k) ?? 0) + v);
   const add = (s: { stat: string; param: number; value: number }) => {
@@ -203,6 +216,7 @@ export function itemSkillBonus(equipment: Record<string, ItemInstance>, items: I
     for (const g of it.socketed) g.stats.forEach(add);
   }
   setBonusStats(live.filter((it) => it.identified), gen, items).forEach(add);
+  for (const c of charms) c.stats.forEach(add);
   return out;
 }
 

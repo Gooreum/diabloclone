@@ -81,7 +81,9 @@ export class ItemIcons {
     if (!b) return '';
     if (item.quality === QUALITY.UNIQUE && b.uniqueInvFile) return b.uniqueInvFile;
     if (item.quality === QUALITY.SET && b.setInvFile) return b.setInvFile;
-    return b.invFile;
+    // 반지·목걸이·참·주얼은 itemtypes InvGfx 그림 중 하나
+    const v = item.gfx !== undefined ? this.items.types.get(b.type)?.invGfx[item.gfx] : undefined;
+    return v || b.invFile;
   }
 
   get(item: ItemInstance): Drawable | null {

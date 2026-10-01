@@ -139,6 +139,8 @@ export interface MonsterUnit {
   spawnType?: string;
   /** Putrid Defiler 의 Impregnate (STATE_PREGNANT) — 죽으면 이 몬스터가 나온다 */
   pregnantWith?: string;
+  /** 죽은 채로 놓인 Prowling Dead 가 일어날 프레임 (MonsterRegion EVENTTYPE_MONUMOD) */
+  riseAt?: number;
   /** 정해진 프레임에 사라지는 소환 유닛 (Hydra·Bone Prison) — 원작 dwAiParam[0] 만료 프레임 */
   expires?: number;
   /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */

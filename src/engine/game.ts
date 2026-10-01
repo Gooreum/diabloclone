@@ -53,7 +53,7 @@ import { Act1Quests, type QuestHost, type QuestLogEntry, type QuestSpeech } from
 import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index';
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
-import { QW } from './quests/messages-acts';
+import { QW, questOfWord } from './quests/messages-acts';
 import { LEVEL } from './drlg/types';
 import { actCount } from './drlg/acts';
 import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
@@ -1336,6 +1336,23 @@ export class Game {
         if (spot) this.spawnMonster(id, spot.x, spot.y, m.id);
       }
     }
+    // ---- 확장팩 Act 5 (출처: D2GAME_SpawnSuperUnique_6FC6F690 — sub_6FC6A230(주인, 몬스터, 모드, …, 수) = 주인 곁에 하수인 무리) ----
+    const pack = (id: string, n: number) => {
+      if (!data.monsters.types.has(id)) return;
+      for (let i = 0; i < n; i++) {
+        const spot = this.spawnSpot(m.x, m.y, 6, data.monsters.get(id));
+        if (spot) this.spawnMonster(id, spot.x, spot.y, m.id);
+      }
+    };
+    if (su.key === 'Siege Boss') {
+      // Shenk the Overseer: minion1 × 20, 시체 선택 불가 (STATE_CORPSE_NOSELECT)
+      pack('minion1', 20);
+      m.corpseUsed = true;
+    } else if (su.key === 'Nihlathak Boss') {
+      // 하수인 = 레벨 계열 minion (D2Common_11063) × 20
+      const info = this.level.def.monsterInfo;
+      pack(data.monsters.forLevel('minion1', info?.pool ?? [], info?.monLvlEx ?? 0), 20);
+    } else if (su.key === 'Baal Subject 2') pack('skmage_cold3', 10);
     // 출처: D2GAME_BOSSES_AssignUMod_6FC6FF10(…, MONUMOD_QUESTMOD, 1)
     if (m.umods.length < 9) m.umods.push(UMOD.QUESTCOMPLETE);
     return m;
@@ -1374,7 +1391,31 @@ export class Game {
       return m;
     };
     if (k.kind === 'monster') {
-      spawnAt(k.id);
+      // ---- 확장팩 Act 5 (출처: D2GAME_SpawnPresetMonster_6FC66560) ----
+      let id = k.id;
+      const lv = this.level.def.levelNo ?? 0;
+      // Bloody Foothills: A5Q1 진행 중이면 catapult2 → catapult3, catapultspotter2 → catapultspotter3
+      if (lv === 110 && this.questNotIntro(QW.A5Q1)) {
+        if (id === 'catapult2') id = 'catapult3';
+        else if (id === 'catapultspotter2') id = 'catapultspotter3';
+      }
+      // 악몽·지옥 Bloody Foothills 의 minion1·deathmauler1 프리셋은 없다
+      if (this.difficulty !== 0 && lv === 110 && (id === 'minion1' || id === 'deathmauler1')) return;
+      // 감옥 문 (A5Q2): 왼쪽으로 한 칸, 이미 끝낸 퀘스트면 죽은 채로
+      if (id === 'prisondoor') {
+        const door = spawnAt(id, false);
+        if (door) {
+          door.x -= 1;
+          if (!this.questNotIntro(QW.A5Q2)) {
+            door.hp = 0;
+            this.startMonsterMode(door, 'DD');
+          }
+        }
+        return;
+      }
+      const mon = spawnAt(id);
+      // Barricade 문 몬스터는 충돌 오브젝트 (objects.txt 571 / 572) 를 같이 둔다 (monstats2 objCol)
+      if (mon && (id === 'barricadedoor1' || id === 'barricadedoor2')) this.createObject(this.level, { classId: id === 'barricadedoor1' ? 571 : 572, x: Math.floor(mon.x), y: Math.floor(mon.y), mode: 0 });
       return;
     }
     if (k.kind !== 'place') return;
@@ -1421,6 +1462,23 @@ export class Game {
         spawnAt(data.monsters.forLevel(k.place === 22 ? 'fetish1' : 'fetishshaman1', info?.pool ?? [], info?.monLvlEx ?? 0));
         return;
       }
+      // ---- 확장팩 Act 5: 죽은 채로 놓인 시체 (29 minion, 30 Bloody Foothills death mauler / 그 밖 imp, 31 바바리안, 32 Prowling Dead). 25·27·28 은 없음
+      case 29:
+      case 30:
+      case 31:
+      case 32: {
+        const raw = k.place === 29 ? 'minion1' : k.place === 30 ? (levelId === 110 ? 'deathmauler1' : 'imp1') : k.place === 31 ? 'act5barb1' : 'reanimatedhorde3';
+        const id = data.monsters.forLevel(raw, info?.pool ?? [], info?.monLvlEx ?? 0);
+        const corpse = spawnAt(id, false);
+        if (!corpse) return;
+        corpse.hp = 0;
+        this.startMonsterMode(corpse, 'DD');
+        corpse.deathFrame = this.tickCount;
+        // 출처: EVENT_SetEvent(EVENTTYPE_MONUMOD, +250~299) — Prowling Dead 시체는 잠시 뒤 일어난다 (Self-resurrect)
+        // 근사(원작 미확인): MONUMOD 이벤트 처리 = Self-resurrect (원작 이벤트 함수 미확인)
+        if (raw === 'reanimatedhorde3') corpse.riseAt = this.tickCount + 250 + ((corpse.rng.roll() >>> 0) % 50);
+        return;
+      }
       case 17:
       case 18: {
         let id = data.monsters.forLevel(k.place === 17 ? 'fallen1' : 'fallenshaman1', info?.pool ?? [], info?.monLvlEx ?? 0);
@@ -1439,6 +1497,15 @@ export class Game {
       default:
         return;
     }
+  }
+
+  /**
+   * 출처: QUESTS_CheckNotIntroQuest — 그 퀘스트가 이번 게임에서 진행 중 (원작 bNotIntro, 퀘스트 데이터가 없으면 1).
+   * 퀘스트 기록 워드로 막 모듈을 찾는다
+   */
+  private questNotIntro(word: number): boolean {
+    const mod = this.questControl.get(questOfWord(word).act) as unknown as { stateOf?(w: number): { notIntro: boolean } } | undefined;
+    return mod?.stateOf?.(word)?.notIntro ?? true;
   }
 
   /** 경험치 얻기 (레벨업 이벤트 포함) */
@@ -6399,7 +6466,14 @@ export class Game {
     this.updateChaos();
     this.updateAttached();
     for (const m of [...this.monsters]) {
-      if (m.mode === 'DD') continue;
+      if (m.mode === 'DD') {
+        // Prowling Dead 시체가 일어난다 (Self-resurrect — SrvSt61: SKILLS_ResurrectUnit)
+        if (m.riseAt !== undefined && this.tickCount >= m.riseAt) {
+          m.riseAt = undefined;
+          this.resurrectMonster(m);
+        }
+        continue;
+      }
       if (m.mode === 'DT') {
         if (this.tickCount >= m.modeEnd) {
           this.setMonMode(m, 'DD');

@@ -23,7 +23,10 @@ const NPC_AI = new Set(['Idle', 'Npc', 'Towner', 'Vendor', 'NpcStationary', 'Hir
 /** 퀘스트 단계(5~7) 에서 만드는 AI */
 const QUEST_AI = new Set(['Wussie', 'Nihlathak', 'AncientStatue', 'Ancient', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
 
-type Inner = { monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean; killMonster(m: MonsterUnit, s: string): void };
+type Inner = {
+  monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean; killMonster(m: MonsterUnit, s: string): void;
+  spawnPreset(p: { id: number; x: number; y: number }): void;
+};
 
 describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
   let data: GameData;
@@ -40,7 +43,7 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
     const map = new CollisionMap(90, 90);
     const game = new Game({
       map, levels: [{ id: 'main', map, inTown: false, exits: [], levelNo }], player: { x: 20.5, y: 20.5, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
-      seed, data, character: ch, classStats: cs, expTable: expTable(tables.table('experience'), 'Barbarian'),
+      seed, data, act: 4, character: ch, classStats: cs, expTable: expTable(tables.table('experience'), 'Barbarian'),
     });
     return game;
   };
@@ -176,6 +179,45 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
       expect(inner(game).monsterUseSkill(sw, 0, { x: 20.5, y: 20.5 })).toBe(true);
       const ev = run(game, 120, (e) => e.some((x) => x.type === 'playerCursed' && x.by === sw.id));
       expect(ev.find((x) => x.type === 'playerCursed')?.curse).toBe('amplifydamage');
+    });
+  });
+
+  describe('프리셋', () => {
+    /** MonPreset Act 5 행 순번 (DS1 몬스터 번호) */
+    const presetId = (place: string) => tables.table('MonPreset').filter((r) => r.Act === '5').findIndex((r) => r.Place === place);
+
+    it('Shenk (Siege Boss) 는 minion1 20 마리를 데리고 나온다, 시체 선택 불가', () => {
+      const game = newGame(21, 110);
+      const shenk = game.spawnSuperUnique(data.uniques!.superUnique('Siege Boss')!.idx, 40, 40)!;
+      expect(shenk.type.id).toBe('overseer1');
+      expect(game.monsters.filter((x) => x.type.id === 'minion1' && x.leaderId === shenk.id)).toHaveLength(20);
+      expect(shenk.corpseUsed).toBe(true);
+    });
+
+    it('place_deadminion (29) 은 죽은 minion 시체, place_reanimateddead (32) 는 잠시 뒤 일어난다', () => {
+      const game = newGame(23, 111);
+      inner(game).spawnPreset({ id: presetId('place_deadminion'), x: 40, y: 40 });
+      const corpse = game.monsters.find((x) => x.type.baseId === 'minion1');
+      expect(corpse?.mode).toBe('DD');
+      inner(game).spawnPreset({ id: presetId('place_reanimateddead'), x: 50, y: 50 });
+      const horde = game.monsters.find((x) => x.type.baseId === 'reanimatedhorde1');
+      expect(horde?.mode).toBe('DD');
+      run(game, 320, () => horde!.mode !== 'DD');
+      expect(horde!.mode).not.toBe('DD');
+      expect(horde!.hp).toBeGreaterThan(0);
+    });
+
+    it('Bloody Foothills: A5Q1 진행 중이면 catapult2 프리셋이 catapult3 으로, 다른 레벨은 그대로', () => {
+      const foot = newGame(25, 110);
+      inner(foot).spawnPreset({ id: presetId('catapult2'), x: 40, y: 40 });
+      expect(foot.monsters.some((x) => x.type.id === 'catapult3')).toBe(true);
+      const high = newGame(25, 111);
+      inner(high).spawnPreset({ id: presetId('catapult2'), x: 40, y: 40 });
+      expect(high.monsters.some((x) => x.type.id === 'catapult2')).toBe(true);
+    });
+
+    it('회귀: Act 1 프리셋 (Act 1 게임의 Kashya) 은 그대로 NPC 로', () => {
+      expect(data.uniques!.preset(1, 0).kind).not.toBe('none');
     });
   });
 

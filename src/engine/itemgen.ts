@@ -50,7 +50,7 @@ export const parseMods = (r: TxtRow, code: string, param: string, min: string, m
 };
 
 /** 보석 속성 (gems.txt: 무기 / 투구·갑옷 / 방패 별) */
-export interface GemDef { code: string; weapon: Mod[]; helm: Mod[]; shield: Mod[] }
+export interface GemDef { code: string; /** 룬 글자 (gems.txt letter — 룬워드 설명 'TalEth') */ letter: string; weapon: Mod[]; helm: Mod[]; shield: Mod[] }
 
 export interface ItemTables {
   magicprefix: TxtRow[]; magicsuffix: TxtRow[]; rareprefix: TxtRow[]; raresuffix: TxtRow[];
@@ -160,7 +160,7 @@ export class ItemGen {
     for (const r of t.gems ?? []) {
       if (!r.code) continue;
       this.gems.set(r.code, {
-        code: r.code,
+        code: r.code, letter: r.letter ?? '',
         weapon: parseMods(r, 'weaponMod#Code', 'weaponMod#Param', 'weaponMod#Min', 'weaponMod#Max', 3),
         helm: parseMods(r, 'helmMod#Code', 'helmMod#Param', 'helmMod#Min', 'helmMod#Max', 3),
         shield: parseMods(r, 'shieldMod#Code', 'shieldMod#Param', 'shieldMod#Min', 'shieldMod#Max', 3),

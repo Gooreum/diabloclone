@@ -101,7 +101,28 @@ export class ItemIcons {
         .catch(() => this.cache.set(f, null));
       return null;
     }
-    return hit === 'loading' ? null : hit;
+    if (hit === 'loading' || !hit || !item.ethereal) return hit === 'loading' ? null : hit;
+    return this.ethereal(f, hit);
+  }
+
+  /**
+   * 이더리얼 아이템은 반투명하게 (원작 LoD 인벤토리·장비 그림).
+   * 근사(원작 미확인): 원작 투명 그리기 모드 대신 불투명도 50% 로 한 번 구워 둔다
+   */
+  private readonly ethCache = new Map<string, Drawable>();
+  private ethereal(f: string, img: Drawable): Drawable {
+    let c = this.ethCache.get(f);
+    if (!c && typeof document !== 'undefined') {
+      const cv = document.createElement('canvas');
+      cv.width = img.width;
+      cv.height = img.height;
+      const x = cv.getContext('2d') as CanvasRenderingContext2D;
+      x.globalAlpha = 0.5;
+      x.drawImage(img as CanvasImageSource, 0, 0);
+      c = cv;
+      this.ethCache.set(f, c);
+    }
+    return c ?? img;
   }
 }
 

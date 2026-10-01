@@ -86,6 +86,8 @@ declare global {
         waypoint: WaypointPanel; automap: () => AutomapMode; automapReady: () => boolean; automapDrawn: () => number; hoverMonster: () => { id: number; name: string; box: { x: number; y: number; w: number; h: number } } | null; camera: () => Camera;
         /** e2e: NPC 메뉴·상점·고용 목록·대사·용병 막대 */
         store: StorePanel; npcMenu: NpcMenu; hire: HirePanel; talk: TalkBox; mercBar: MercBar; inventory: InventoryPanel;
+        /** e2e: 아이템 툴팁 줄 */
+        itemText: ItemText;
         /** e2e: 퀘스트 로그 패널 (Q) */
         quest: QuestPanel;
         /** e2e: 비 (levels.txt Rain) */
@@ -508,6 +510,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   };
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
+  if (data.expansion) itemText.runewords = data.runewords;
   const icons = new ItemIcons(assets, pal, data.items);
   const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art, data.expansion ?? false);
   // 요구치를 못 채운 아이템은 빨간 바탕 (원작)
@@ -952,7 +955,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         game, ready: true, input, save: saveAndExit,
         ui: {
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
-          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, quest: questPanel, rain,
+          store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, itemText, quest: questPanel, rain,
           hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel,
           gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
         },

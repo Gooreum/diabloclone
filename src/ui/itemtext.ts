@@ -9,6 +9,7 @@ import { statOf } from '../engine/itemgen';
 import { armorDefense, etherealBase, weaponDamage } from '../engine/charstats';
 import { requirements } from '../engine/inventory';
 import { QUALITY, type ItemInstance } from '../engine/treasure';
+import type { RunewordDb } from '../engine/runewords';
 
 export const QUALITY_COLOR: Record<number, string> = {
   [QUALITY.INFERIOR]: '#8c8c8c', [QUALITY.NORMAL]: '#ffffff', [QUALITY.SUPERIOR]: '#ffffff',
@@ -19,6 +20,8 @@ export const QUALITY_COLOR: Record<number, string> = {
 
 export interface TextLine { text: string; color: string }
 
+const white0 = '#ffffff';
+
 interface StatDesc { func: number; val: number; pos: string; neg: string; str2: string; priority: number }
 
 export class ItemText {
@@ -28,6 +31,8 @@ export class ItemText {
   private readonly desc = new Map<string, StatDesc>();
   private readonly classSkillsStr = new Map<number, string>();
   private readonly skillName = new Map<number, { name: string; cls: string }>();
+  /** 룬워드 이름 (확장팩) — main 이 GameData.runewords 를 넣는다 */
+  runewords?: RunewordDb;
 
   constructor(items: ItemDb, gen: ItemGen | null, str: (k: string) => string, itemstatcost: TxtRow[], charstats: TxtRow[], skills: TxtRow[], skilldesc: TxtRow[]) {
     this.items = items;
@@ -58,6 +63,11 @@ export class ItemText {
     const g = this.gen;
     if (item.code === 'gld') return `${item.quantity} ${this.str('gold')}`;
     if (!item.identified && item.quality >= QUALITY.MAGIC) return base;
+    const rw = this.runewords?.get(item.runeword);
+    if (rw) {
+      const s = this.str(rw.key);
+      return s && s !== rw.key ? s : rw.name;
+    }
     switch (item.quality) {
       case QUALITY.INFERIOR: return `${this.str(g?.lowQualityNames[item.lowQualityIdx ?? 0] ?? '')} ${base}`;
       case QUALITY.SUPERIOR: return `${this.str('Hiquality')} ${base}`;
@@ -106,10 +116,19 @@ export class ItemText {
   /** 툴팁 전체 줄 */
   lines(item: ItemInstance, ctx: { level: number; str: number; dex: number; cls: string }): TextLine[] {
     const b = this.items.base(item.code);
-    const color = QUALITY_COLOR[item.quality] ?? '#fff';
+    const rw = this.runewords?.get(item.runeword);
+    const gold = QUALITY_COLOR[QUALITY.UNIQUE] as string, grey = '#8c8c8c';
+    // 룬워드: 이름 금색, 기본 이름 회색, 룬 글자 'TalEth' 금색 (원작 툴팁 — 근사: 회색 값은 글꼴 색표 미확인)
+    const color = rw ? gold : (QUALITY_COLOR[item.quality] ?? '#fff');
     const out: TextLine[] = [{ text: this.name(item), color }];
     if (!b) return out;
-    if (item.identified && ([QUALITY.RARE, QUALITY.UNIQUE, QUALITY.SET, QUALITY.CRAFTED] as number[]).includes(item.quality)) out.push({ text: this.baseName(item), color });
+    if (rw) {
+      out.push({ text: this.baseName(item), color: grey });
+      out.push({ text: `'${item.socketed.map((g) => this.gen?.gems.get(g.code)?.letter ?? '').join('')}'`, color: gold });
+    } else if (item.identified && ([QUALITY.RARE, QUALITY.UNIQUE, QUALITY.SET, QUALITY.CRAFTED] as number[]).includes(item.quality)) out.push({ text: this.baseName(item), color });
+    // 참·주얼·룬 안내 줄 (string.tbl Charmdes · ExInsertSockets) — 근사(원작 미확인): 줄 위치는 이름 바로 아래
+    if (this.items.isType(b, 'char')) out.push({ text: this.str('Charmdes'), color: white0 });
+    else if (this.items.isType(b, 'jewl') || this.items.isType(b, 'rune')) out.push({ text: this.str('ExInsertSockets'), color: white0 });
     const white = '#ffffff', red = '#ff5050', blue = '#6969ff';
     if (b.category === 'armor' && item.defense) out.push({ text: `${this.str('ItemStats1h')} ${armorDefense(item)}`, color: statOf(item, 'item_armor_percent') || statOf(item, 'armorclass') ? blue : white });
     if (this.items.isType(b, 'weap')) {
@@ -134,7 +153,11 @@ export class ItemText {
       const t = this.statLine(s.stat, s.value, s.param, ctx.level);
       if (t) out.push({ text: t, color: blue });
     }
-    if (item.sockets) out.push({ text: `${this.str('Socketable')} (${item.sockets})`, color: blue });
+    // 이더리얼·소켓 줄: 원작 "Ethereal (Cannot be Repaired), Socketed (n)"
+    // 근사(원작 미확인): "Ethereal (Cannot be Repaired)" 는 string.tbl 키를 찾지 못해 영문 고정
+    const eth = item.ethereal ? 'Ethereal (Cannot be Repaired)' : '';
+    const sock = item.sockets ? `${this.str('Socketable')} (${item.sockets})` : '';
+    if (eth || sock) out.push({ text: [eth, sock].filter(Boolean).join(', '), color: blue });
     return out;
   }
 }

@@ -184,7 +184,7 @@ d('Phase 2: 엔진 흐름', () => {
     const base = mercStats(lod.hirelings!, 0, 10)!;
     g.enqueue({ type: 'mercItem', slot: 'rarm' });
     g.tick();
-    expect(g.store.cursor?.id).toBe(b.id);
+    expect((g.store.cursor as ItemInstance | null)?.id).toBe(b.id);
     expect(g.merc!.items?.rarm).toBeUndefined();
     expect(g.mercUnit()!.stats.a1).toMatchObject({ min: base.minDamage, max: base.maxDamage });
   });

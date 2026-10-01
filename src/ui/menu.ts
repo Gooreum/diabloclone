@@ -18,7 +18,7 @@
 import type { HeroSummary } from '../engine/save';
 import type { Difficulty } from '../engine/difficulty';
 import { validHeroName } from '../engine/save';
-import { CLASSIC_CLASSES, type ClassName } from '../engine/player';
+import { ALL_CLASSES, CLASSIC_CLASSES, EXPANSION_CLASSES, isExpansionClass, type ClassName } from '../engine/player';
 import type { Edition } from '../assets/edition';
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
@@ -33,6 +33,8 @@ const FPS = 25;
 const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
 /** 확장팩 캐릭터 체크 상자 그림 (15×16, 프레임 0 빈 칸 / 1 체크) — d2data FrontEnd */
 const CLICKBOX = `${FE}clickbox.dc6`;
+/** 확장팩 판본 배경 (d2exp): 만들기 화면 · 선택 화면 */
+const CREATE_EXP = `${FE}charactercreationscreenEXP.dc6`, SELECT_EXP = `${CS}characterselectscreenEXP.dc6`;
 /** 근사(원작 미확인): 체크 상자 위치 — 이름 칸(318,493) 아래, Exit·OK 단추 사이. 누르는 칸은 글자까지 */
 const EXP_BOX: HRect = { x: 318, y: 541, w: 180, h: 16 };
 const SCROLL = `${UI}PANEL\\scrollbar.dc6`, POPUP = `${CS}PopUpOkCancel.dc6`, SMALL = `${FE}CancelButtonBlank.dc6`;
@@ -193,12 +195,17 @@ export class Menu {
       this.cls = null;
       this.clsAnim = {};
       this.nameInput.value = '';
-      for (const c of CLASSIC_CLASSES) this.btn(`cls:${c}`, this.heroBox(c), () => this.pickClass(c), `btn-${c.toLowerCase()}`, c, (el) => {
+      // 확장팩 판본: 7직업 (원작 LoD 만들기 화면)
+      if (this.edition === 'lod') void this.fechar.preload([CREATE_EXP, ...EXPANSION_CLASSES.flatMap((c) => [heroFile(c, 'NU1'), heroFile(c, 'NU2'), heroFile(c, 'FW'), heroFile(c, 'NU3'), heroFile(c, 'BW')])]);
+      for (const c of this.classes()) this.btn(`cls:${c}`, this.heroBox(c), () => this.pickClass(c), `btn-${c.toLowerCase()}`, c, (el) => {
         el.addEventListener('mouseenter', () => (this.hover = c));
         el.addEventListener('mouseleave', () => this.hover === c && (this.hover = null));
       });
       this.expansionChecked = true;
-      if (this.edition === 'lod') this.btn('chkexp', EXP_BOX, () => (this.expansionChecked = !this.expansionChecked), 'chk-expansion', 'Expansion Character', (el) => el.setAttribute('role', 'checkbox'));
+      // 확장팩 직업을 고르면 체크는 켜진 채 바꿀 수 없다 (원작 LoD — 확장팩 직업은 확장팩 캐릭터만)
+      if (this.edition === 'lod') this.btn('chkexp', EXP_BOX, () => {
+        if (!(this.cls && isExpansionClass(this.cls))) this.expansionChecked = !this.expansionChecked;
+      }, 'chk-expansion', 'Expansion Character', (el) => el.setAttribute('role', 'checkbox'));
       else this.layer.remove('chkexp');
       this.btn('cexit', { x: 33, y: 537, w: 128, h: 35 }, () => void this.openSelect(), 'btn-create-exit', 'Exit');
       this.btn('cok', { x: 627, y: 537, w: 128, h: 35 }, () => this.confirmCreate(), 'btn-ok', 'OK');
@@ -212,6 +219,7 @@ export class Menu {
   }
 
   private async openSelect(): Promise<void> {
+    if (this.edition === 'lod') void this.sky.preload([SELECT_EXP]);
     // 이전 영웅 단추 정리 (이름이 바뀌거나 지워졌을 수 있다)
     for (const h of this.heroes) this.layer.remove(`hero:${h.name}`);
     this.heroes = this.listHeroes ? await this.listHeroes() : [];
@@ -322,6 +330,11 @@ export class Menu {
   }
 
   /** 클래스 그림이 차지하는 칸 (서 있기 첫 프레임 기준) */
+  /** 만들기 화면 직업 (확장팩 판본은 드루이드·어쌔신 포함) */
+  private classes(): readonly ClassName[] {
+    return this.edition === 'lod' ? ALL_CLASSES : CLASSIC_CLASSES;
+  }
+
   private heroBox(c: ClassName): HRect {
     const h = HERO[c];
     const f = this.fechar.frame(heroFile(c, 'NU1'), 0);
@@ -338,6 +351,7 @@ export class Menu {
     }
     this.onSound?.(`cursor_${c.toLowerCase()}_select`);
     this.cls = c;
+    if (isExpansionClass(c)) this.expansionChecked = true;
     this.clsAnim[c] = { anim: 'FW', start: now };
     this.nameInput.style.display = 'block';
     this.nameInput.focus();
@@ -351,7 +365,7 @@ export class Menu {
       this.err = 'Invalid character name';
       return;
     }
-    this.finish({ kind: 'new', name, cls: this.cls, expansion: this.edition === 'lod' && this.expansionChecked });
+    this.finish({ kind: 'new', name, cls: this.cls, expansion: this.edition === 'lod' && (this.expansionChecked || isExpansionClass(this.cls)) });
   }
 
   // ---------------------------------------------------------------- 그리기
@@ -385,7 +399,7 @@ export class Menu {
       drawText(ctx, 'v 1.14d', 20, 575, { font: 'font8', color: 'white' });
     } else if (this.screen === 'select') {
       const a = this.sky;
-      a.drawScreen(ctx, `${CS}charselectbckg.dc6`);
+      a.drawScreen(ctx, this.edition === 'lod' && a.frames(SELECT_EXP)?.length ? SELECT_EXP : `${CS}charselectbckg.dc6`);
       const sel = this.heroes[this.selectedHero];
       if (sel) drawText(ctx, sel.name, 400, 20, { font: 'font42', align: 'center' });
       const first = this.scroll * 2;
@@ -411,7 +425,7 @@ export class Menu {
       if (this.diffHero) this.drawDifficulty(ctx, this.diffHero);
     } else {
       const a = this.fechar;
-      a.drawScreen(ctx, `${FE}CharacterCreate.dc6`);
+      a.drawScreen(ctx, this.edition === 'lod' && a.frames(CREATE_EXP)?.length ? CREATE_EXP : `${FE}CharacterCreate.dc6`);
       drawText(ctx, 'Select Hero Class', 400, 17, { font: 'font30', align: 'center' });
       // 모닥불 (가산 혼합)
       ctx.save();
@@ -419,7 +433,7 @@ export class Menu {
       a.drawAnchored(ctx, `${FE}fire.dc6`, fr % 30, 380, 335);
       ctx.restore();
       // 뒤에 있는 인물부터 (y 작은 순)
-      const order = [...CLASSIC_CLASSES].sort((p, q) => HERO[p].y - HERO[q].y);
+      const order = [...this.classes()].sort((p, q) => HERO[p].y - HERO[q].y);
       for (const c of order) this.drawHero(c, now);
       if (this.cls) {
         drawText(ctx, this.cls, 400, 65, { font: 'font30', align: 'center' });

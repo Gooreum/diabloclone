@@ -20,6 +20,15 @@ export const QUALITY_COLOR: Record<number, string> = {
 
 export interface TextLine { text: string; color: string }
 
+/** 직업 전용 표시 (string.tbl AmaOnly …) */
+const CLASS_ONLY: Record<string, string> = { ama: 'AmaOnly', sor: 'SorOnly', nec: 'NecOnly', pal: 'PalOnly', bar: 'BarOnly', dru: 'DruOnly', ass: 'AssOnly' };
+
+/** 원작 형식 문자열: %d · %s 를 차례로, %% 는 % */
+export function sprintf(f: string, ...args: (string | number)[]): string {
+  let i = 0;
+  return f.replace(/%(%|\+?d|s)/g, (m) => (m === '%%' ? '%' : String(args[i++] ?? '')));
+}
+
 const white0 = '#ffffff';
 
 interface StatDesc { func: number; val: number; pos: string; neg: string; str2: string; priority: number }
@@ -33,6 +42,8 @@ export class ItemText {
   private readonly skillName = new Map<number, { name: string; cls: string }>();
   /** 룬워드 이름 (확장팩) — main 이 GameData.runewords 를 넣는다 */
   runewords?: RunewordDb;
+  /** MonStats 번호 → 몬스터 이름 (reanimate "Reanimate as:") — main 이 넣는다 */
+  monsterName?: (hcIdx: number) => string;
 
   constructor(items: ItemDb, gen: ItemGen | null, str: (k: string) => string, itemstatcost: TxtRow[], charstats: TxtRow[], skills: TxtRow[], skilldesc: TxtRow[]) {
     this.items = items;
@@ -45,10 +56,9 @@ export class ItemText {
     // 클래스 Id 순서 = charstats 행 순서 (Amazon 0 … Barbarian 4)
     charstats.forEach((r, i) => r.StrAllSkills && this.classSkillsStr.set(i, str(r.StrAllSkills)));
     const descs = new Map(skilldesc.map((d) => [d.skilldesc ?? '', d]));
-    const clsName: Record<string, string> = { ama: 'Amazon', sor: 'Sorceress', nec: 'Necromancer', pal: 'Paladin', bar: 'Barbarian' };
     for (const r of skills) {
       const d = descs.get(r.skilldesc ?? '');
-      this.skillName.set(Number(r.Id), { name: d?.['str name'] ? str(d['str name']) : (r.skill ?? ''), cls: clsName[r.charclass ?? ''] ?? '' });
+      this.skillName.set(Number(r.Id), { name: d?.['str name'] ? str(d['str name']) : (r.skill ?? ''), cls: r.charclass ?? '' });
     }
   }
 
@@ -103,11 +113,41 @@ export class ItemText {
       case 6: return `${place(sgn(Math.trunc((value * clvl) / 8)))} ${this.str(d.str2)}`;
       case 7: return `${place(`${Math.trunc((value * clvl) / 8)}%`)} ${this.str(d.str2)}`;
       case 8: return `${place(`${sgn(Math.trunc((value * clvl) / 8))}%`)} ${this.str(d.str2)}`;
+      case 9: return `${place(`${Math.trunc((value * clvl) / 8)}`)} ${this.str(d.str2)}`;
+      case 11: {
+        // 자동 수리: 100/v 초에 1 (1초 미만이면 초당 v/100). 출처: 원작 string.tbl ModStre9u / ModStre9t
+        const secs = value > 0 ? Math.trunc(100 / value) : 0;
+        return secs >= 1 ? sprintf(this.str('ModStre9u'), 1, secs) : sprintf(this.str('ModStre9t'), Math.trunc(value / 100));
+      }
       case 13: return `+${value} ${this.classSkillsStr.get(param) ?? txt}`;
-      case 20: return place(`-${value}%`);
-      case 27: case 28: {
+      case 15: {
+        // 스킬 발동: "%d%% Chance to cast level %d %s on striking" (확률, 레벨 = layer & 63, 스킬 = layer >> 6)
+        const sk = this.skillName.get(param >> 6);
+        return sk ? sprintf(txt, value, param & 63, sk.name) : null;
+      }
+      case 16: {
+        // 아이템 오라: "Level %d %s Aura When Equipped"
         const sk = this.skillName.get(param);
-        return sk ? `+${value} to ${sk.name}${d.func === 27 && sk.cls ? ` (${sk.cls} Only)` : ''}` : null;
+        return sk ? sprintf(txt, value, sk.name) : null;
+      }
+      case 17: case 18: {
+        // 시간대 속성: 가장 좋은 시기의 값 + "(Increases During Daytime)" 등 (근사(원작 미확인): 표시 값 = 최대)
+        const period = value & 3, max = ((value >> 12) & 0x3ff) - 0x100;
+        const when = ['ModStre9e', 'ModStre9g', 'ModStre9d', 'ModStre9f'][period] as string;
+        return `${place(d.func === 18 ? `${sgn(max)}%` : sgn(max))} ${this.str(when)}`;
+      }
+      case 20: return place(`-${value}%`);
+      case 23: return `${txt} ${this.monsterName?.(param) ?? ''}`.trim();
+      case 24: {
+        // 충전 스킬: "Level %d %s (%d/%d Charges)" — ModStre10b · ModStre10d
+        const sk = this.skillName.get(param >> 6);
+        return sk ? `${this.str('ModStre10b')} ${param & 63} ${sk.name} ${sprintf(this.str('ModStre10d'), value & 0xff, (value >> 8) & 0xff)}` : null;
+      }
+      case 27: case 28: {
+        // 27 단일 스킬 "+3 to Fire Bolt (Sorceress Only)", 28 다른 직업 스킬 "+3 to Battle Orders" (원작 *Only 문자열)
+        const sk = this.skillName.get(param);
+        const only = d.func === 27 && sk?.cls ? CLASS_ONLY[sk.cls] : undefined;
+        return sk ? `+${value} ${this.str('ItemStast1k')} ${sk.name}${only ? ` ${this.str(only)}` : ''}` : null;
       }
       default: return place(`${value}`);
     }

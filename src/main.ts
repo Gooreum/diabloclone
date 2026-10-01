@@ -511,6 +511,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
   const itemText = new ItemText(data.items, data.treasure.gen, (k) => tables.string(k), tables.table('ItemStatCost'), tables.table('charstats'), tables.table('skills'), tables.table('skilldesc'));
   if (data.expansion) itemText.runewords = data.runewords;
+  itemText.monsterName = (i) => { const t = data.monsters.list[i]; return t ? tables.string(t.nameStr) : ''; };
   const icons = new ItemIcons(assets, pal, data.items);
   const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art, data.expansion ?? false);
   // 요구치를 못 채운 아이템은 빨간 바탕 (원작)

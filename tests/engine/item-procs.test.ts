@@ -3,7 +3,11 @@
 //       Items.cpp D2GAME_DropTC (금화 획득), ITEMS_CalculateTransactionCost (할인), ItemMode.cpp sub_6FC4A350 (자동 수리),
 //       원작 ItemStatCost.txt itemevent / op 열
 import { beforeAll, describe, expect, it } from 'vitest';
-import { gameChain, hasGameData } from '../support/gamedata';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { GAME_DATA, gameChain, hasGameData } from '../support/gamedata';
+import { mpqOrder } from '../../src/assets/edition';
+import { MpqArchive, MpqChain } from '../../src/formats/mpq';
 import { GameTables } from '../../src/data/tables';
 import { buildGameData } from '../../src/data/gamedata';
 import { Game, type GameData, type GameEvent } from '../../src/engine/game';
@@ -489,5 +493,32 @@ describe.skipIf(!hasGameData)('3단계 충전 — 충전 스킬 · 다른 직업
     const s = parseSave(serializeSave(makeSave('Chg', ch, 0, { inventory: [], equipment: game.equipment })));
     expect(s.character.chargeSkills?.[S('Teleport').id]).toBe(staff.id);
     expect(s.equipment.rarm?.stats[0]?.value).toBe((20 << 8) | 7);
+  });
+});
+
+// 확장팩 문자열(expansionstring.tbl)은 확장팩 MPQ 체인에만 있다
+const LOD_DIR = resolve(GAME_DATA, 'lod');
+const lodPath = (n: string) => [resolve(LOD_DIR, n), resolve(GAME_DATA, n)].find((p) => existsSync(p));
+const hasLod = existsSync(resolve(LOD_DIR, 'patch_d2.mpq')) && mpqOrder('lod').every((n) => !!lodPath(n));
+
+describe.skipIf(!hasLod)('4단계 — 아이템 설명 문구 (원작 string.tbl)', () => {
+  const S = (name: string) => lod.skills!.byNameOf(name)!.id;
+  const text = async () => {
+    const { ItemText } = await import('../../src/ui/itemtext');
+    const t2 = new GameTables(new MpqChain(mpqOrder('lod').map((n) => MpqArchive.open(readFileSync(lodPath(n)!)))));
+    const t = new ItemText(lod.items, lod.treasure.gen!, (k) => t2.string(k), t2.table('ItemStatCost'), t2.table('charstats'), t2.table('skills'), t2.table('skilldesc'));
+    t.monsterName = (i) => t2.string(lod.monsters.list[i]!.nameStr);
+    return t;
+  };
+  it('발동·오라·충전·단일 스킬·다른 직업 스킬·자동 수리', async () => {
+    const t = await text();
+    expect(t.statLine('item_skillonhit', 5, (S('Amplify Damage') << 6) | 3)).toBe('5% Chance to cast level 3 Amplify Damage on striking');
+    expect(t.statLine('item_skillongethit', 10, (S('Frost Nova') << 6) | 4)).toBe('10% Chance to cast level 4 Frost Nova when struck');
+    expect(t.statLine('item_aura', 5, S('Might'))).toBe('Level 5 Might Aura When Equipped');
+    expect(t.statLine('item_charged_skill', (20 << 8) | 7, (S('Teleport') << 6) | 5)).toBe('Level 5 Teleport (7/20 Charges)');
+    expect(t.statLine('item_singleskill', 3, S('Fire Bolt'))).toBe('+3 to Fire Bolt (Sorceress Only)');
+    expect(t.statLine('item_nonclassskill', 3, S('Battle Orders'))).toBe('+3 to Battle Orders');
+    expect(t.statLine('item_replenish_durability', 4, 0)).toBe('Repairs 1 durability in 25 seconds');
+    expect(t.statLine('item_reanimate', 10, lod.monsters.get('zombie1').hcIdx)).toMatch(/^Reanimate as: \S/);
   });
 });

@@ -17,8 +17,8 @@ export class AssetLoader implements AssetSource {
     this.gfx = gfx;
   }
 
-  static async open(baseUrl = '/d2/', fetchRange: RangeFetcher = httpRange, gfx = new GfxClient()): Promise<AssetLoader> {
-    return new AssetLoader(await Promise.all(MPQ_ORDER.map((f) => MpqRemote.open(baseUrl + f, fetchRange))), gfx);
+  static async open(baseUrl = '/d2/', fetchRange: RangeFetcher = httpRange, gfx = new GfxClient(), order: readonly string[] = MPQ_ORDER): Promise<AssetLoader> {
+    return new AssetLoader(await Promise.all(order.map((f) => MpqRemote.open(baseUrl + f, fetchRange))), gfx);
   }
 
   /** 원본 블록을 받아 워커에서 해제 */

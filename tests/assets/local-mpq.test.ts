@@ -10,7 +10,8 @@ describe('유저가 고른 MPQ (브라우저 보관)', () => {
     expect(canonicalName('D2DATA.MPQ')).toBe('d2data.mpq');
     expect(canonicalName('Diablo II/d2Music.mpq')).toBe('d2music.mpq');
     expect(canonicalName('foo.mpq')).toBeNull();
-    expect(canonicalName('d2exp.mpq')).toBeNull();
+    // 확장팩 파일도 받는다 (d2exp 가 있으면 확장팩으로 — edition.ts)
+    expect(canonicalName('d2exp.mpq')).toBe('d2exp.mpq');
   });
 
   it('MPQ 헤더가 아니면 거절', async () => {

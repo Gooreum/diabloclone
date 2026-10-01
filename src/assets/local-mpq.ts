@@ -1,12 +1,14 @@
 // 유저가 고른 원작 MPQ 를 브라우저(IndexedDB)에 보관하고, 필요한 부분만 잘라 읽는다.
 // 원작 파일은 서버로 보내지 않는다 — 각자 가진 D2 설치 파일로만 플레이한다.
+import { LOD_MPQS } from './edition';
 import type { RangeFetcher } from './remote';
 
 /** 그래픽·표 (없으면 시작할 수 없다) */
 export const REQUIRED_MPQS = ['patch_d2.mpq', 'd2char.mpq', 'd2data.mpq'] as const;
 /** 효과음·대사·음악 (없으면 소리 없이 — SoundFiles.open 은 못 연 파일을 건너뛴다) */
 export const OPTIONAL_MPQS = ['d2sfx.mpq', 'd2speech.mpq', 'd2music.mpq'] as const;
-export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS];
+/** 확장팩 파일은 있으면 확장팩으로 (edition.ts) */
+export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS, ...LOD_MPQS];
 
 const DB = 'diabloclone-mpq', STORE = 'files';
 

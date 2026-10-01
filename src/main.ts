@@ -1,6 +1,7 @@
 // 브라우저 진입점: 원작 MPQ 로드 → 메인메뉴 → (새 캐릭터 | 불러오기) → 게임(마을·Blood Moor) → Save and Exit → 메뉴.
 import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
+import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
 import { blobRange, MpqStore } from './assets/local-mpq';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
@@ -107,6 +108,7 @@ declare global {
     __menu?: Menu;
     /** e2e: 캐릭터 저장소 (난이도 해금 등 저장 필드 조작) */
     __heroStore?: typeof HeroStore;
+    __edition?: Edition;
   }
 }
 
@@ -151,10 +153,18 @@ function reportClientError(kind: string, e: unknown): void {
 window.addEventListener('error', (e) => reportClientError('error', e.error ?? e.message));
 window.addEventListener('unhandledrejection', (e) => reportClientError('rejection', e.reason));
 
-/** 원작 MPQ 를 어디서 읽나: dev 서버는 로컬 game-data/ 를 /d2/ 로 서빙, 배포판(또는 ?local)은 유저가 고른 파일(브라우저 보관) */
-async function mpqSource(host: HTMLElement): Promise<{ base: string; fetch: RangeFetcher; local: boolean }> {
-  if (import.meta.env.DEV && !new URLSearchParams(location.search).has('local')) return { base: '/d2/', fetch: httpRange, local: false };
-  return { base: 'local/', fetch: blobRange(await ensureLocalMpqs(host)), local: true };
+/**
+ * 원작 MPQ 를 어디서 읽나: dev 서버는 로컬 game-data/ 를 /d2/ (클래식)·/d2x/ (확장팩: game-data/lod 우선) 로 서빙,
+ * 배포판(또는 ?local)은 유저가 고른 파일(브라우저 보관). 판본은 파일로 정한다 — d2exp.mpq 가 있으면 확장팩 (dev 는 ?edition=classic 로 클래식)
+ */
+async function mpqSource(host: HTMLElement): Promise<{ base: string; fetch: RangeFetcher; local: boolean; edition: Edition }> {
+  const q = new URLSearchParams(location.search);
+  if (import.meta.env.DEV && !q.has('local')) {
+    const lod = q.get('edition') !== 'classic' && (await fetch('/d2x/d2exp.mpq', { method: 'HEAD' }).then((r) => r.ok, () => false));
+    return lod ? { base: '/d2x/', fetch: httpRange, local: false, edition: 'lod' } : { base: '/d2/', fetch: httpRange, local: false, edition: 'classic' };
+  }
+  const files = await ensureLocalMpqs(host);
+  return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()) };
 }
 
 /** 800×600 무대를 창 크기에 맞춰 키운다 (비율 유지, 가운데). 게임 안 좌표는 그대로 800×600 — 입력은 화면 크기에서 환산 */
@@ -214,7 +224,7 @@ async function boot(): Promise<void> {
 
   let assets: AssetLoader;
   try {
-    assets = await AssetLoader.open(src.base, src.fetch);
+    assets = await AssetLoader.open(src.base, src.fetch, undefined, mpqOrder(src.edition));
   } catch (e) {
     // 보관한 파일이 깨졌거나 브라우저가 지웠으면 비우고 다시 고르게 한다
     if (src.local) {
@@ -250,6 +260,7 @@ async function boot(): Promise<void> {
     window.__cursor = cursor;
     window.__menu = menu;
     window.__heroStore = HeroStore;
+    window.__edition = src.edition;
   }
   // 캐릭터 선택 칸 영웅 그림: 저장된 장비로 게임 속 COF 합성 (서 있기 NU, 앞(아래)을 봄 = 64방향 0)
   const figGfx = new UnitGfx(assets);
@@ -279,7 +290,7 @@ async function boot(): Promise<void> {
   let inMenu = true, soundReady = false;
   menu.onSound = (n) => void sound.play(n);
   sound.bindUnlock();
-  void sound.init({ assets, tables, data, cls: '', baseUrl: src.base, fetchRange: src.fetch }).then(() => {
+  void sound.init({ assets, tables, data, cls: '', baseUrl: src.base, fetchRange: src.fetch, soundMpqs: soundMpqs(src.edition) }).then(() => {
     soundReady = true;
     if (inMenu) sound.setMusic('music_options');
   }).catch(() => undefined);

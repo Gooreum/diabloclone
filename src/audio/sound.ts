@@ -59,8 +59,8 @@ class SoundFiles {
   private nextId = 1;
   private readonly waiting = new Map<number, (r: DecodeResponse) => void>();
 
-  async open(baseUrl: string, fetchRange: RangeFetcher = httpRange): Promise<void> {
-    const opened = await Promise.all(SOUND_MPQS.map((f) => MpqRemote.open(baseUrl + f, fetchRange).catch(() => null)));
+  async open(baseUrl: string, fetchRange: RangeFetcher = httpRange, names: readonly string[] = SOUND_MPQS): Promise<void> {
+    const opened = await Promise.all(names.map((f) => MpqRemote.open(baseUrl + f, fetchRange).catch(() => null)));
     this.archives = opened.filter((a): a is MpqRemote => a !== null);
     try {
       this.worker = new Worker(new URL('./decode-worker.ts', import.meta.url), { type: 'module' });
@@ -107,7 +107,7 @@ interface Tables {
   sounds: SoundTable; env: SoundEnvTable; mon: MonsterSounds; items: ItemSoundTable; skills: SkillSoundTable; missiles: MissileSoundTable;
 }
 
-export interface AttachOptions { assets: AssetLoader; tables: GameTables; data: GameData; cls: string; baseUrl?: string; fetchRange?: RangeFetcher }
+export interface AttachOptions { assets: AssetLoader; tables: GameTables; data: GameData; cls: string; baseUrl?: string; fetchRange?: RangeFetcher; soundMpqs?: readonly string[] }
 
 /** 효과음·음악·대사 */
 export class SoundSystem {
@@ -192,7 +192,7 @@ export class SoundSystem {
   async init(opts: AttachOptions): Promise<void> {
     this.opened ??= (async () => {
       const paths = SOUND_TABLES.map((t) => `data\\global\\excel\\${t}.txt`);
-      await Promise.all([opts.assets.preload(paths), this.files.open(opts.baseUrl ?? '/d2/', opts.fetchRange)]);
+      await Promise.all([opts.assets.preload(paths), this.files.open(opts.baseUrl ?? '/d2/', opts.fetchRange, opts.soundMpqs)]);
       const t = opts.tables;
       this.tables = {
         sounds: new SoundTable(t.table('sounds')),

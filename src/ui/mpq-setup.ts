@@ -1,5 +1,6 @@
 // 첫 접속 화면: 유저가 자기 Diablo II 설치 폴더의 MPQ 를 고르면 이 브라우저(IndexedDB)에 보관한다.
 // 파일은 서버로 보내지 않는다. 다음 접속부터는 보관된 파일로 곧바로 시작한다.
+import { editionOf, LOD_MPQS } from '../assets/edition';
 import { ALL_MPQS, canonicalName, isMpq, MpqStore, OPTIONAL_MPQS } from '../assets/local-mpq';
 
 const CSS = `
@@ -18,6 +19,7 @@ const CSS = `
 #mpq-setup li.no::before { content: '· '; }
 #mpq-setup li.no.req { color: #d05040; }
 #mpq-setup .status { min-height: 20px; }
+#mpq-setup .edition { color: #d8c690; }
 #mpq-setup .err { color: #d05040; }
 `;
 
@@ -37,6 +39,7 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
   root.innerHTML = `
     <h1>Diablo II 원작 파일 불러오기</h1>
     <p>가지고 계신 Diablo II (1.14d) 설치 폴더의 MPQ 파일을 선택하세요.</p>
+    <p class="muted">확장팩(Lord of Destruction)을 설치한 폴더면 확장팩으로, 클래식만 설치했으면 클래식으로 시작합니다.</p>
     <p class="muted">파일은 서버로 전송되지 않고 이 브라우저에만 저장됩니다. 한 번만 하면 다음부터는 바로 시작합니다.</p>
     <div class="drop">
       <p>여기로 MPQ 파일(또는 폴더)을 끌어다 놓거나</p><br>
@@ -46,21 +49,26 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
       <input type="file" webkitdirectory data-input="dir" hidden>
     </div>
     <ul></ul>
+    <p class="edition"></p>
     <p class="status"></p>
     <p><button type="button" data-start disabled>시작</button></p>`;
   host.replaceChildren(style, root);
 
   const list = root.querySelector('ul')!;
   const status = root.querySelector('.status') as HTMLElement;
+  const edition = root.querySelector('.edition') as HTMLElement;
   const start = root.querySelector('[data-start]') as HTMLButtonElement;
   const drop = root.querySelector('.drop') as HTMLElement;
   let busy = false;
 
   const render = (): void => {
     list.innerHTML = ALL_MPQS.map((n) => {
-      const req = !(OPTIONAL_MPQS as readonly string[]).includes(n);
-      return `<li class="${have.has(n) ? 'ok' : 'no'}${req ? ' req' : ''}">${n}${req ? '' : ' <span class="muted">(소리)</span>'}</li>`;
+      const lod = (LOD_MPQS as readonly string[]).includes(n);
+      const req = !lod && !(OPTIONAL_MPQS as readonly string[]).includes(n);
+      const tag = lod ? ' <span class="muted">(확장팩)</span>' : req ? '' : ' <span class="muted">(소리)</span>';
+      return `<li class="${have.has(n) ? 'ok' : 'no'}${req ? ' req' : ''}">${n}${tag}</li>`;
     }).join('');
+    edition.textContent = editionOf(have.keys()) === 'lod' ? '확장팩(Lord of Destruction)으로 시작합니다' : '클래식으로 시작합니다 (확장팩: d2exp.mpq 필요)';
     const miss = MpqStore.missing(have);
     const quiet = OPTIONAL_MPQS.filter((n) => !have.has(n));
     start.disabled = busy || miss.length > 0;

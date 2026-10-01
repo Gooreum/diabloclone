@@ -141,7 +141,45 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
     });
   });
 
-  it.skip('Act 5 레벨 몬스터 풀·스폰·미니언 전부 AI 가 있다 (NPC·퀘스트 단계 AI 제외)', () => {
+  describe('나머지', () => {
+    it('Frozen Horror: 가까우면 Horror Arctic Blast (냉기 숨결 미사일)', () => {
+      const game = newGame(11);
+      const fh = game.spawnMonster('frozenhorror1', 22.5, 20.5);
+      const ev = run(game, 1500, (e) => e.some((x) => x.type === 'monsterSkill' && x.monsterId === fh.id && x.skill === 'Horror Arctic Blast'));
+      expect(ev.some((x) => x.type === 'monsterSkill' && x.skill === 'Horror Arctic Blast')).toBe(true);
+      const after = run(game, 80, (e) => e.some((x) => x.type === 'monsterMissile' && String(x.name).startsWith('frozenhorror')));
+      expect(after.some((x) => x.type === 'monsterMissile' && String(x.name).startsWith('frozenhorror'))).toBe(true);
+    });
+
+    it('Death Mauler: DeathMaul 은 땅속으로 대상까지 가는 미사일 (death mauler)', () => {
+      const game = newGame(13);
+      const dm = game.spawnMonster('deathmauler1', 30.5, 20.5);
+      expect(inner(game).monsterUseSkill(dm, 0, { x: 20.5, y: 20.5 })).toBe(true);
+      const ev = run(game, 120, (e) => e.some((x) => x.type === 'monsterMissile' && x.monsterId === dm.id));
+      expect(ev.some((x) => x.type === 'monsterMissile' && x.name === 'death mauler')).toBe(true);
+    });
+
+    it('Putrid Defiler: 같은 편에 알을 낳고 (pregnant), 그 몬스터가 죽으면 Pain Worm 이 나온다', () => {
+      const game = newGame(17);
+      const pd = game.spawnMonster('putriddefiler1', 34.5, 20.5);
+      const host = game.spawnMonster('minion1', 36.5, 20.5);
+      run(game, 2000, () => host.states.has('pregnant'));
+      expect(host.states.has('pregnant')).toBe(true);
+      void pd;
+      inner(game).killMonster(host, 'player');
+      expect(game.monsters.some((x) => x.type.baseId === 'painworm1' || x.type.id.startsWith('painworm'))).toBe(true);
+    });
+
+    it('Succubus Witch: Amplify Damage (Skill1) 로 플레이어에게 저주', () => {
+      const game = newGame(19);
+      const sw = game.spawnMonster('succubuswitch1', 24.5, 20.5);
+      expect(inner(game).monsterUseSkill(sw, 0, { x: 20.5, y: 20.5 })).toBe(true);
+      const ev = run(game, 120, (e) => e.some((x) => x.type === 'playerCursed' && x.by === sw.id));
+      expect(ev.find((x) => x.type === 'playerCursed')?.curse).toBe('amplifydamage');
+    });
+  });
+
+  it('Act 5 레벨 몬스터 풀·스폰·미니언 전부 AI 가 있다 (NPC·퀘스트 단계 AI 제외)', () => {
     const missing = [...act5Monsters()].filter((id) => {
       const ai = data.monsters.get(id).ai;
       return !NPC_AI.has(ai) && !QUEST_AI.has(ai) && !hasAi(ai);

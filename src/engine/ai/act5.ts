@@ -399,6 +399,299 @@ const npcBarb: AiFn = (w, m, dist, combat) => {
   idle(w, m, 15);
 };
 
+// =====================================================================================================
+// 나머지 Act 5 몬스터
+// =====================================================================================================
+
+/** 대상 정보 (원작 STATLIST_GetStatListFromUnitAndFlag(대상, 0x20) — 저주가 걸려 있음, 대상 종류, 최대 생명·마나) */
+const targetUnit = (w: AiWorld) => w.targetUnit?.() ?? { cursed: false, player: true, lifeOverMana: true, neutral: false };
+
+/**
+ * 출처: AITHINK_Fn114_ReanimatedHorde — 근접 aip1% A1 / aip2 대기. 멀면 Skill2 (Charge) 를 직선이 트였고 5 < 거리 < aip3 일 때 aip4%,
+ *   aip5% 걷기, aip6% 대상 쪽 4 걷기, aip7 대기
+ */
+const reanimatedHorde: AiFn = (w, m, dist, combat) => {
+  if (combat) {
+    if (rollChance(m, 0)) w.startMode(m, 'A1');
+    else idle(w, m, aiParam(m, 1));
+    return;
+  }
+  if (hasSkill(m, 1) && lineClear(w, m) && dist < aiParam(m, 2) && dist > 5 && rollChance(m, 3)) {
+    w.useSkill(m, 1, tgt(w));
+    return;
+  }
+  if (rollChance(m, 4)) {
+    walkTo(w, m);
+    return;
+  }
+  if (rollChance(m, 5)) {
+    walkInRadius(w, m, 4, 0);
+    return;
+  }
+  idle(w, m, aiParam(m, 6));
+};
+
+/** 서큐버스 저주 고르기 (Fn118/119 공통): 대상 생명 ≥ aip7% 이면 Skill1, 자기 생명 ≤ aip8% 이면 Skill2, 대상 생명 > 마나면 Skill3, 플레이어면 Skill4 */
+function succubusCurse(w: AiWorld, m: MonsterUnit, hpParam: number, selfParam: number): boolean {
+  const t = targetUnit(w);
+  if (hasSkill(m, 0) && w.targetLifePct() >= aiParam(m, hpParam)) return w.useSkill(m, 0, tgt(w)), true;
+  if (hasSkill(m, 1) && w.lifePct(m) <= aiParam(m, selfParam)) return w.useSkill(m, 1, tgt(w)), true;
+  if (hasSkill(m, 2) && (t.lifeOverMana || !t.player)) return w.useSkill(m, 2, tgt(w)), true;
+  if (hasSkill(m, 3) && t.player) return w.useSkill(m, 3, tgt(w)), true;
+  return false;
+}
+
+/**
+ * 출처: AITHINK_Fn118_Succubus — 대상이 저주가 없고 aip4 안이면 aip3% 저주. 근접 aip1% A1 / aip5 대기,
+ *   멀면 SuccubusBolt (Skill5) 를 aip8% (aip8 > 0), aip2% 걷기, aip6 대기
+ */
+const succubus: AiFn = (w, m, dist, combat) => {
+  if (!targetUnit(w).cursed && dist < aiParam(m, 3) && rollChance(m, 2) && succubusCurse(w, m, 6, 7)) return;
+  if (combat) {
+    if (rollChance(m, 0)) w.startMode(m, 'A1');
+    else idle(w, m, aiParam(m, 4));
+    return;
+  }
+  if (hasSkill(m, 4) && aiParam(m, 7) > 0) {
+    const t = w.missileTarget(m);
+    if (t && rollChance(m, 7)) {
+      w.useSkill(m, 4, { unitId: t.unitId, x: t.x, y: t.y });
+      return;
+    }
+  }
+  if (rollChance(m, 1)) {
+    walkTo(w, m);
+    return;
+  }
+  idle(w, m, aiParam(m, 5));
+};
+
+/**
+ * 출처: AITHINK_Fn119_SuccubusWitch — 대상이 저주가 없고 aip4 (편안 거리) 안이면 aip3% 저주. 근접: aip3% aip4 만큼 도망, 아니면 aip1% A1 / aip6 대기.
+ *   멀면 aip5% → aip8% SuccubusBolt, 편안 거리 안이면 aip3% 도망, (볼트 칸이 없으면 aip5% S2), aip2% 걷기, 50% 선회, aip6 대기
+ */
+const succubusWitch: AiFn = (w, m, dist, combat) => {
+  const comfort = aiParam(m, 3);
+  if (!w.noTarget && !targetUnit(w).cursed && dist < comfort && rollChance(m, 2) && succubusCurse(w, m, 6, 7)) return;
+  if (combat) {
+    if (!rollChance(m, 2) || !escape(w, m, comfort, true)) {
+      if (rollChance(m, 0)) w.startMode(m, 'A1');
+      else idle(w, m, aiParam(m, 5));
+    }
+    return;
+  }
+  if (hasSkill(m, 4) && aiParam(m, 7) > 0 && rollChance(m, 4)) {
+    const t = w.missileTarget(m);
+    if (t && rollChance(m, 7)) {
+      w.useSkill(m, 4, { unitId: t.unitId, x: t.x, y: t.y });
+      return;
+    }
+  }
+  if (dist >= comfort || !rollChance(m, 2) || !escape(w, m, comfort, true)) {
+    if (!hasSkill(m, 4)) {
+      const t = w.missileTarget(m);
+      if (t && rollChance(m, 4)) {
+        modeOnly(w, m, 'S2');
+        return;
+      }
+    }
+    if (rollChance(m, 1)) walkTo(w, m);
+    else if (rollPct(m) >= 50 || !circle(w, m, 6)) idle(w, m, aiParam(m, 5));
+  }
+};
+
+/** 출처: AITHINK_Fn124_FrozenHorror — 거리 < Skill1 레벨 이고 aip3% 면 Arctic Blast (Inferno 상태가 아닐 때), 근접 aip1% A1, 멀면 aip2% 걷기, aip4 대기 */
+const frozenHorror: AiFn = (w, m, dist, combat) => {
+  const lvl = hasSkill(m, 0) ? Math.max(0, w.skillLevel?.(m, 0) ?? m.type.skills[0]?.lvl ?? 0) : 0;
+  if (hasSkill(m, 0) && dist < lvl && rollChance(m, 2) && !m.states.has('inferno')) {
+    w.useSkill(m, 0, tgt(w));
+    return;
+  }
+  m.states.remove('inferno');
+  if (combat) {
+    if (rollChance(m, 0)) {
+      w.startMode(m, 'A1');
+      return;
+    }
+  } else if (rollChance(m, 1)) {
+    w.moveTo(m, w.target.x, w.target.y, false, 1);
+    return;
+  }
+  idle(w, m, aiParam(m, 3));
+};
+
+/** 출처: AITHINK_Fn125_BloodLord — 근접 aip1% → aip3% BloodLordFrenzy (A2) / A1, 멀면 aip2% 걷기, aip4 대기 */
+const bloodLord: AiFn = (w, m, _dist, combat) => {
+  if (combat) {
+    if (rollChance(m, 0)) {
+      if (rollChance(m, 2) && hasSkill(m, 0)) {
+        w.useSkill(m, 0, tgt(w));
+        return;
+      }
+      w.startMode(m, 'A1');
+      return;
+    }
+  } else if (rollChance(m, 1)) {
+    w.moveTo(m, w.target.x, w.target.y, false, 1);
+    return;
+  }
+  idle(w, m, aiParam(m, 3));
+};
+
+/** 출처: AITHINK_Fn130_DeathMauler — 근접 aip1% A1. 멀면 aip3 안에서 aip4% DeathMaul, aip2% 걷기, 15 대기 */
+const deathMauler: AiFn = (w, m, dist, combat) => {
+  if (combat) {
+    if (rollChance(m, 0)) {
+      w.startMode(m, 'A1');
+      return;
+    }
+  } else {
+    if (hasSkill(m, 0) && dist < aiParam(m, 2) && rollChance(m, 3)) {
+      w.useSkill(m, 0, tgt(w));
+      return;
+    }
+    if (rollChance(m, 1)) {
+      walkTo(w, m);
+      return;
+    }
+  }
+  idle(w, m, 15);
+};
+
+/**
+ * 출처: AITHINK_Fn137_PutridDefiler — 근접이면 A1. 거리 25 안의 알 낳을 몬스터 (Putrid Defiler·Pain Worm·임신 상태가 아닌 같은 편) 가 있으면
+ *   근접 Impregnate (S1) / 다가감. 대상이 aip1 보다 가까우면 aip2 만큼 도망, 아니면 25 대기
+ */
+const putridDefiler: AiFn = (w, m, dist, combat) => {
+  if (!w.noTarget && combat) {
+    w.startMode(m, 'A1');
+    return;
+  }
+  const host = neighbours(w, m).find((o) => alive(o) && evil(o) && !['putriddefiler1', 'painworm1'].includes(base(o)) && !o.states.has('pregnant') && aiDistance(o.x, o.y, m.x, m.y) <= 25);
+  if (host) {
+    if (aiDistance(host.x, host.y, m.x, m.y) <= Math.max(1, m.type.meleeRange) + 1) w.useNamedSkill?.(m, 'Impregnate', 'S1', { unitId: host.id, x: host.x, y: host.y });
+    else moveToPoint(w, m, host.x, host.y, 0);
+    return;
+  }
+  if (dist < aiParam(m, 0)) {
+    escape(w, m, aiParam(m, 1), false);
+    return;
+  }
+  idle(w, m, 25);
+};
+
+/**
+ * 출처: AITHINK_Fn142_ClawViperEx — 돌진 중이었으면 색 상태를 끈다. 근접 aip3% A2 / aip5 대기. aip7 안이면 aip4% 로 aip8 간격마다 A1 (뼈창), 아니면 aip5 대기.
+ *   Skill1 (SerpentCharge) 을 aip2 안 aip1% (쓸 수 있으면) — 색 상태를 켜고, 아니면 50% aip5 대기 / 다가감 (flags 7)
+ */
+const clawViperEx: AiFn = (w, m, dist, combat) => {
+  const color = aiParam(m, 5);
+  const st = color === 2 ? 'red' : 'blue';
+  if (m.ai[0] && color) m.states.remove(st);
+  if (combat) {
+    if (rollChance(m, 2)) w.startMode(m, 'A2');
+    else idle(w, m, aiParam(m, 4));
+    return;
+  }
+  if (dist < aiParam(m, 6) && rollChance(m, 3)) {
+    if (m.ai[1] < w.frame) {
+      w.startMode(m, 'A1');
+      m.ai[1] = w.frame + aiParam(m, 7);
+      return;
+    }
+    idle(w, m, aiParam(m, 4));
+    return;
+  }
+  if (hasSkill(m, 0) && dist < aiParam(m, 1) && rollChance(m, 0) && w.canUseSkill(m, 0, tgt(w))) {
+    w.useSkill(m, 0, tgt(w));
+    if (color) m.states.set(st, Infinity);
+    m.ai[0] = 1;
+    return;
+  }
+  if (rollPct(m) >= 50) idle(w, m, aiParam(m, 4));
+  else moveToTarget(w, m, false, 1, 7);
+};
+
+/**
+ * 출처: AITHINK_Fn129_GenericSpawner (Evil Hut) — 처음에 레벨 몬스터 풀에서 하나 (genericSpawn 이면 그것, 아니면 풀의 첫 genericSpawn, 없으면 imp5).
+ *   대상이 20 안이면 aip1 간격으로 aip3 번까지 Nest (스폰 자리가 비었을 때)
+ */
+const genericSpawner: AiFn = (w, m, dist) => {
+  if (w.noTarget) {
+    idle(w, m, 20);
+    return;
+  }
+  if (!m.spawnType) {
+    const pool = w.levelPool?.() ?? [];
+    const pick = pool.length ? (pool[m.rng.pick(pool.length)] as string) : '';
+    m.spawnType = pick && w.isGenericSpawn?.(pick) ? pick : pool.find((id) => w.isGenericSpawn?.(id)) ?? 'imp5';
+  }
+  if (dist > 20) {
+    idle(w, m, 20);
+    return;
+  }
+  if (m.ai[1] < aiParam(m, 2) && Math.abs(w.frame - m.ai[0]) >= aiParam(m, 0)) {
+    m.ai[0] = w.frame;
+    if (hasSkill(m, 0) && (w.canSpawnAt?.(m.spawnType, m.x + 2, m.y + 4) ?? true)) {
+      ++m.ai[1];
+      w.useSkill(m, 0, tgt(w));
+      return;
+    }
+  }
+  idle(w, m, 20);
+};
+
+/**
+ * 출처: AITHINK_Fn076_EvilHole — NU 이면 대상이 5 안에 오기를 기다렸다 S3 (열림), S3 다음 S4, S4 에서 aip2 간격으로 aip1 마리까지 하수인 (Nest)
+ */
+const evilHole: AiFn = (w, m, dist) => {
+  if (m.ai[0] <= 0) {
+    m.ai[0] = w.frame + aiParam(m, 1);
+    m.ai[1] = aiParam(m, 0);
+  }
+  if (m.mode === 'NU') {
+    if (dist > 5) {
+      idle(w, m, 5);
+      return;
+    }
+    modeOnly(w, m, 'S3');
+    wait(w, m, 20);
+    return;
+  }
+  if (m.mode === 'S3') {
+    modeOnly(w, m, 'S4');
+    wait(w, m, 20);
+    return;
+  }
+  if (m.mode === 'S4' && m.ai[1] > 0) {
+    if (w.frame <= m.ai[0]) {
+      wait(w, m, aiParam(m, 1));
+      return;
+    }
+    m.ai[0] = w.frame + aiParam(m, 1);
+    if (hasSkill(m, 0) && w.useSkill(m, 0, tgt(w))) --m.ai[1];
+    wait(w, m, aiParam(m, 1));
+    return;
+  }
+  modeOnly(w, m, 'NU');
+};
+
+/** 출처: AITHINK_Fn136_BaalTaunt — 대상이 가만히 (NU) aip2 프레임 넘게 있으면 Baal Taunt, 대상이 aip3 넘게 멀거나 aip1 안이면 25 대기, 아니면 다가감 */
+const baalTaunt: AiFn = (w, m, dist) => {
+  if (w.noTarget) {
+    idle(w, m, 25);
+    return;
+  }
+  if (!targetUnit(w).neutral) m.ai[0] = 0;
+  else if (++m.ai[0] > aiParam(m, 1)) {
+    m.ai[0] = 0;
+    w.useNamedSkill?.(m, 'Baal Taunt', 'A1', tgt(w));
+    return;
+  }
+  if (dist > aiParam(m, 2) || dist <= aiParam(m, 0)) idle(w, m, 25);
+  else w.moveTo(m, w.target.x, w.target.y, false, 1);
+};
+
 /** 출처: D2GAME_AI_SpecialState14_6FCE1480 — 채찍 맞은 하수인 (Suicide Minion 으로 바뀜): 근접 95% A2, 멀면 89% 다가감, 아니면 10 대기 */
 const whipped: AiFn = (w, m, _dist, combat) => {
   if (combat) {
@@ -414,7 +707,8 @@ const whipped: AiFn = (w, m, _dist, combat) => {
 };
 
 export const ACT5_AI: Readonly<Record<string, AiFn>> = {
-  Whipped: whipped,
+  Whipped: whipped, ReanimatedHorde: reanimatedHorde, Succubus: succubus, SuccubusWitch: succubusWitch, FrozenHorror: frozenHorror, BloodLord: bloodLord,
+  DeathMauler: deathMauler, PutridDefiler: putridDefiler, ClawViperEx: clawViperEx, GenericSpawner: genericSpawner, EvilHole: evilHole, BaalTaunt: baalTaunt,
   SiegeTower: siegeTower, SiegeBeast: siegeBeast, Imp: imp, Catapult: catapult, CatapultSpotter: catapultSpotter,
   Minion: minion, SuicideMinion: suicideMinion, Overseer: overseer, MinionSpawner: minionSpawner, NpcBarb: npcBarb,
 };

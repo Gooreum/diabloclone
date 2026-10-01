@@ -135,6 +135,10 @@ export interface MonsterUnit {
   cmdTarget?: number;
   /** AI 명령 만료 프레임 (Cry Help: nCmdParam[3]) */
   cmdUntil?: number;
+  /** Generic Spawner 가 낳을 몬스터 (원작 pAiControl->nMinionSpawnClassId) */
+  spawnType?: string;
+  /** Putrid Defiler 의 Impregnate (STATE_PREGNANT) — 죽으면 이 몬스터가 나온다 */
+  pregnantWith?: string;
   /** 정해진 프레임에 사라지는 소환 유닛 (Hydra·Bone Prison) — 원작 dwAiParam[0] 만료 프레임 */
   expires?: number;
   /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */
@@ -255,4 +259,10 @@ export interface AiWorld {
   monsterParam?(typeId: string, i: number): number;
   /** skills.txt ParamN (i = 0 부터) */
   skillParam?(skill: string, i: number): number;
+  /** 레벨 몬스터 풀 (원작 pMonsterRegion->pMonData — Generic Spawner) */
+  levelPool?(): string[];
+  /** monstats genericSpawn */
+  isGenericSpawn?(typeId: string): boolean;
+  /** 대상 유닛 정보 (Succubus: 상태 목록이 있는지·플레이어인지·최대 생명 > 최대 마나) */
+  targetUnit?(): { cursed: boolean; player: boolean; lifeOverMana: boolean; neutral: boolean };
 }

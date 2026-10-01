@@ -5430,7 +5430,13 @@ export class Game {
   private killMonster(m: MonsterUnit, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number): void {
     m.hp = 0;
     m.path = [];
+    // 출처: SkillDruid.cpp sub_6FD01B00 — 임신 상태가 풀릴 때 죽어 있으면 Pain Worm (skills.txt Impregnate summon) 이 나온다
+    const brood = m.states.has('pregnant') ? m.pregnantWith : undefined;
     m.states.clear();
+    if (brood && this.data?.monsters.types.has(brood)) {
+      const w2 = this.spawnMonMinion(m, brood, m.x, m.y, 'NU', { noTc: true });
+      if (w2) this.events.push({ type: 'monsterBirth', monsterId: w2.id, from: m.id });
+    }
     m.cast = undefined;
     this.startMonsterMode(m, 'DT');
     m.deathFrame = this.tickCount;
@@ -6342,6 +6348,14 @@ export class Game {
       useNamedSkill: (m, skill, mode, t) => this.monsterUseNamedSkill(m, skill, mode, t),
       monsterParam: (id, i) => this.data?.monsters.types.get(id)?.aiParams[i] ?? 0,
       skillParam: (skill, i) => this.data?.skills?.byNameOf(skill)?.params[i] ?? 0,
+      levelPool: () => this.level.def.monsterInfo?.pool ?? [],
+      isGenericSpawn: (id) => !!this.data?.monsters.types.get(id)?.genericSpawn,
+      targetUnit: () => ({
+        cursed: CURSE_STATES.some((c) => this.player.states.has(c)),
+        player: true,
+        lifeOverMana: this.maxLife() > this.maxMana(),
+        neutral: p.mode === 'NU',
+      }),
     };
   }
 
@@ -6577,6 +6591,7 @@ export class Game {
       case 'FetishInferno':
       case 'MegademonInferno':
       case 'DiabLight':
+      case 'Horror Arctic Blast':
         m.stream = undefined;
         break;
       default:
@@ -6602,6 +6617,11 @@ export class Game {
     }
     // ---- Phase 5 ---- 출처: MONSTERS_GetMinionSpawnInfo — Sarcophagus: 레벨 계열 Mummy (D2Common_11063) 를 (x, y+2) 에 NU,
     // Mosquito Nest(suckernest): 계열 Mosquito 를 (x−2, y−2) 에 NU, Vile Mother: 계열 Vile Child 를 스킬 대상 지점에 NU
+    // 확장팩: Evil Hut (Generic Spawner) — AI 가 고른 몬스터를 (x+2, y+4) 에 (MonsterSpawn.cpp MONSTER_EVILHUT)
+    if (m.type.baseId === 'evilhut' && m.spawnType && data.monsters.types.has(m.spawnType)) {
+      const spot = nearestWalkable(this.map, { x: m.x + 2, y: m.y + 4 }, 2);
+      return spot ? { id: m.spawnType, x: spot.x + 0.5, y: spot.y + 0.5, mode: 'NU' } : null;
+    }
     if (m.type.baseId === 'sarcophagus' || m.type.baseId === 'suckernest1') {
       const info = this.level.def.monsterInfo;
       let id = m.type.spawn || 'mummy1';
@@ -7186,7 +7206,8 @@ export class Game {
         // SrvDo150: 피해 +calc1 %, 항상 명중, calc2 프레임 기절 (최대 250)
         this.monMeleeSkill(m, cast, { mode: 'A1', enDmgPct: calc.calc(rec, 1, lvl, o), stun: calc.calc(rec, 2, lvl, o), always: true });
         return true;
-      case 'MonFrenzy': {
+      case 'MonFrenzy':
+      case 'BloodLordFrenzy': {
         // SrvDo109 → SKILLS_RollMonFrenzyDamage (A2 공격, 피해 +calc2 %), 맞히면 SKILLS_ApplyFrenzyStats (aurastate monfrenzy, auralen ln12, 속도·공속 dm34)
         if (this.monMeleeSkill(m, cast, { mode: 'A2', enDmgPct: calc.calc(rec, 2, lvl, o) })) {
           const stats: Record<string, number> = {};
@@ -7297,6 +7318,7 @@ export class Game {
       case 'FetishInferno':
       case 'MegademonInferno':
       case 'DiabLight':
+      case 'Horror Arctic Blast':
         this.monInferno(m, cast, index, rec);
         return true;
       case 'DoomKnightMissile': {
@@ -7444,8 +7466,34 @@ export class Game {
         if (s2) s2.leaderId = m.id;
         return true;
       }
+      case 'DeathMaul': {
+        // SrvDo136: 땅속으로 대상까지 가는 미사일 (death mauler — 뒤에 흔적), 닿으면 스킬 물리 피해. 근사(원작 미확인): 프레임 맞춤 대신 대상 지점에서 반경 1 터짐
+        const def = data.missiles.get(rec.srvMissileA);
+        if (def) this.fireMonMissile(m, def.name, { x: m.x, y: m.y }, tp, { lvl, noCollide: true, range: Math.max(4, Math.ceil(Math.hypot(tp.x - m.x, tp.y - m.y) / Math.max(0.1, missileStep(def.vel || 12)))), explode: { radius: 1 } });
+        return true;
+      }
+      case 'Impregnate': {
+        // SrvDo133: 같은 편 몬스터에 임신 상태 — 그 몬스터가 죽으면 summon (painworm1) 이 나온다 (sub_6FD01B00)
+        const t = tp.unit;
+        if (!t || t.pet || t.mode === 'DT' || t.mode === 'DD' || ['putriddefiler1', 'painworm1'].includes(t.type.baseId || t.type.id) || t.states.has('pregnant')) return true;
+        t.states.set('pregnant', Infinity);
+        t.pregnantWith = rec.summon || 'painworm1';
+        return true;
+      }
+      case 'Baal Taunt': {
+        // SrvDo028 → baal taunt control (SubMissile: 번개·독 조종기 → 번개 줄기·독구름). 근사(원작 미확인): 두 조종기 대신 대상에게 번개·독 미사일 하나씩
+        for (const name of ['baal taunt lightning', 'baal taunt poison']) {
+          const def = data.missiles.get(name);
+          if (def) this.fireMonMissile(m, def.name, tp, tp, { lvl, noCollide: true, pierce: true, every: 25, range: def.range });
+        }
+        this.events.push({ type: 'baalTaunt', monsterId: m.id });
+        return true;
+      }
       case 'Decrepify':
-      case 'Weaken': {
+      case 'Weaken':
+      case 'Amplify Damage':
+      case 'Defense Curse':
+      case 'Blood Mana': {
         // SrvDo030 (몬스터 → 플레이어 저주): aurarange 안이면 auratargetstate + aurastat, 지속 auralen
         const range = calc.eval(rec, rec.auraRangeCalc, lvl, o);
         if (Math.hypot(player.x - tp.x, player.y - tp.y) > Math.max(1, range)) return true;

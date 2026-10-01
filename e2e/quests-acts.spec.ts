@@ -263,12 +263,19 @@ test('Act 3·4: 퀘스트 창 탭 III·IV, 메피스토 → 지옥문 → Act 4,
     g.spawnMonster('diablo', p.x + 3, p.y);
   });
   await killBoss(page, 'diablo');
-  expect(await page.evaluate(() => window.__game!.game.difficultyUnlocked)).toBe(1);
-  expect(await page.evaluate(() => window.__game!.game.progression)).toBe(4);
+  // 확장팩 캐릭터 (LoD 서버 기본): 디아블로로 난이도가 끝나지 않는다 — 다음 난이도는 바알 (A5Q6). 출처: ACT4Q2 확장팩 분기
+  const expansion = await page.evaluate(() => window.__game!.game.expansion);
+  expect(await page.evaluate(() => window.__game!.game.difficultyUnlocked)).toBe(expansion ? 0 : 1);
+  // 진행 값: 클래식만 4 (ACT4Q2_UnitIterate_SetPrimaryGoalDone — !bExpansion 일 때만 CLIENTS_UpdateCharacterProgression(4))
+  expect(await page.evaluate(() => window.__game!.game.progression)).toBe(expansion ? 3 : 4);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: 'test-results/quest-a4-diablo.png' });
   await questPanel(page, 3, 'quest-a4-panel');
   expect(await page.evaluate(() => window.__game!.game.questLog(3).map((e) => `${e.quest}:${e.icon}`))).toEqual(['1:none', '3:none', '2:done']);
+  if (expansion) {
+    expect(errors).toEqual([]);
+    return;
+  }
 
   // Save and Exit → 불러오기 → 난이도 창 (Nightmare 열림)
   await page.evaluate(() => window.__game!.save!());

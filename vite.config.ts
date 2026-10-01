@@ -46,6 +46,7 @@ function serveGameData(): Plugin {
   const mount = (dirs: string[]) => (req: IncomingMessage, res: ServerResponse, next: () => void): void => {
     const name = decodeURIComponent((req.url ?? '').replace(/^\//, '').split('?')[0] ?? '');
     if (!name || name.includes('/') || name.includes('..') || !existsSync(GAME_DATA)) return next();
+    // 파일이 없으면 404 (넘기면 vite 가 index.html 을 200 으로 준다 — 판본 판정이 틀린다)
     const path = dirs.map((d) => findIn(d, name)).find((p) => p) ?? null;
     if (!path) {
       res.statusCode = 404;
@@ -58,7 +59,9 @@ function serveGameData(): Plugin {
     name: 'serve-game-data',
     configureServer(server) {
       server.middlewares.use('/d2/', mount([GAME_DATA]));
-      server.middlewares.use('/d2x/', mount([resolve(GAME_DATA, 'lod'), GAME_DATA]));
+      // D2_EDITION=classic 이면 확장팩 파일이 없는 것처럼 (404 — 그냥 넘기면 vite 가 index.html 을 200 으로 준다). 클래식만 가진 사람 재현·e2e 회귀용
+      const lod = process.env.D2_EDITION === 'classic' ? [] : [resolve(GAME_DATA, 'lod'), GAME_DATA];
+      server.middlewares.use('/d2x/', mount(lod));
     },
   };
 }

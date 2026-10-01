@@ -94,7 +94,14 @@
 - Blizzard(Battle.net)에서 구매한 Diablo II를 설치하면 설치 폴더에 있습니다.
   - Windows: 보통 `C:\Program Files (x86)\Diablo II\`
   - macOS: 보통 `/Applications/Diablo II/`
-- 확장팩(LoD) 파일(`d2exp.mpq` 등)은 쓰지 않습니다.
+
+### 클래식 / 확장팩 (feature/lod 브랜치, 개발 중)
+- 고른 파일에 `d2exp.mpq`가 있으면 **확장팩(Lord of Destruction)**, 없으면 **클래식**으로 시작합니다.
+- 확장팩 설치 폴더에는 클래식 파일도 함께 들어 있습니다. 그래서 **설치 폴더 하나만 고르면 됩니다.**
+  - 확장팩 설치는 `patch_d2.mpq`·`d2char.mpq`를 확장팩판으로 바꿉니다.
+  - `d2exp.mpq`·`d2xmusic.mpq`·`d2xtalk.mpq`·`d2xvideo.mpq`를 더합니다.
+- 지금은 확장팩 파일로 게임이 켜지는 단계입니다. 5막, 드루이드·어쌔신, 룬워드는 이 브랜치에서 개발 중입니다.
+  - 확장팩이 플레이할 만해지면 main에 합쳐 같은 웹사이트에서 제공합니다.
 
 ### 방법 1: 웹에서 바로 플레이 (설치 없음)
 1. **https://gooreum.github.io/diabloclone/** 에 접속합니다(크롬·엣지 권장, WebGL2 필요).
@@ -125,6 +132,11 @@ npm run check-data   # 파일이 모두 있고 올바른 MPQ 인지 검사
 npm run dev          # http://localhost:5173
 ```
 - 개발 서버가 `game-data/`의 파일을 `/d2/<파일명>`으로 브라우저에 제공합니다. 파일은 여러분의 컴퓨터 밖으로 나가지 않습니다.
+- 확장팩:
+  - `d2exp.mpq`·`d2xmusic.mpq`·`d2xtalk.mpq`는 `game-data/`에, 확장팩판 `patch_d2.mpq`·`d2char.mpq`는 `game-data/lod/`에 둡니다.
+    - 클래식판을 덮어쓰지 않기 위해서입니다.
+  - 개발 서버는 이 파일들을 `/d2x/`로 제공하고, 기본으로 확장팩으로 시작합니다.
+  - `?edition=classic`을 붙이거나 `D2_EDITION=classic npm run dev`로 띄우면 클래식으로 시작합니다.
 - `http://localhost:5173/?local` 로 열면 웹 배포판과 같은 "파일 불러오기" 방식으로 실행합니다.
 - 크롬 계열 브라우저를 권장합니다(WebGL2 필요).
 

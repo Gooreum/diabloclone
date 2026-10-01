@@ -21,9 +21,9 @@ import { adjustedExperience } from './experience';
 import { StateList, type StateOverlayDef } from './states';
 import { ItemStore, WEAPON_SLOTS, type WeaponSlot } from './itemstore';
 import { computeDerived, itemSkillBonus, skillBonusOf, usableCharms, type Derived, type ItemSkillBonus } from './charstats';
-import { gemStats } from './itemgen';
+import { gemStats, statOf } from './itemgen';
 import type { TxtRow } from '../formats/txt';
-import type { NpcPrice } from './price';
+import { isBroken, type NpcPrice } from './price';
 import type { Placed } from './inventory';
 import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
@@ -409,6 +409,8 @@ export class Game {
   readonly store: ItemStore;
   /** 장착이 바뀌어 파생 스탯을 다시 계산해야 함 */
   private statsDirty = true;
+  /** 자동 수리·수량 다음 프레임 (아이템 id → 프레임) */
+  private readonly replenishAt = new Map<number, number>();
   private derivedCache: Derived | null = null;
   private derivedKey = '';
   gold = 0;
@@ -1661,7 +1663,7 @@ export class Game {
 
   private isBusy(): boolean {
     const p = this.player;
-    return p.cast !== null || (p.mode === 'GH' && this.tickCount < p.modeEnd);
+    return p.cast !== null || ((p.mode === 'GH' || p.mode === 'BL') && this.tickCount < p.modeEnd);
   }
 
   private pathPlayerTo(x: number, y: number, run: boolean): boolean {
@@ -1818,9 +1820,12 @@ export class Game {
     if (!c || !cs || !data) return null;
     // 확장팩: 인벤토리 참도 능력치에 (참이 들어오고 나가면 key 가 바뀐다)
     const charms = data.expansion ? usableCharms(this.store.inventoryItems, data.items, c.level) : [];
-    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}:${charms.map((x) => x.id).join(',')}`;
+    // 시간대 속성(op 6)은 15도 단위로 바뀐다 (출처: ITEMMODS_GetByTimeAdjustment 반올림)
+    const env = this.envs[this.act];
+    const baseTime = env && env.rate ? Math.trunc(env.ticks / env.rate) : 0;
+    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}:${charms.map((x) => x.id).join(',')}:${Math.trunc(baseTime / 15)}`;
     if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
-      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty, charms);
+      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty, charms, baseTime);
       this.itemSkillCache = itemSkillBonus(this.equipment, data.items, data.treasure.gen, charms);
       this.itemSkillVersion++;
       this.derivedKey = key;
@@ -1975,9 +1980,10 @@ export class Game {
     const p = this.player;
     p.mode = mode;
     p.modeStart = this.tickCount;
-    if (mode === 'GH' || mode === 'DT') {
+    if (mode === 'GH' || mode === 'BL' || mode === 'DT') {
       if (!this.data) p.modeEnd = this.tickCount + 10;
-      else p.modeEnd = this.tickCount + modeTiming(this.data.anim, this.playerToken(), mode, this.weaponWclass(), speedPercent, false).duration;
+      // 피격·막기는 프레임 수 − 1 (원작 breakpoint: 바바리안 GH 5 프레임 × 50% = 9 프레임)
+      else p.modeEnd = this.tickCount + modeTiming(this.data.anim, this.playerToken(), mode, this.weaponWclass(), speedPercent, mode !== 'DT').duration;
     }
   }
 
@@ -1998,7 +2004,7 @@ export class Game {
       this.updateCast(p.cast);
       if (p.cast) return;
     }
-    if (p.mode === 'GH') {
+    if (p.mode === 'GH' || p.mode === 'BL') {
       if (this.tickCount < p.modeEnd) return;
       p.mode = 'NU';
       p.modeStart = this.tickCount;
@@ -4139,12 +4145,13 @@ export class Game {
       this.gainExperience(Math.trunc((adjustedExperience(m.stats.exp, c.level, m.stats.level) * (100 + bonus)) / 100));
     }
     if (!m.noXp && source !== 'other') this.mercGainExp(m, attackerId);
+    if (source === 'player') this.onPlayerKill(m);
     this.onMonsterDeathMods(m);
     const data = this.data;
     // 드롭 TC 는 퀘스트 콜백보다 먼저 정한다 (첫 처치 = 퀘스트 드롭)
     const tc = m.noTc ? '' : this.monsterTc(m, source);
     if (data && tc) {
-      for (const item of data.treasure.drop(tc, m.stats.level, m.rng, this.derived()?.stat('item_magicbonus') ?? 0)) {
+      for (const item of data.treasure.drop(tc, m.stats.level, m.rng, this.derived()?.stat('item_magicbonus') ?? 0, { goldFind: source === 'other' ? 0 : (this.derived()?.stat('item_goldbonus') ?? 0) })) {
         this.dropItem(item, m.x + 1, m.y + 1);
         this.events.push({ type: 'itemDropped', itemId: item.id, code: item.code, quality: item.quality, tc });
       }
@@ -4159,6 +4166,19 @@ export class Game {
         // Phase 7: 유닛 번호·유니크(MONTYPEFLAG 2 SUPERUNIQUE | 8 UNIQUE)·비행 (옥 조각상·기드빈 보스)
         id: m.id, boss: (m.flags & 10) !== 0, flying: m.type.flying });
     }
+  }
+
+  /**
+   * 처치 사건 (kill): 처치 후 생명(item_healafterkill)·악마 처치 후 생명(item_healafterdemonkill)·마나(item_manaafterkill), 최대치까지.
+   * 출처: D2MOO SKILLITEM_EventFunc28 / EventFunc18 / EventFunc17 (ItemStatCost itemevent kill)
+   */
+  private onPlayerKill(m: MonsterUnit): void {
+    const c = this.character, dv = this.derived();
+    if (!c || !dv || this.isDead) return;
+    const life = dv.stat('item_healafterkill') + (m.type.demon ? dv.stat('item_healafterdemonkill') : 0);
+    if (life > 0 && c.life < this.maxLife()) c.life = Math.min(this.maxLife(), c.life + life);
+    const mana = dv.stat('item_manaafterkill');
+    if (mana > 0 && c.mana < this.maxMana()) c.mana = Math.min(this.maxMana(), c.mana + mana);
   }
 
   /**
@@ -5592,9 +5612,10 @@ export class Game {
         }
         if (Math.hypot(player.x - m.x, player.y - m.y) > m.type.meleeRange + 6) return true;
         this.hitPlayer({ min: 0, max: 0, toHit: 0 }, m.stats.level, rec.hitClass, false, m, { ...d, manaDrain: 0 }, true);
-        if (frz > 0 && this.character && this.character.life > 0) {
-          this.player.states.set('freeze', this.tickCount + frz);
-          this.events.push({ type: 'playerFrozen', by: m.id, until: this.tickCount + frz });
+        const pfrz = this.playerFreezeLen(frz);
+        if (pfrz > 0 && this.character && this.character.life > 0) {
+          this.player.states.set('freeze', this.tickCount + pfrz);
+          this.events.push({ type: 'playerFrozen', by: m.id, until: this.tickCount + pfrz });
         }
         return true;
       }
@@ -6316,6 +6337,11 @@ export class Game {
     const block = shield?.block && !alwaysHit ? blockChance((dv?.block ?? shield.block) + this.player.states.stat('toblock'), cs.blockFactor, this.effStat('dex'), c.level, running) : 0;
     if (block > 0 && rollPercent(block, this.rng)) {
       this.events.push({ type: 'playerBlocked' });
+      // 막기 애니: 속도 50 (Holy Shield 100) + EFBR %. 출처: D2MOO Units.cpp 막기 애니 속도 (item_fasterblockrate)
+      if (!p.cast) {
+        p.path = [];
+        this.setPlayerMode('BL', (this.player.states.has('holyshield') ? 100 : 50) + effectiveRate(dv?.stat('item_fasterblockrate') ?? 0));
+      }
       return;
     }
     const moving = p.mode === 'WL' || p.mode === 'RN';
@@ -6337,10 +6363,12 @@ export class Game {
       dmg = (es[0] ?? 0) / 256;
       if (elem) elem = { ...elem, fire: (es[1] ?? 0) / crit, ltng: (es[2] ?? 0) / crit, cold: (es[3] ?? 0) / crit, mag: (es[4] ?? 0) / crit };
     }
-    // 물리 피해 감소: damageresist % (Amplify Damage −100) · normal_damage_reduction
+    // 물리: normal_damage_reduction 을 먼저 빼고 damageresist % (최대 50, Amplify Damage −100).
+    // 원소: magic_damage_reduction 을 먼저 빼고 저항 % → % 흡수(최대 40) → 고정 흡수, 흡수량은 생명으로.
+    // 출처: D2MOO SUNITDMG_ApplyResistancesAndAbsorb (sgDamageStatTable: 화염·번개·냉기·마법 = DAMAGE_REDUCTION_MAGICAL), ExecuteEvents dwAbsLife
     const dr = (dv?.stat('damageresist') ?? 0) + this.player.states.stat('damageresist');
-    if (dr) dmg = Math.max(0, dmg - (dmg * Math.min(dr, 50)) / 100);
     dmg = Math.max(0, dmg - (dv?.stat('normal_damage_reduction') ?? 0));
+    if (dr) dmg = Math.max(0, dmg - (dmg * Math.max(-100, Math.min(dr, 50))) / 100);
     // Bone Armor: 근접 물리 피해를 흡수량(bonearmor, 1/256)이 남는 동안 흡수 (auraevent absorbdamage, EventFunc22)
     const ba = missile ? undefined : this.player.states.get('bonearmor');
     if (ba && (ba.stats.bonearmor ?? 0) > 0 && dmg > 0) {
@@ -6349,16 +6377,31 @@ export class Game {
       dmg -= absorb / 256;
       if ((ba.stats.bonearmor ?? 0) <= 0) this.player.states.remove('bonearmor');
     }
-    let elemental = 0;
+    let elemental = 0, absLife = 0;
     if (elem) {
       // Natural Resistance(패시브)·Salvation(상태) 저항 포함
       // 상태 저항·최대 저항(해독·해동 물약 maxpoisonresist·maxcoldresist) 포함, 최대 75 + 최대 저항 증가 (절대 상한 95)
       const res = (_k: 'fi' | 'co' | 'li' | 'po' | 'ma', st: 'fireresist' | 'coldresist' | 'lightresist' | 'poisonresist' | 'magicresist') => this.playerResist(st);
       const cut = (v: number, r: number) => (v > 0 ? Math.trunc((v * (100 - Math.max(-100, r))) / 100) : 0);
-      const fire = cut(elem.fire * crit, res('fi', 'fireresist')), ltng = cut(elem.ltng * crit, res('li', 'lightresist')), cold = cut(elem.cold * crit, res('co', 'coldresist'));
-      const mag = cut(elem.mag * crit, res('ma', 'magicresist')) - (dv?.stat('magic_damage_reduction') ?? 0) * 256;
-      elemental = (fire + ltng + cold + Math.max(0, mag) + elem.phys) / 256;
-      const coldLen = cut(elem.coldLen, res('co', 'coldresist'));
+      const mdr = (dv?.stat('magic_damage_reduction') ?? 0) * 256;
+      const absorbed = (v: number, pctStat: string, flatStat: string) => {
+        if (v <= 0) return 0;
+        const pct = Math.min(dv?.stat(pctStat) ?? 0, 40);
+        const a = pct > 0 ? Math.trunc((v * pct) / 100) : 0;
+        v -= a;
+        const b = Math.min(Math.max(0, (dv?.stat(flatStat) ?? 0) * 256), v);
+        absLife += a + b;
+        return v - b;
+      };
+      const elemPart = (v: number, k: 'fi' | 'co' | 'li' | 'ma', st: 'fireresist' | 'coldresist' | 'lightresist' | 'magicresist', pctStat: string, flatStat: string) =>
+        absorbed(cut(Math.max(0, v * crit - mdr), res(k, st)), pctStat, flatStat);
+      const fire = elemPart(elem.fire, 'fi', 'fireresist', 'item_absorbfire_percent', 'item_absorbfire');
+      const ltng = elemPart(elem.ltng, 'li', 'lightresist', 'item_absorblight_percent', 'item_absorblight');
+      const cold = elemPart(elem.cold, 'co', 'coldresist', 'item_absorbcold_percent', 'item_absorbcold');
+      const mag = elemPart(elem.mag, 'ma', 'magicresist', 'item_absorbmagic_percent', 'item_absorbmagic');
+      elemental = (fire + ltng + cold + mag + elem.phys) / 256;
+      // 얼지 않음 / 빙결 절반 (출처: SUNITDMG_CalculateTotalDamage — STAT_ITEM_CANNOTBEFROZEN / HALFFREEZEDURATION)
+      const coldLen = this.playerFreezeLen(cut(elem.coldLen, res('co', 'coldresist')));
       if (cold > 0 && coldLen > 0) this.player.states.set('cold', this.tickCount + coldLen, { velocitypercent: -50, attackrate: -50, other_animrate: -50 });
       const pois = cut(elem.pois * crit, res('po', 'poisonresist')), poisLen = cut(elem.poisLen, res('po', 'poisonresist'));
       if (pois > 0 && poisLen > 0) {
@@ -6367,22 +6410,30 @@ export class Game {
       }
       if (elem.manaDrain) c.mana = Math.max(0, c.mana - elem.manaDrain / 256);
     }
+    // 흡수한 피해만큼 생명 회복 (피해보다 먼저). 출처: SUNITDMG_ExecuteEvents dwAbsLife
+    if (absLife > 0) c.life = Math.min(this.maxLife(), c.life + absLife / 256);
     const total = dmg + elemental;
     c.life = Math.max(0, c.life - total);
-    this.events.push({ type: 'playerHit', damage: total, ...(elemental ? { elemental } : {}) });
+    this.events.push({ type: 'playerHit', damage: total, ...(elemental ? { elemental } : {}), ...(absLife ? { absorbed: absLife / 256 } : {}) });
+    // 받은 피해의 % 를 마나로 (근접·미사일, 저항·흡수 뒤 합계). 출처: SKILLITEM_EventFunc13 (damagedinmelee / damagedbymissile)
+    const toMana = dv?.stat('item_damagetomana') ?? 0;
+    if (toMana > 0 && total > 0 && c.mana < this.maxMana()) c.mana = Math.min(this.maxMana(), c.mana + (total * toMana) / 100);
     if (!missile && attacker && dmg > 0) {
       this.onDamagedInMelee(attacker, dmg);
       this.ironMaiden(attacker, dmg);
     }
+    // 근접으로 맞으면 공격자가 피해 (물리·번개, 고정값 — 공격자 저항 적용). 출처: SKILLITEM_EventFunc06 / EventFunc10 (damagedinmelee)
+    if (!missile && attacker) this.attackerTakesDamage(attacker);
     if (attacker && total > 0) this.onMonsterHitPlayer(attacker);
     if (c.life <= 0) {
       this.playerDie();
       return;
     }
     // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
+    // 피격 애니 속도 50 + EFHR %. 출처: D2MOO Units.cpp:1540 (item_fastergethitrate)
     if (total * 12 >= this.maxLife() && !p.cast) {
       p.path = [];
-      this.setPlayerMode('GH');
+      this.setPlayerMode('GH', 50 + effectiveRate(dv?.stat('item_fastergethitrate') ?? 0));
     }
     void hitClass;
   }
@@ -6398,6 +6449,27 @@ export class Game {
     const cap = 75 + (dv?.stat(maxSt) ?? 0) + this.playerStat(maxSt);
     // Phase 8: 클래식 난이도 저항 페널티 (마법 저항 제외 — 원작도 DAMAGERESIST·MAGICRESIST 는 빼지 않는다). 출처: SUnitDmg.cpp
     return applyResistPenalty(raw, Math.min(95, cap), st === 'magicresist' ? 0 : this.rules.playerResistPenalty);
+  }
+
+  /** 얼지 않음(0) · 빙결 절반(/2) — 냉기·빙결 길이 (출처: SUNITDMG_CalculateTotalDamage) */
+  private playerFreezeLen(len: number): number {
+    const dv = this.derived();
+    if (len <= 0 || !dv) return len;
+    if (dv.stat('item_cannotbefrozen') > 0) return 0;
+    return dv.stat('item_halffreezeduration') > 0 ? len >> 1 : len;
+  }
+
+  /** 근접 공격자가 받는 피해: item_attackertakesdamage (물리) · item_attackertakeslightdamage (번개), 값 << 8. 출처: SKILLITEM_EventFunc06 / 10 */
+  private attackerTakesDamage(attacker: MonsterUnit): void {
+    const dv = this.derived();
+    if (!dv || attacker.mode === 'DT' || attacker.mode === 'DD') return;
+    const phys = dv.stat('item_attackertakesdamage'), ltng = dv.stat('item_attackertakeslightdamage');
+    if (phys <= 0 && ltng <= 0) return;
+    const d = emptyDamage();
+    d.phys = Math.max(0, phys) * 256;
+    d.ltng = Math.max(0, ltng) * 256;
+    d.hitClass = 0x8d;
+    this.damageMonster(attacker, d, 'player');
   }
 
   /**
@@ -6967,6 +7039,9 @@ export class Game {
       },
       get playerLevel() {
         return g.character?.level ?? 1;
+      },
+      get reducePct() {
+        return g.derived()?.stat('item_reducedprices') ?? 0;
       },
       difficulty: g.difficulty,
       questDone: (f) => g.questDone(f),
@@ -8528,7 +8603,7 @@ export class Game {
     const levelNo = this.level.def.levelNo ?? 0;
     const tc = chestTcName(db, levelNo);
     const mlvl = db.levels.get(levelNo)?.monLvl || 1;
-    const items = data.treasure.drop(tc, mlvl, o.rng, this.derived()?.stat('item_magicbonus') ?? 0, { exact: true, quality });
+    const items = data.treasure.drop(tc, mlvl, o.rng, this.derived()?.stat('item_magicbonus') ?? 0, { exact: true, quality, goldFind: this.derived()?.stat('item_goldbonus') ?? 0 });
     for (const it of items) {
       this.dropItem(it, o.x, o.y);
       this.events.push({ type: 'itemDropped', itemId: it.id, code: it.code, quality: it.quality, source: 'object', objectId: o.id });
@@ -9250,7 +9325,41 @@ export class Game {
     if (closing) this.closeTownPortal();
   }
 
+  /**
+   * 자동 수리(item_replenish_durability) · 수량 채움(item_replenish_quantity): 아이템마다 2500/v + 1 프레임 뒤 첫 +1,
+   * 이후 max(2500/v + 1, 125) 프레임마다. 부서진 아이템은 수리되지 않는다. 가득 차면 멈췄다가 줄면 다시 (근사: 원작 재등록 시점 sub_6FC512C0).
+   * 출처: D2MOO ItemMode.cpp sub_6FC4A2E0 / sub_6FC4A350, Items.cpp (EVENTTYPE_STATREGEN 등록)
+   */
+  private replenishItems(): void {
+    const items = this.data?.items;
+    if (!items) return;
+    const all = [...this.store.allItems(), ...Object.values(this.store.altWeapons).filter((x): x is ItemInstance => !!x)];
+    for (const it of all) {
+      if (!it.identified) continue;
+      const dur = statOf(it, 'item_replenish_durability'), qty = statOf(it, 'item_replenish_quantity');
+      if (dur <= 0 && qty <= 0) continue;
+      const b = items.base(it.code);
+      const durOk = dur > 0 && !isBroken(it) && it.maxDurability > 0 && it.durability < it.maxDurability;
+      const qtyOk = qty > 0 && !!b?.stackable && it.quantity < b.maxStack;
+      if (!durOk && !qtyOk) {
+        this.replenishAt.delete(it.id);
+        continue;
+      }
+      const v = durOk ? dur : qty;
+      const next = this.replenishAt.get(it.id);
+      if (next === undefined) {
+        this.replenishAt.set(it.id, this.tickCount + Math.trunc(2500 / v) + 1);
+        continue;
+      }
+      if (this.tickCount < next) continue;
+      if (durOk) it.durability++;
+      else it.quantity++;
+      this.replenishAt.set(it.id, this.tickCount + Math.max(Math.trunc(2500 / v) + 1, 125));
+    }
+  }
+
   private regen(): void {
+    this.replenishItems();
     // 용병 생명 재생: STAT_HPREGEN = 최대 생명(<<8) / 2000 (1/256 단위, 매 프레임). 출처: MONSTERAI_UpdateMercStatsAndSkills
     // 근사(원작 미확인): 재생 적용 주기 — 매 프레임
     const mu = this.mercUnit();
@@ -9404,3 +9513,8 @@ export function imbueable(items: ItemDb, it: ItemInstance): boolean {
 }
 
 export { aiDistance };
+
+/** 실효 속도 보너스 EF = ⌊120 × v / (120 + v)⌋ (FHR·FBR). 출처: D2MOO Units.cpp */
+export function effectiveRate(v: number): number {
+  return v > 0 ? Math.trunc((120 * v) / (120 + v)) : 0;
+}

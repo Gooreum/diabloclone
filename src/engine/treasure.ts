@@ -174,8 +174,9 @@ export class TreasureDb {
   /**
    * @param opts.exact 루트 TC 를 group/level 로 올리지 않는다 (상자 TC: D2GAME_DropTC 에 레코드를 직접 넘김)
    * @param opts.quality 최소 품질 (원작 DropTC nQuality — 스파크 상자 매직/레어). 근사(원작 미확인): 굴린 품질이 낮으면 이 품질로 올림
+   * @param opts.goldFind 금화 획득 % (item_goldbonus) — 금화 양 × (100 + GF) / 100. 출처: D2MOO D2GAME_DropTC_6FC51360 (Items.cpp:2553)
    */
-  drop(tcName: string, mlvl: number, rng: Rng, magicFind = 0, opts: { exact?: boolean; quality?: number } = {}): ItemInstance[] {
+  drop(tcName: string, mlvl: number, rng: Rng, magicFind = 0, opts: { exact?: boolean; quality?: number; goldFind?: number } = {}): ItemInstance[] {
     const root = opts.exact ? this.tcs.get(tcName) : this.resolve(tcName, mlvl);
     if (!root) return [];
     const out: ItemInstance[] = [];
@@ -231,7 +232,9 @@ export class TreasureDb {
       }
       let q = this.rollQuality(dropBase, mlvl, frame.mods, rng, magicFind);
       if (opts.quality && q < opts.quality && !this.items.types.get(dropBase.type)?.normal && dropBase.category !== 'misc') q = opts.quality as Quality;
-      out.push(this.createItem(dropBase, mlvl, rng, q, true, 'roll'));
+      const item = this.createItem(dropBase, mlvl, rng, q, true, 'roll');
+      if (item.code === 'gld' && opts.goldFind) item.quantity = Math.max(1, Math.trunc((item.quantity * (100 + opts.goldFind)) / 100));
+      out.push(item);
     }
     return out;
   }

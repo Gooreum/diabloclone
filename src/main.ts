@@ -1086,7 +1086,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         const units = (views.get(game.act) ?? actView(startAct)).units;
         warmLevel(s, { units, monsters: data.monsters });
         // 플레이어가 곧 쓸 동작 (걷기·달리기·공격·맞기)
-        for (const mode of ['NU', 'WL', 'RN', 'A1', 'A2', 'GH']) units.warm({ root: 'CHARS', token, mode, wclass, equip }, s.player.dir);
+        for (const mode of ['NU', 'WL', 'RN', 'A1', 'A2', 'GH', 'BL']) units.warm({ root: 'CHARS', token, mode, wclass, equip }, s.player.dir);
       }
       const cpItems = game.corpse?.items;
       // 출처: 원작 d2char.mpq — 캐릭터 시체(DD)·죽기(DT) COF 는 맨손(HTH)만 있다 (xxDDHTH.cof). 무기 종류로 찾으면 그림이 없다

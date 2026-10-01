@@ -9,7 +9,7 @@ import { isBroken } from './price';
 import type { ItemBase, ItemDb } from './items';
 import type { Character, ClassStats } from './player';
 import type { ItemInstance } from './treasure';
-import { statOf, type ItemGen } from './itemgen';
+import { statOf, type ItemGen, type StatOp } from './itemgen';
 import { Rng } from './rng';
 import { applyResistPenalty } from './difficulty';
 
@@ -32,6 +32,8 @@ export interface Derived {
   res: { fi: number; co: number; li: number; po: number; ma: number };
   /** 모든 장착 스탯 합 (param 0) — 공격 속도·이동 속도·생명 흡수 등 */
   stat: (name: string) => number;
+  /** param 이 있는 장착·참 스탯 원본 (스킬 발동 layer 스킬<<6|레벨, 충전, 아이템 오라, 다른 직업 스킬, reanimate) */
+  layered: { stat: string; param: number; value: number }[];
 }
 
 export interface EquippedSet { items: ItemInstance[] }
@@ -101,7 +103,11 @@ export function localStat(item: ItemInstance, stat: string): number {
 export const etherealBase = (item: ItemInstance, v: number): number => (item.ethereal ? Math.trunc((3 * v) / 2) : v);
 
 /** 무기 실제 피해 (정수, 1H 기준): 기본 × (100 + 무기 ED%)/100 + 무기 최소/최대 추가, 하급은 75%. 출처: Maxroll Damage Calculation */
-export function weaponDamage(item: ItemInstance, base: ItemBase): { min: number; max: number } {
+/** 아이템 자체에 붙는 레벨당 보너스 (op 4 = 추가, op 5 = %) — 방어구 방어·무기 최대 피해 */
+export interface ItemLocalOps { armor: number; armorPct: number; max: number; maxPct: number }
+const NO_LOCAL: ItemLocalOps = { armor: 0, armorPct: 0, max: 0, maxPct: 0 };
+
+export function weaponDamage(item: ItemInstance, base: ItemBase, local: ItemLocalOps = NO_LOCAL): { min: number; max: number } {
   // 이더리얼: 기본 피해 3*base/2, ED% 는 그 위에 (출처: D2MOO ITEMMODS_ApplyEthereality)
   const eth = (v: number) => (item.ethereal ? Math.trunc((3 * v) / 2) : v);
   let bmin = eth(base.maxDam > 0 ? base.minDam : base.twoHandMinDam);
@@ -110,15 +116,54 @@ export function weaponDamage(item: ItemInstance, base: ItemBase): { min: number;
     bmin = Math.max(Math.trunc((75 * bmin) / 100), 1);
     bmax = Math.max(Math.trunc((75 * bmax) / 100), 2);
   }
-  const edMin = localStat(item, 'item_mindamage_percent'), edMax = localStat(item, 'item_maxdamage_percent');
+  const edMin = localStat(item, 'item_mindamage_percent'), edMax = localStat(item, 'item_maxdamage_percent') + local.maxPct;
   const min = Math.trunc((bmin * (100 + edMin)) / 100) + localStat(item, 'mindamage');
-  const max = Math.trunc((bmax * (100 + edMax)) / 100) + localStat(item, 'maxdamage');
+  const max = Math.trunc((bmax * (100 + edMax)) / 100) + localStat(item, 'maxdamage') + local.max;
   return { min, max: Math.max(max, min + 1) };
 }
 
 /** 방어구 방어: 기본 × (100 + ED%)/100 + 추가 방어. 출처: Maxroll Defense */
-export function armorDefense(item: ItemInstance): number {
-  return Math.trunc((item.defense * (100 + localStat(item, 'item_armor_percent'))) / 100) + localStat(item, 'armorclass');
+export function armorDefense(item: ItemInstance, local: ItemLocalOps = NO_LOCAL): number {
+  return Math.trunc((item.defense * (100 + localStat(item, 'item_armor_percent') + local.armorPct)) / 100) + localStat(item, 'armorclass') + local.armor;
+}
+
+/** op 2·4·5 레벨당 증가분: (레벨 × 값) >> op param (op base = level). 출처: D2StatList.cpp sub_6FDB5830 case 2/4/5 */
+export const perLevel = (level: number, value: number, op: StatOp): number => (level * value) >> op.param;
+
+/**
+ * 시간대 속성 (op 6): 값 = 시기(2비트) | (최소+256)<<2 | (최대+256)<<12, 가장 좋은 시기에 최대, 반대편(180도)에서 최소.
+ * @param baseTime 지금 막 환경 각도 (0~359, ticks / rate). 출처: D2MOO ITEMMODS_GetByTimeAdjustment
+ */
+export function byTimeValue(packed: number, baseTime: number): number {
+  const period = packed & 3, min = ((packed >> 2) & 0x3ff) - 0x100, max = ((packed >> 12) & 0x3ff) - 0x100;
+  let diff = Math.abs(baseTime - period * 90);
+  diff = Math.trunc((diff + 7) / 15) * 15;
+  diff = Math.max(0, Math.min(359, diff));
+  if (diff > 180) diff = 360 - diff;
+  return max - Math.trunc(((max - min) * diff) / 180);
+}
+
+/**
+ * 아이템 하나의 op 4·5 (아이템 자체 방어·최대 피해 레벨당) — 방어구·무기면 그 아이템 수치에, 아니면 캐릭터 전체 스탯으로.
+ * 출처: D2StatList.cpp case 4 (APPLY_TO_ITEM) / case 5 (APPLY_TO_ITEM_PCT)
+ * 근사(원작 미확인): op 5 의 % 는 무기 ED%·방어구 방어% 와 같은 합산
+ */
+function itemLocalOps(stats: { stat: string; param: number; value: number }[], ops: Map<string, StatOp>, level: number, isArmor: boolean, isWeapon: boolean, add: (s: string, v: number) => void): ItemLocalOps {
+  const out = { ...NO_LOCAL };
+  for (const s of stats) {
+    const op = s.param === 0 ? ops.get(s.stat) : undefined;
+    if (!op || op.base !== 'level' || (op.op !== 4 && op.op !== 5)) continue;
+    const v = perLevel(level, s.value, op);
+    const t = op.targets[0];
+    if (t === 'armorclass') {
+      if (isArmor) out[op.op === 4 ? 'armor' : 'armorPct'] += v;
+      else if (op.op === 4) add('armorclass', v);
+    } else if (t === 'maxdamage') {
+      if (isWeapon) out[op.op === 4 ? 'max' : 'maxPct'] += v;
+      else add(op.op === 4 ? 'maxdamage' : 'item_maxdamage_percent', v);
+    }
+  }
+  return out;
 }
 
 /**
@@ -136,11 +181,17 @@ export function usableCharms(inventory: readonly ItemInstance[], items: ItemDb, 
   });
 }
 
-/** @param charms 효과가 있는 참 (usableCharms) */
-export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0, charms: readonly ItemInstance[] = []): Derived {
+/**
+ * @param charms 효과가 있는 참 (usableCharms)
+ * @param baseTime 지금 막 환경 각도 (시간대 속성 op 6) — 없으면 시간대 속성은 0
+ */
+export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0, charms: readonly ItemInstance[] = [], baseTime?: number): Derived {
   const sums = new Map<string, number>();
   const add = (s: string, v: number) => sums.set(s, (sums.get(s) ?? 0) + v);
   const equipped = Object.values(equipment);
+  const ops = gen?.statOps ?? new Map<string, StatOp>();
+  /** param 이 있는 스탯 원본 (스킬 발동·충전·오라·다른 직업 스킬·reanimate) */
+  const layered: { stat: string; param: number; value: number }[] = [];
   let defense = 0;
   let weaponMin = 1, weaponMax = 2;
   let block = 0;
@@ -150,24 +201,40 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
     if (!b || isBroken(it)) continue;
     const isWeapon = items.isType(b, 'weap');
     const isArmor = items.isType(b, 'armo');
-    if (isArmor) defense += armorDefense(it);
-    if (items.isType(b, 'shld')) block += b.block;
     // 미감정 아이템은 기본 수치(방어·피해)만, 마법 속성은 감정 후 (근사: 원작 스탯 레이어 처리 미확인)
     // 자기 속성 + 소켓에 박힌 것의 속성 (부모 아이템 속성으로 합쳐져 무기 ED%·방어구 방어는 그 아이템에만)
-    for (const s of [...(it.identified ? it.stats : []), ...it.socketed.flatMap((g) => g.stats)]) {
-      if (s.param !== 0) continue;
+    const own = [...(it.identified ? it.stats : []), ...it.socketed.flatMap((g) => g.stats)];
+    const local = itemLocalOps(own, ops, ch.level, isArmor, isWeapon, add);
+    if (isArmor) defense += armorDefense(it, local);
+    if (items.isType(b, 'shld')) block += b.block;
+    for (const s of own) {
+      if (s.param !== 0) {
+        layered.push(s);
+        continue;
+      }
       if (isWeapon && WEAPON_LOCAL.has(s.stat)) continue;
       if (isArmor && ARMOR_LOCAL.has(s.stat)) continue;
       add(s.stat, s.value);
     }
     if (slot === 'rarm' && isWeapon) {
-      const d = weaponDamage(it, b);
+      const d = weaponDamage(it, b, local);
       weaponMin = d.min;
       weaponMax = d.max;
     }
   }
-  for (const s of setBonusStats(equipped.filter((it) => !isBroken(it) && it.identified), gen, items)) if (s.param === 0) add(s.stat, s.value);
-  for (const c of charms) for (const s of c.stats) if (s.param === 0) add(s.stat, s.value);
+  const extra = [...setBonusStats(equipped.filter((it) => !isBroken(it) && it.identified), gen, items), ...charms.flatMap((c) => c.stats)];
+  itemLocalOps(extra, ops, ch.level, false, false, add);
+  for (const s of extra) {
+    if (s.param === 0) add(s.stat, s.value);
+    else layered.push(s);
+  }
+  // 레벨당(op 2)·시간대(op 6): 모든 장착 합에서 대상 스탯으로 (출처: D2StatList.cpp case 2 / 6)
+  for (const [stat, v] of [...sums]) {
+    const op = ops.get(stat);
+    if (!op || !v) continue;
+    const inc = op.op === 2 && op.base === 'level' ? perLevel(ch.level, v, op) : op.op === 6 && baseTime !== undefined ? byTimeValue(v, baseTime) : 0;
+    if (inc) for (const t of op.targets) add(t, inc);
+  }
   const get = (s: string) => sums.get(s) ?? 0;
   const str = ch.str + get('strength'), dex = ch.dex + get('dexterity'), vit = ch.vit + get('vitality'), ene = ch.ene + get('energy');
   // itemstatcost maxhp/maxmana 는 ValShift 8 (1/256) 이지만 여기서는 속성 값(정수) 그대로 저장한다
@@ -191,6 +258,7 @@ export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<
       po: cap(get('poisonresist'), 'maxpoisonresist'), ma: cap(get('magicresist'), 'maxmagicresist'),
     },
     stat: get,
+    layered,
   };
 }
 

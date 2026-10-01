@@ -133,6 +133,8 @@ export interface TradeHost {
   stashGold: number;
   readonly playerLevel: number;
   readonly difficulty: 0 | 1 | 2;
+  /** 가격 할인 % (item_reducedprices — 구매·수리·도박, 판매가는 그대로). 출처: ITEMS_CalculateTransactionCost */
+  readonly reducePct?: number;
   /** npc.txt questflag (퀘스트 할인) · 이름 있는 퀘스트 상태 */
   questDone(flag: number | string): boolean;
   emit(ev: GameEvent): void;
@@ -238,7 +240,7 @@ export class NpcServices {
     const row = def?.price ?? def?.vendor;
     const price = row ? h.data.npcPrices?.get(row) : undefined;
     if (!price) return null;
-    return { items: h.data.items, gen: h.data.treasure.gen ?? null, npc: price, difficulty: h.difficulty, bookCharge: h.data.bookCharge, questDone: (f) => h.questDone(f) };
+    return { items: h.data.items, gen: h.data.treasure.gen ?? null, npc: price, difficulty: h.difficulty, bookCharge: h.data.bookCharge, questDone: (f) => h.questDone(f), reducePct: h.reducePct ?? 0 };
   }
 
   /** 상점 재고 (없으면 채운다). 출처: D2GAME_STORES_CreateVendorCache_6FCCAE20 — bVendorInit 이 아니면 FillStoreInventory */
@@ -296,7 +298,7 @@ export class NpcServices {
 
   /** 가격 (UI 툴팁). kind buy = 상점·도박 아이템, sell/repair = 플레이어 아이템 */
   priceOf(h: TradeHost, npc: string, item: ItemInstance, kind: 'buy' | 'sell' | 'repair'): number {
-    if (kind === 'buy' && this.gamble?.some((s) => s.item === item)) return gambleCost(h.data.items, item.code, h.playerLevel);
+    if (kind === 'buy' && this.gamble?.some((s) => s.item === item)) return gambleCost(h.data.items, item.code, h.playerLevel, h.reducePct ?? 0);
     const ctx = this.priceCtx(h, npc);
     return ctx ? transactionCost(item, kind, ctx) : 0;
   }

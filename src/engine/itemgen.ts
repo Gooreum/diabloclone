@@ -68,6 +68,9 @@ export interface GenContext {
   difficulty?: number;
 }
 
+/** itemstatcost 스탯 연산 한 줄 */
+export interface StatOp { op: number; param: number; base: string; targets: string[] }
+
 export class ItemGen {
   readonly items: ItemDb;
   readonly prefixes: MagicAffix[];
@@ -84,6 +87,11 @@ export class ItemGen {
   readonly valShift = new Map<string, number>();
   /** 스탯 가격 (itemstatcost Add, Multiply, Encode) */
   readonly statCost = new Map<string, { add: number; mult: number; encode: number }>();
+  /**
+   * 스탯 연산 (itemstatcost op / op param / op base / op stat1~3): 레벨당(op 2·4·5)·시간대(op 6·7) 속성이 대상 스탯에 더해진다.
+   * 출처: D2MOO D2StatList.cpp sub_6FDB5830, ItemsTbls.cpp (op 대상 등록)
+   */
+  readonly statOps = new Map<string, StatOp>();
   /** 스킬 가격 (skills.txt cost add, cost mult) */
   readonly skillCost = new Map<number, { add: number; mult: number }>();
   /** 클래스 스킬 시작 Id (staffmods) */
@@ -154,6 +162,8 @@ export class ItemGen {
       if (!r.Stat) continue;
       this.valShift.set(r.Stat, n(r.ValShift));
       this.statCost.set(r.Stat, { add: n(r.Add), mult: n(r.Multiply), encode: n(r.Encode) });
+      const targets = [r['op stat1'], r['op stat2'], r['op stat3']].filter((x): x is string => !!x);
+      if (n(r.op) && targets.length) this.statOps.set(r.Stat, { op: n(r.op), param: n(r['op param']), base: r['op base'] ?? '', targets });
     }
     for (const r of t.skills) if (r.Id) this.skillCost.set(n(r.Id), { add: n(r['cost add']), mult: n(r['cost mult']) });
     this.skillRows = t.skills;

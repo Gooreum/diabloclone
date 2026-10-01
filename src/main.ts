@@ -290,8 +290,10 @@ async function boot(): Promise<void> {
     figGfx.draw(figSink.target(c), comp, 0, frame, x, y);
     return true;
   };
+  // 원작 클래식 클라이언트는 확장팩 캐릭터를 목록에 보이지 않는다 (클래식 MPQ 로는 확장팩 데이터를 만들 수 없다)
+  const playableSave = (sv: CharacterSave) => src.edition === 'lod' || !(sv.expansion === true || isExpansionClass(sv.character.cls));
   const listHeroes = async () => {
-    const saves = await HeroStore.saves();
+    const saves = (await HeroStore.saves()).filter(playableSave);
     looks.clear();
     for (const sv of saves) {
       const eq = sv.equipment;
@@ -326,6 +328,7 @@ async function boot(): Promise<void> {
     window.__menuReady = false;
     menu.hide();
     const save = choice.kind === 'load' ? await HeroStore.load(choice.name) : null;
+    if (save && !playableSave(save)) continue;
     const cls: ClassName = save?.character.cls ?? (choice.kind === 'new' ? choice.cls : 'Barbarian');
     // Phase 8: 고른 난이도 (난이도 창 — 새 캐릭터·해금 전은 Normal). 해금보다 높은 값은 받지 않는다
     const difficulty = (choice.kind === 'load' ? Math.min(choice.difficulty ?? 0, save?.difficultyUnlocked ?? 0) : 0) as Difficulty;

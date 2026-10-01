@@ -279,11 +279,28 @@ export function objectOpenSound(operateFn: number, name: string): string | null 
 /** 클래스 이름 → sounds.txt 접두사 (barbarian_hit_1 …) */
 export const classPrefix = (cls: string): string => cls.toLowerCase();
 
-/** 퀘스트 사건 questSound 번호 → 플레이어 목소리.
- *  근사(원작 미확인): D2MOO QUESTS 의 nSound 는 클라이언트 표 번호. 19 는 "할 수 없다" 로 쓰이는 자리(레벨 8 미만 Malus 등)라 impossible 로 둔다. */
+/**
+ * 플레이어 퀘스트 목소리 (원작 플레이어 소리 33 ~ 83). sounds.txt 직업마다 같은 순서로 놓인 묶음 (<직업>_act1_complete_andariel … <직업>_act5_defeat_baal).
+ * 근사(원작 미확인): 원작은 D2Client 의 번호 표. 퀘스트 코드가 쓰는 번호로 순서를 맞췄다 — 39 = 케언 석 (act1_find_cairn), 45 = 이누피스 나무 (act1_find_tree),
+ *   80 Shenk (act5_defeat_overseer), 81 포로 구출 (act5_rescued_wussies), 82 Nihlathak (act5_defeat_nihlathak), 83 바알 (act5_defeat_baal)
+ */
+const PLAYER_QUEST_VOICE = [
+  'act1_complete_andariel', 'act1_complete_burial', 'act1_complete_den', 'act1_complete_tools', 'act1_complete_tower', 'act1_find_burial', 'act1_find_cairn',
+  'act1_find_catacombs', 'act1_find_den', 'act1_find_jail', 'act1_find_monastery', 'act1_find_tower', 'act1_find_tree', 'act1_find_tristram', 'act1_find_wilderness',
+  'act1_rescue_cain', 'act2_begin_tainted', 'act2_complete_radament', 'act2_complete_summoner', 'act2_complete_tainted', 'act2_complete_tightspot', 'act2_complete_tombs',
+  'act2_find_arcane', 'act2_find_clawviper', 'act2_find_radament', 'act2_find_summoner', 'act2_find_tomb_decoy', 'act2_find_tomb_true', 'act2_near_tightspot',
+  'act2_trigger_field', 'act3_complete_beneath', 'act3_complete_blackened', 'act3_complete_blade', 'act3_complete_guardian', 'act3_complete_lamesen',
+  'act3_find_beneath', 'act3_find_blackened', 'act3_find_drain', 'act3_find_guardian', 'act3_find_jade', 'act3_find_lamesen', 'act4_free_izual', 'act4_kill_diablo',
+  'act5_find_wilderness', 'act5_find_nihlathak', 'act5_find_mountaintop', 'act5_find_worldstone', 'act5_defeat_overseer', 'act5_rescued_wussies',
+  'act5_defeat_nihlathak', 'act5_defeat_baal',
+] as const;
+const PLAYER_QUEST_VOICE_BASE = 33;
+
+/** 퀘스트 사건 questSound 번호 → 플레이어 목소리. 19 는 "할 수 없다" (레벨 8 미만 Malus 등) */
 export function questPlayerSound(cls: string, sound: number): string | null {
   if (sound === 19) return `${classPrefix(cls)}_impossible_1`;
-  return null;
+  const v = PLAYER_QUEST_VOICE[sound - PLAYER_QUEST_VOICE_BASE];
+  return v ? `${classPrefix(cls)}_${v}` : null;
 }
 
 // ---------------------------------------------------------------- NPC 대사
@@ -294,13 +311,22 @@ export function npcSoundName(typeId: string): string {
   if (t.startsWith('cain')) return 'cain';
   if (t.startsWith('warriv')) return 'warriv';
   if (t === 'izualghost') return 'izual';
+  // 확장팩 Act 5 (sounds.txt: qualkehk_*, anya_* — Drehya 의 대사 이름은 Anya, 고대인 석상·제단은 ancient_*)
+  if (t === 'qual-kehk') return 'qualkehk';
+  if (t === 'drehya' || t === 'drehyaiced') return 'anya';
+  if (t.startsWith('ancientstatue')) return 'ancient';
   // 근사(원작 미확인): sounds.txt 에 jamella_young / jamella_old 둘 다 있다. 클래식 Act 4 Jamella 는 young 으로 둔다
   if (t === 'jamella') return 'jamella_young';
   return t.replace(/\d+$/, '');
 }
 
+/** string.tbl 키 → sounds.txt (이름 규칙 밖의 확장팩 대사) */
+const ACT5_SPECIAL_SPEECH: Record<string, string> = {
+  AncientsAct5IntroGossip1: 'ancient_act5_intro', A5Q6InitAncients: 'ancient_act5_reward_spiel', A5Q2EarlyReturnQualKehkMan: 'qualkehk_act5_q2_nthman',
+};
+
 /** string.tbl 퀘스트 대사 키 끝의 NPC 이름 (긴 것 먼저) */
-const QUEST_NPC = /(CharsiMain|WarrivAct2|MeshifAct3|CainAct3|Akara|Kashya|Charsi|Gheed|Warriv|Cain|Atma|Greiz|Griez|Elzix|Drognan|Lysander|Meshif|Geglash|Jerhyn|Fara|Alkor|Ormus|Asheara|Hratli|Natalya|Tyrael|Izual)$/;
+const QUEST_NPC = /(CharsiMain|WarrivAct2|MeshifAct3|CainAct3|Akara|Kashya|Charsi|Gheed|Warriv|Cain|Atma|Greiz|Griez|Elzix|Drognan|Lysander|Meshif|Geglash|Jerhyn|Fara|Alkor|Ormus|Asheara|Hratli|Natalya|Tyrael|Izual|Larzuk|Malah|QualKehk|Anya|Nihlathak|Ancients)$/;
 
 const QUEST_STATE: [RegExp, string][] = [
   // Act 2~4 특수 상태 (A2Q2 Cain 조각별, A3Q2 Cain 유물별, A3Q4 Init1~3, A4Q3 영혼석)
@@ -314,6 +340,8 @@ const QUEST_STATE: [RegExp, string][] = [
   [/^AfterInitScroll$/, 'after_scroll'],
   [/^AfterInit$/, 'after'],
   [/^EarlyReturnS$/, 'early_scroll'],
+  // Act 5: 얼음 Anya 를 찾음 (A5Q3FoundAnya*)
+  [/^FoundAnya$/, 'found'],
   [/^EarlyReturn2?$/, 'early'],
   [/^SuccessfulScroll$/, 'success_scroll'],
   [/^(Quest)?Successful$/, 'success'],
@@ -329,6 +357,9 @@ const QUEST_STATE: [RegExp, string][] = [
  *      A3Q5AfterInitMeshifAct3VA → meshif_act3_q5_after_va, A2Q2EarlyReturnCapCain → cain_act2_q2_early_cap
  *  근사(원작 미확인): 원작은 D2Client 대사 표(문자열 번호 ↔ 소리 번호). 여기서는 키 이름 규칙으로 맞춘다. */
 export function questSpeechCandidates(key: string, typeId: string): string[] {
+  // 확장팩 고대인 (퀘스트 대사 규칙 밖): 제단 20002 · 고대인 자리 20169, Qual-Kehk 의 "n 명 남음" 변형
+  const special = ACT5_SPECIAL_SPEECH[key];
+  if (special) return [special];
   const m = /^A(\d)Q(\d)(.*)$/.exec(key);
   if (!m) return [];
   const [, act, q] = m as unknown as [string, string, string];
@@ -350,8 +381,8 @@ export function questSpeechCandidates(key: string, typeId: string): string[] {
     // 두루마리 변형이 없으면 기본 상태로 (예: gheed_act1_q4_after)
     const plain = name.replace(/_scroll$/, '');
     if (plain !== name && s.endsWith('_scroll')) out.push(`${npc}_act${act}_q${q}_${plain}`);
-    // A3Q2 Cain 완료는 sounds.txt 에 successful 로 적혀 있다
-    if (name === 'success') out.splice(1, 0, `${npc}_act${act}_q${q}_successful`);
+    // A3Q2 Cain 완료는 sounds.txt 에 successful, A5Q4 Cain 은 successl 로 적혀 있다
+    if (name === 'success') out.splice(1, 0, `${npc}_act${act}_q${q}_successful`, `${npc}_act${act}_q${q}_successl`);
     return out;
   }
   return [];

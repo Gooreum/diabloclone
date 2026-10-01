@@ -168,6 +168,9 @@ export interface PetInfo {
   mercSkill?: { name: string; lvl: number };
   /** Blade Sentinel 칼날: 던진 자리(A)와 목표(B) 사이 왕복, 지금 B 로 가는 중 */
   creeper?: { ax: number; ay: number; bx: number; by: number; toB: boolean };
+  /** 센트리: 남은 쏠 횟수 (−1 = 아직 안 셈, AI 첫 생각에서 Skill1 calc4), Death Sentry 가 마지막으로 터뜨린 시체 */
+  shots?: number;
+  lastCorpse?: number;
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean; id?: number }

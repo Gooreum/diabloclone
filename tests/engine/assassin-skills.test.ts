@@ -488,3 +488,85 @@ describe.skipIf(!hasLod)('Phase 3 — 던지는 함정·Blade Sentinel', () => {
     expect(inner.missiles.some((m) => m.def.name === 'blade creeper')).toBe(false);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 3 — 센트리', () => {
+  const run = (g: Game, inner: Inner, n: number) => {
+    const evs: { type: string; [k: string]: unknown }[] = [];
+    for (let i = 0; i < n; i++) {
+      g.tick();
+      evs.push(...inner.events);
+    }
+    return evs;
+  };
+  /** 설치하고 30 틱 — 그동안의 이벤트를 돌려준다 */
+  const place = (g: Game, name: string, x: number, y: number) => {
+    g.enqueue({ type: 'useSkill', skill: S(name).id, hand: 'right', x, y });
+    return run(g, g as unknown as Inner, 30);
+  };
+  const traps = (inner: Inner) => inner.pets.filter((p) => p.pet?.petType === 'assassintrap' && p.mode !== 'DT' && p.mode !== 'DD');
+
+  it('Lightning Sentry: 적에게 번개를 쏘고, 10번(calc4 = par8) 쏘면 죽는다', () => {
+    const { g, inner } = game({ skills: { 'Lightning Sentry': 5 } });
+    const z = dummy(g, 28.5, 20.5);
+    const evs = place(g, 'Lightning Sentry', 25.5, 20.5);
+    expect(traps(inner)).toHaveLength(1);
+    evs.push(...run(g, inner, 600));
+    expect(evs.filter((e) => e.type === 'sentryFire').length).toBe(10);
+    expect(z.hp).toBeLessThan(100000);
+    expect(traps(inner)).toHaveLength(0);
+  });
+
+  it('함정은 종류를 섞어도 모두 5개까지 (pettype assassintrap), 적이 멀면 쏘지 않는다', () => {
+    const { g, inner } = game({ skills: { 'Lightning Sentry': 5, 'Charged Bolt Sentry': 5 } });
+    for (let i = 0; i < 3; i++) place(g, 'Lightning Sentry', 24.5 + i, 22.5);
+    for (let i = 0; i < 3; i++) place(g, 'Charged Bolt Sentry', 24.5 + i, 18.5);
+    expect(traps(inner)).toHaveLength(5);
+    expect(run(g, inner, 60).some((e) => e.type === 'sentryFire')).toBe(false);
+  });
+
+  it('Charged Bolt Sentry: 한 번에 볼트 calc1 개', () => {
+    const { g, inner } = game({ skills: { 'Charged Bolt Sentry': 5 } });
+    dummy(g, 30.5, 20.5);
+    place(g, 'Charged Bolt Sentry', 25.5, 20.5);
+    let most = 0;
+    for (let i = 0; i < 60; i++) {
+      g.tick();
+      most = Math.max(most, inner.missiles.filter((m) => m.def.name === 'sentrychargedbolt').length);
+    }
+    const bs = S('BoltSentry');
+    expect(most).toBeGreaterThanOrEqual(lod.skillCalc!.calc(bs, 1, 5, { baseLevel: () => 0, skillLevel: () => 0, unitLevel: 30 }));
+  });
+
+  it('Wake of Fire: 생성기가 양옆으로 불길을 남긴다', () => {
+    const { g, inner } = game({ skills: { 'Wake of Fire Sentry': 5 } });
+    dummy(g, 32.5, 20.5);
+    place(g, 'Wake of Fire Sentry', 24.5, 20.5);
+    const names = new Set<string>();
+    for (let i = 0; i < 80; i++) {
+      g.tick();
+      for (const m of inner.missiles) names.add(m.def.name);
+    }
+    expect(names.has('wake of destruction maker')).toBe(true);
+    expect(names.has('wake of destruction')).toBe(true);
+  });
+
+  it('Death Sentry: 적 곁 시체를 터뜨린다', () => {
+    const { g, inner } = game({ skills: { 'Death Sentry': 5 } });
+    const z = dummy(g, 30.5, 20.5);
+    const corpse = g.spawnMonster('zombie1', 31.5, 21.5) as unknown as MonsterUnit;
+    corpse.mode = 'DD';
+    corpse.hp = 0;
+    const evs = [...place(g, 'Death Sentry', 27.5, 20.5), ...run(g, inner, 120)];
+    expect(evs.some((e) => e.type === 'corpseExploded' && e.targetId === corpse.id)).toBe(true);
+    expect(z.hp).toBeLessThan(100000);
+  });
+
+  it('주인이 마을에 있으면 함정이 죽는다', () => {
+    const { g, inner } = game({ skills: { 'Lightning Sentry': 5 } });
+    place(g, 'Lightning Sentry', 25.5, 20.5);
+    expect(traps(inner)).toHaveLength(1);
+    (g as unknown as { level: { def: { inTown: boolean } } }).level.def.inTown = true;
+    run(g, inner, 40);
+    expect(traps(inner)).toHaveLength(0);
+  });
+});

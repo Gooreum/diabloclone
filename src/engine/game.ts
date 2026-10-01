@@ -3360,21 +3360,7 @@ export class Game {
       case 55: {
         // Corpse Explosion: 시체 최대 생명(평균) × calc1~calc2 %, 반경 aurarange/2, calc3 % 는 화염 나머지 물리. 출처: SKILLS_SrvDo055_CorpseExplosion
         if (!target || target.mode !== 'DD' || target.corpseUsed) return;
-        target.corpseUsed = true;
-        const hp256 = Math.trunc(((data.monsters.levelBase(target.stats.level, 'HP') * (target.type.minHpPct + target.type.maxHpPct)) / 100 / 2)) * 256;
-        const lo = Math.trunc((calc.calc(s, 1, lvl, o) * hp256) / 100), hi = Math.trunc((calc.calc(s, 2, lvl, o) * hp256) / 100);
-        let dmg = lo + (hi > lo ? this.rng.pick(hi - lo) : 0);
-        const cl = this.character?.level ?? 1;
-        if (target.stats.level && cl < target.stats.level) dmg = Math.trunc((dmg * cl) / target.stats.level);
-        const pct = Math.max(0, Math.min(100, calc.calc(s, 3, lvl, o)));
-        const radius = Math.trunc((calc.eval(s, s.auraRangeCalc, lvl, o) + 1) / 2);
-        for (const m of this.monstersNear(target.x, target.y, radius)) {
-          const d = emptyDamage();
-          if (pct > 0 && s.eType) addElemental(d, s.eType, Math.trunc((dmg * pct) / 100), calc.elemLength(s, lvl, o));
-          d.phys += Math.trunc((dmg * (100 - pct)) / 100);
-          this.damageMonster(m, d);
-        }
-        this.events.push({ type: 'corpseExploded', targetId: target.id });
+        this.explodeCorpse(s, lvl, target, this.character?.level ?? 1);
         return;
       }
       case 63: {
@@ -3624,6 +3610,7 @@ export class Game {
       case 33: return this.psychicHammer(s, lvl, live);
       case 43: return this.shockWeb(s, lvl, cast.tx, cast.ty);
       case 44: return this.bladeSentinel(s, lvl, cast.tx, cast.ty);
+      case 45: return this.placeSentry(s, lvl, cast.tx, cast.ty);
       case 34:
       case 35: return this.chargeUp(cast, live, index);
       case 42: return this.dragonTalon(cast, live);
@@ -4090,6 +4077,134 @@ export class Game {
     });
   }
 
+  /**
+   * 센트리 (Charged Bolt·Lightning·Wake of Fire·Wake of Inferno·Death Sentry): 목표 지점에 함정 몬스터, 레벨 = 주인 레벨, 스킬 레벨 = sumsk1calc.
+   * 출처: SkillAss.cpp SKILLS_SrvDo045_Sentry (pettype assassintrap, petmax)
+   */
+  private placeSentry(s: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const calc = this.data?.skillCalc;
+    if (!calc || !s.summon || this.inTown) return;
+    const sumLvl = Math.max(1, calc.eval(s, s.sumSk1Calc, lvl, this.owner()) || lvl);
+    this.summonPet(s, lvl, s.summon, tx, ty, s.petType, { missileLvl: sumLvl, shots: -1 }, { hpBase: 1000, level: this.character?.level ?? 1 });
+  }
+
+  /**
+   * 센트리 AI: 주인이 마을에 있거나 쏠 횟수를 다 쓰면 죽는다. 쏠 횟수 = monstats Skill1 의 calc4 (첫 생각에서).
+   * aip4 거리 안 적이 있으면 aip1 % 로 Skill1, 아니면 aip2 (적 없음 aip3) 프레임 쉰다.
+   * Death Sentry (AI 104): 적 근처(거리 < (par3 + (lvl−1)·par4)/2) 새 시체가 있으면 Skill1 (시체 폭발), 아니면 aip3 % 로 Skill2 (번개).
+   * 출처: AiThink.cpp AITHINK_Fn101_AssassinSentry / AssasinSentryHasLostTarget / Fn104_DeathSentry
+   * 근사(원작 미확인): 스킬 효과는 모드 판정 프레임 대신 모드 시작에 바로
+   */
+  private thinkSentry(pet: MonsterUnit): void {
+    const info = pet.pet as PetInfo, data = this.data, calc = data?.skillCalc;
+    const ap = pet.type.aiParams;
+    const sk1 = pet.type.skills[0]?.name ? data?.skills?.byNameOf(pet.type.skills[0].name) : undefined;
+    if (!data || !calc || !sk1) return;
+    const lvl = info.missileLvl;
+    const die = () => {
+      pet.hp = 0;
+      this.startMonsterMode(pet, 'DT');
+      this.events.push({ type: 'petDied', petId: pet.id });
+    };
+    if (this.inTown) return die();
+    if ((info.shots ?? -1) < 0) info.shots = calc.calc(sk1, 4, lvl, this.owner());
+    if ((info.shots ?? 0) <= 0) return die();
+    const death = pet.type.ai === 'DeathSentry';
+    const active = ap[3] ?? 15;
+    const enemy = this.monstersNear(pet.x, pet.y, 40).find((m) => !m.pet);
+    const idle = (n: number): void => {
+      pet.nextThink = this.tickCount + Math.max(1, n);
+    };
+    if (!enemy) return idle(death ? ap[1] ?? 0 : ap[2] ?? 15);
+    const dist = Math.hypot(enemy.x - pet.x, enemy.y - pet.y);
+    if (death) {
+      const reach = Math.trunc(((sk1.params[2] ?? 0) + (lvl - 1) * (sk1.params[3] ?? 0)) / 2);
+      const corpse = this.monsters.find((m) => m.mode === 'DD' && !m.corpseUsed && m.id !== info.lastCorpse && Math.hypot(m.x - enemy.x, m.y - enemy.y) < Math.min(10, reach));
+      if (corpse) {
+        info.lastCorpse = corpse.id;
+        info.shots = (info.shots ?? 1) - 1;
+        this.sentryFire(pet, sk1, lvl, corpse);
+        return idle(this.sentryModeLen(pet));
+      }
+      const sk2 = pet.type.skills[1]?.name ? data.skills?.byNameOf(pet.type.skills[1].name) : undefined;
+      if (sk2 && dist < active && pet.rng.pick(100) < (ap[2] ?? 0)) {
+        info.shots = (info.shots ?? 1) - 1;
+        this.sentryFire(pet, sk2, lvl, enemy);
+        return idle(this.sentryModeLen(pet));
+      }
+      return idle(ap[1] ?? 0);
+    }
+    if (dist >= active) return idle(ap[2] ?? 15);
+    if (pet.rng.pick(100) < (ap[0] ?? 100)) {
+      info.shots = (info.shots ?? 1) - 1;
+      this.sentryFire(pet, sk1, lvl, enemy);
+      return idle(this.sentryModeLen(pet) + (ap[1] ?? 10));
+    }
+    idle(ap[1] ?? 10);
+  }
+
+  private sentryModeLen(pet: MonsterUnit): number {
+    return Math.max(1, pet.modeEnd - this.tickCount);
+  }
+
+  /** 센트리 스킬 한 번 (BoltSentry Do017 · sentry lightning · Wake Do125 · mon inferno sentry Do095 · mon death sentry Do055 · death sentry ltng) */
+  private sentryFire(pet: MonsterUnit, sk: SkillRecord, lvl: number, t: MonsterUnit): void {
+    const data = this.data, calc = data?.skillCalc;
+    if (!data || !calc) return;
+    const mode: MonMode = pet.type.modes.has('S1') ? 'S1' : pet.type.modes.has('A1') ? 'A1' : 'NU';
+    this.startMonsterMode(pet, mode);
+    pet.dir = dir64(t.x - pet.x, t.y - pet.y);
+    const from = { x: pet.x, y: pet.y };
+    const mname = sk.srvMissile || sk.srvMissileA;
+    const def = mname ? data.missiles.get(mname) : undefined;
+    const msk = def ? this.skillFor(def) ?? sk : sk;
+    const opts = { srcDam: 0, useSkillDamage: true, from };
+    this.events.push({ type: 'sentryFire', petId: pet.id, skill: sk.name });
+    switch (sk.srvDoFunc) {
+      case 17: {
+        // BoltSentry: calc1 개 흔들리는 볼트 (SrvDo017 Charged Bolt)
+        if (!def) return;
+        const n = Math.max(1, calc.calc(sk, 1, lvl, this.owner()));
+        const base = Math.atan2(t.y - from.y, t.x - from.x);
+        for (let i = 0; i < n; i++) {
+          const a = base + ((this.rng.pick(9) - 4) * Math.PI) / 12;
+          this.spawnPlayerMissile(def, msk, lvl, from.x + Math.cos(a) * 10, from.y + Math.sin(a) * 10, undefined, { ...opts, wander: true });
+        }
+        return;
+      }
+      case 125: {
+        // Wake of Fire: 불길 생성기가 대상 쪽으로 가며 양옆으로 불길 (SrvDo125 → MISSMODE_SrvDo31)
+        if (!def) return;
+        const sub = def.subMissile1 ? data.missiles.get(def.subMissile1) : undefined;
+        const roll = this.missileDamageRoller(def, msk, lvl, { srcDam: 0, useSkillDamage: true });
+        const d = Math.hypot(t.x - from.x, t.y - from.y) || 1, sp = missileStep(def.vel);
+        const ux = (t.x - from.x) / d, uy = (t.y - from.y) / d;
+        this.missiles.push({
+          id: this.nextUnitId++, def, x: from.x, y: from.y, dx: ux * sp, dy: uy * sp, left: def.range + lvl * def.levRange, age: 0, owner: 'player', ownerId: this.player.id,
+          ownerLevel: this.character?.level ?? 1, hitClass: def.hitClass || 0x20, roll, hit: new Set(), lvl, skill: msk, rehit: new Map(),
+          onTick: (ms) => {
+            if (!sub || ms.age % 2) return;
+            for (const k of [1, -1]) this.spawnPlayerMissile(sub, msk, lvl, ms.x - uy * k * 10, ms.y + ux * k * 10, undefined, { srcDam: 0, useSkillDamage: true, from: { x: ms.x, y: ms.y } });
+          },
+        });
+        return;
+      }
+      case 95: {
+        // Wake of Inferno: 대상 쪽으로 불길 분사 (SrvSt53 / SrvDo095 MonInferno). 근사(원작 미확인): 분사 길이 대신 불꽃 한 줄기 (수명 calc1)
+        if (def) this.spawnPlayerMissile(def, msk, lvl, t.x, t.y, undefined, { ...opts, range: Math.max(1, calc.calc(sk, 1, lvl, this.owner())) });
+        return;
+      }
+      case 55: {
+        // Death Sentry 시체 폭발 (SrvDo055)
+        if (t.mode === 'DD' && !t.corpseUsed) this.explodeCorpse(sk, lvl, t, pet.stats.level);
+        return;
+      }
+      default:
+        // sentry lightning · death sentry ltng: 대상으로 번개 (srvmissile)
+        if (def) this.spawnPlayerMissile(def, msk, lvl, t.x, t.y, t.id, opts);
+    }
+  }
+
   /** Blade Creeper 이동: A ↔ B 왕복 (AITHINK_Fn102 — 속도 15). 근사(원작 미확인): 벽은 무시하고 직선 */
   private updateCreeper(pet: MonsterUnit): void {
     const c = pet.pet?.creeper;
@@ -4110,6 +4225,27 @@ export class Game {
       pet.mode = 'WL';
       pet.modeStart = this.tickCount;
     }
+  }
+
+  /** Corpse Explosion (Necromancer · Death Sentry 'mon death sentry'). casterLevel = 쓰는 유닛 레벨 (높은 레벨 시체 피해 비율) */
+  private explodeCorpse(s: SkillRecord, lvl: number, target: MonsterUnit, casterLevel: number): void {
+    const data = this.data, calc = data?.skillCalc;
+    if (!data || !calc) return;
+    const o = this.owner();
+    target.corpseUsed = true;
+    const hp256 = Math.trunc(((data.monsters.levelBase(target.stats.level, 'HP') * (target.type.minHpPct + target.type.maxHpPct)) / 100 / 2)) * 256;
+    const lo = Math.trunc((calc.calc(s, 1, lvl, o) * hp256) / 100), hi = Math.trunc((calc.calc(s, 2, lvl, o) * hp256) / 100);
+    let dmg = lo + (hi > lo ? this.rng.pick(hi - lo) : 0);
+    if (target.stats.level && casterLevel < target.stats.level) dmg = Math.trunc((dmg * casterLevel) / target.stats.level);
+    const pct = Math.max(0, Math.min(100, calc.calc(s, 3, lvl, o)));
+    const radius = Math.trunc((calc.eval(s, s.auraRangeCalc, lvl, o) + 1) / 2);
+    for (const m of this.monstersNear(target.x, target.y, radius)) {
+      const d = emptyDamage();
+      if (pct > 0 && s.eType) addElemental(d, s.eType, Math.trunc((dmg * pct) / 100), calc.elemLength(s, lvl, o));
+      d.phys += Math.trunc((dmg * (100 - pct)) / 100);
+      this.damageMonster(m, d);
+    }
+    this.events.push({ type: 'corpseExploded', targetId: target.id });
   }
 
   /** 스킬 물리 + 원소 피해 굴림 (D2GAME_RollPhysicalDamage + RollElementalDamage) */
@@ -7696,6 +7832,14 @@ export class Game {
       if (info.petType === 'none' || info.petType === 'dopplezon') continue; // 뼈벽·Decoy(AI Idle): 제자리
       if (info.creeper) {
         this.updateCreeper(pet);
+        continue;
+      }
+      if (info.petType === 'assassintrap') {
+        if (this.tickCount >= pet.modeEnd && pet.mode !== 'NU') {
+          pet.mode = 'NU';
+          pet.modeStart = this.tickCount;
+        }
+        if (this.tickCount >= pet.nextThink) this.thinkSentry(pet);
         continue;
       }
       if (pet.states.has('freeze') || pet.states.has('stunned')) {

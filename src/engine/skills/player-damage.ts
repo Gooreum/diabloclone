@@ -86,8 +86,9 @@ export function rollWeaponDamage(i: WeaponDamageInput, rng: Rng): number {
   return i.srcDam === 128 ? dmg : Math.trunc((dmg * i.srcDam) / 128);
 }
 
-/** 치명타 판정 (무기 마스터리 치명타 → 패시브 치명타). 출처: SUNITDMG_FillDamageValues */
-export function rollCritical(masteryCrit: number, criticalStrike: number, rng: Rng): boolean {
+/** 치명타 판정 (무기 마스터리 치명타 → 패시브 치명타 → 아이템 치명타 item_deadlystrike, 하나만 성공). 출처: SUNITDMG_FillDamageValues:321 */
+export function rollCritical(masteryCrit: number, criticalStrike: number, rng: Rng, deadlyStrike = 0): boolean {
   if (masteryCrit > 0 && rng.pick(100) < masteryCrit) return true;
-  return criticalStrike > 0 && rng.pick(100) < criticalStrike;
+  if (criticalStrike > 0 && rng.pick(100) < criticalStrike) return true;
+  return deadlyStrike > 0 && rng.pick(100) < deadlyStrike;
 }

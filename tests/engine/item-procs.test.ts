@@ -196,3 +196,136 @@ describe.skipIf(!hasGameData)('1단계 — 피격·막기 애니 속도', () => 
     expect(inner.player.mode).toBe('BL');
   });
 });
+
+interface Offense {
+  damageMonster(m: MonsterUnit, raw: DamagePacket, source?: 'player' | 'pet' | 'other', attackerId?: number, proc?: 'melee' | 'missile'): void;
+  targetDefense(m: MonsterUnit, missile: boolean): number;
+  vsTypeDamagePct(m: MonsterUnit, w: unknown): number;
+  killMonster(m: MonsterUnit, source?: 'player' | 'pet' | 'other'): void;
+  startCheck(s: unknown, targetId: number | undefined): boolean;
+  pets: MonsterUnit[];
+}
+
+describe.skipIf(!hasGameData)('2단계 — 공격 쪽 아이템 사건', () => {
+  const off = (g: Game) => g as unknown as Offense;
+  const tough = (g: Game, id = 'zombie1', x = 22.5) => {
+    const z = g.spawnMonster(id, x, 20.5);
+    z.hp = 1000;
+    z.stats.maxHp = 2000;
+    z.nextThink = 1e9;
+    return z;
+  };
+  const hit = (g: Game, z: MonsterUnit, proc: 'melee' | 'missile' = 'melee') => off(g).damageMonster(z, emptyDamage(), 'player', undefined, proc);
+
+  it('강타 100%: 일반 몬스터 현재 생명 1/4, 슈퍼유니크 1/8, 원거리는 나눗수 ×2', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_crushingblow', value: 100 }]) });
+    const a = tough(game);
+    hit(game, a);
+    expect(a.hp).toBeCloseTo(750, 5);
+    const b = tough(game, 'zombie1', 24.5);
+    b.flags |= 2;
+    hit(game, b);
+    expect(b.hp).toBeCloseTo(875, 5);
+    const c = tough(game, 'zombie1', 26.5);
+    hit(game, c, 'missile');
+    expect(c.hp).toBeCloseTo(875, 5);
+  });
+
+  it('치명타(DS) 는 마스터리·패시브 치명 다음에 한 번만 판정 (100% 면 늘 성공)', async () => {
+    const { rollCritical } = await import('../../src/engine/skills/player-damage');
+    expect(rollCritical(0, 0, new Rng(1), 100)).toBe(true);
+    expect(rollCritical(0, 0, new Rng(1), 0)).toBe(false);
+  });
+
+  it('상처 악화 100%: openwounds 상태, hpregen −(f(40) + 40) = −706, 챔피언은 절반', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_openwounds', value: 100 }]) });
+    const a = tough(game);
+    hit(game, a);
+    expect(a.states.get('openwounds')?.stats.hpregen).toBe(-706);
+    const b = tough(game, 'zombie1', 24.5);
+    b.flags |= 4;
+    hit(game, b);
+    expect(b.states.get('openwounds')?.stats.hpregen).toBe(-353);
+  });
+
+  it('방어 무시: 일반 몬스터 방어 0, 유니크는 그대로 · 방어 감소 30%: 보스 계열은 절반(15%)', () => {
+    const ign = setup({ rarm: item('axe', [{ stat: 'item_ignoretargetac', value: 1 }]) }).game;
+    const z = tough(ign);
+    z.stats.defense = 400;
+    expect(off(ign).targetDefense(z, false)).toBe(0);
+    z.flags |= 8;
+    expect(off(ign).targetDefense(z, false)).toBe(400);
+    const fr = setup({ rarm: item('axe', [{ stat: 'item_fractionaltargetac', value: 30 }]) }).game;
+    const y = tough(fr);
+    y.stats.defense = 400;
+    expect(off(fr).targetDefense(y, false)).toBe(280);
+    y.flags |= 2;
+    expect(off(fr).targetDefense(y, false)).toBe(340);
+  });
+
+  it('악마 피해 100%: 악마(Fallen)에게만, 언데드에게 둔기 +50', () => {
+    const { game } = setup({ lrin: item('rin', [{ stat: 'item_demondamage_percent', value: 100 }]) });
+    const fallen = tough(game, 'fallen1'), zombie = tough(game, 'zombie1', 24.5);
+    expect(off(game).vsTypeDamagePct(fallen, undefined)).toBe(100);
+    expect(off(game).vsTypeDamagePct(zombie, undefined)).toBe(0);
+    expect(off(game).vsTypeDamagePct(zombie, lod.items.base('mac'))).toBe(50);
+  });
+
+  it('감속 100: 일반 몬스터 90, 챔피언 50 상한', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_slow', value: 100 }]) });
+    const a = tough(game);
+    hit(game, a);
+    expect(a.states.get('slowed')?.stats.velocitypercent).toBe(-90);
+    const b = tough(game, 'zombie1', 24.5);
+    b.flags |= 4;
+    hit(game, b);
+    expect(b.states.get('slowed')?.stats.velocitypercent).toBe(-50);
+  });
+
+  it('회복 불가: 몬스터 재생이 멈추고 독은 계속 들어간다', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_preventheal', value: 1 }]) });
+    const z = tough(game);
+    (game as unknown as { onPlayerHitMonster(m: MonsterUnit): void }).onPlayerHitMonster(z);
+    expect(z.states.has('preventheal')).toBe(true);
+    z.hp = 500;
+    for (let i = 0; i < 50; i++) game.tick();
+    expect(z.hp).toBe(500);
+    z.states.set('poison', 1e9, { hpregen: -256 });
+    for (let i = 0; i < 10; i++) game.tick();
+    expect(z.hp).toBeLessThan(500);
+  });
+
+  it('밀쳐내기: 작은 몬스터는 늘 밀려난다 (확률 128/128)', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_knockback', value: 1 }]) });
+    const z = tough(game);
+    z.type = { ...z.type, small: true, large: false };
+    const x0 = z.x;
+    hit(game, z);
+    expect(z.x).toBeGreaterThan(x0);
+  });
+
+  it('편히 쉬어라: 처치한 몬스터 시체를 쓸 수 없다', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_restinpeace', value: 1 }]) });
+    const z = tough(game);
+    off(game).killMonster(z, 'player');
+    expect(z.corpseUsed).toBe(true);
+  });
+
+  it('되살리기 100% (param = MonStats 번호): 처치하면 그 몬스터가 소환수로 생긴다', () => {
+    const z0 = lod.monsters.get('zombie1');
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_reanimate', param: z0.hcIdx, value: 100 }]) });
+    const z = tough(game);
+    const before = off(game).pets.length;
+    off(game).killMonster(z, 'player');
+    expect(off(game).pets.length).toBe(before + 1);
+    expect(off(game).pets.at(-1)?.type.id).toBe('zombie1');
+  });
+
+  it('마법 화살: 활 기본 공격이 화살 없이도 시작된다 (폭발 화살은 화살 필요)', () => {
+    const bow = item('sbw', [], QUALITY.NORMAL);
+    const a = setup({ rarm: item('sbw', [{ stat: 'item_magicarrow', value: 5 }]) });
+    expect(off(a.game).startCheck(lod.skills!.byId.get(0), undefined)).toBe(true);
+    const b = setup({ rarm: bow });
+    expect(off(b.game).startCheck(lod.skills!.byId.get(0), undefined)).toBe(false);
+  });
+});

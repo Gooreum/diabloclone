@@ -381,6 +381,8 @@ interface Missile {
   seek?: { tx: number; ty: number; radius: number };
   /** 원작 Pierce 패시브 관통 확률 (skill_pierce %) */
   pierceChance?: number;
+  /** 플레이어 무기 피해 미사일 — 아이템 공격 사건 (강타·상처 악화 …) */
+  procs?: boolean;
   /** 이미 터짐 (Immolation Arrow 가 적중과 소멸에서 두 번 터지지 않게) */
   exploded?: boolean;
   /** 확장 몬스터 미사일 (Phase 5: 관통·지속 피해·유도·폭발·적중 효과) — updateMonMissileEx */
@@ -2638,7 +2640,7 @@ export class Game {
     // Holy Shield(St36): 방패 필요 (출처: SKILLS_SrvSt36_HolyShield)
     if (s.srvStFunc === 36 && !(this.equipment.larm && this.data?.items.isType(this.data.items.base(this.equipment.larm.code) as ItemBase, 'shld'))) return false;
     // Attack·화살 스킬: 활/석궁이면 화살 필요 (출처: SKILLS_SrvSt01 / SrvSt04 — sub_6FD119C0 탄약 확인)
-    if ((s.srvStFunc === 1 || s.srvStFunc === 4) && this.isBowWeapon() && !this.ammo()) {
+    if ((s.srvStFunc === 1 || s.srvStFunc === 4) && this.isBowWeapon() && !this.ammo() && !(s.id === 0 && this.specialArrow()?.noAmmo)) {
       this.events.push({ type: 'skillUnusable', skill: s.id, reason: 'ammo' });
       return false;
     }
@@ -2866,7 +2868,7 @@ export class Game {
         // Attack: 활이면 화살, 아니면 근접. 출처: SKILLS_SrvDo001_Attack
         if (this.isBowWeapon()) {
           this.launchWeaponMissile(s, lvl, cast.tx, cast.ty, live?.id);
-          this.decQuantity('larm');
+          if (!this.specialArrow()?.noAmmo) this.decQuantity('larm');
         } else if (live) this.meleeHit(live, { toHitPct: 0, enDmgPct: 0, flat256: 0, elem: null, hitClass: 0, srcDam: 128 });
         return;
       }
@@ -3943,14 +3945,17 @@ export class Game {
     const pct = spec.toHitPct + masteryBonus(passives, data.items, w, 'th') + this.playerStat('item_tohit_percent') + (this.derived()?.toHitPct ?? 0);
     const ar = this.playerAR();
     // Smite: 명중 판정 결과와 무관하게 성공 (출처: SKILLS_SrvDo150_Smite — GetResultFlags | SUCCESSFULHIT)
-    if (!spec.shield && !rollPercent(hitChance(ar + Math.trunc((ar * pct) / 100), this.monsterDefense(m, false), c.level, m.stats.level), this.rng)) {
+    // 악마·언데드 명중은 AR 에 그대로 더한 뒤 명중 % (출처: SUNITDMG_IsHitSuccessful:2495)
+    const arAll = ar + this.vsTypeStat(m, 'item_demon_tohit', 'item_undead_tohit');
+    if (!spec.shield && !rollPercent(hitChance(arAll + Math.trunc((arAll * pct) / 100), this.targetDefense(m, false), c.level, m.stats.level), this.rng)) {
       this.events.push({ type: 'miss', targetId: m.id });
       return false;
     }
+    this.onPlayerHitMonster(m);
     const d = emptyDamage();
     const dv = this.derived();
     d.phys = rollWeaponDamage({
-      weapon: w, str: this.effStat('str'), dex: this.effStat('dex'), enDmgPct: spec.enDmgPct, damagePercent: this.playerStat('damagepercent'),
+      weapon: w, str: this.effStat('str'), dex: this.effStat('dex'), enDmgPct: spec.enDmgPct + (spec.shield ? 0 : this.vsTypeDamagePct(m, w)), damagePercent: this.playerStat('damagepercent'),
       masteryDmg: spec.shield ? 0 : masteryBonus(passives, data.items, w, 'dmg'), srcDam: spec.srcDam,
       weaponRange: !spec.shield && dv && w ? { min: dv.weaponMin + dv.addMin, max: dv.weaponMax + dv.addMax } : undefined,
       itemDamagePct: dv?.offWeaponEdPct ?? 0,
@@ -3967,7 +3972,7 @@ export class Game {
       d.coldLen += spec.vengeance.coldLen;
     }
     if (spec.stunLen) d.stunLen += spec.stunLen;
-    if (rollCritical(masteryBonus(passives, data.items, w, 'crit'), this.playerStat('passive_critical_strike'), this.rng)) {
+    if (rollCritical(masteryBonus(passives, data.items, w, 'crit'), this.playerStat('passive_critical_strike'), this.rng, dv?.stat('item_deadlystrike') ?? 0)) {
       d.phys *= 2;
       d.crit = true;
     }
@@ -3983,7 +3988,7 @@ export class Game {
     this.addStatElemental(d);
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
-    this.damageMonster(m, d);
+    this.damageMonster(m, d, 'player', undefined, 'melee');
     if (!spec.shield) this.wearWeapon();
     // 생명·마나 흡수: 준 물리 피해의 lifedrainmindam / manadrainmindam % (Normal LifeStealDivisor 1). 출처: itemstatcost.txt, DifficultyLevels.txt
     const dvl = this.derived();
@@ -4030,7 +4035,8 @@ export class Game {
    * 출처: SUNITDMG_CalculateTotalDamage / SUNITDMG_ExecuteEvents (기절 최대 250, 냉기 = coldeffect 감속, 빙결은 coldeffect < 0 인 몬스터만,
    *       독 = 매 프레임 hpregen 감소, 같은 독은 더 센 쪽으로 갱신)
    */
-  private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number): void {
+  /** @param proc 플레이어 무기 공격 (근접 / 무기 피해를 실은 미사일) — 아이템 공격 사건 (강타·상처 악화·감속 …) */
+  private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number, proc?: 'melee' | 'missile'): void {
     if (m.pet) {
       this.damagePet(m, raw);
       return;
@@ -4048,6 +4054,8 @@ export class Game {
       d.phys -= ab;
       if ((bone.stats.bonearmor ?? 0) <= 0) m.states.remove('bonearmor');
     }
+    // 피해를 주는 사건 (domeleedamage / domissiledamage): 생명 감소 전 (출처: SUNITDMG_ExecuteEvents)
+    const knock = proc && source === 'player' && !m.pet ? this.itemDamageEvents(m, proc === 'missile') : false;
     const total = totalDamage(d);
     m.hp -= total / 256;
     m.aggro = true;
@@ -4081,11 +4089,134 @@ export class Game {
       return;
     }
     const stunned = m.states.has('stunned') || m.states.has('freeze');
+    // 밀쳐내기 (결과 플래그 8): 경직 판정 대신 밀려난다 (출처: SUnitDmg.cpp:2070 — KNOCKBACK 모드가 없으면 GETHIT)
+    if (knock && !stunned) {
+      this.knockBack(m);
+      return;
+    }
     if (!stunned && m.type.modes.has('GH') && rollGetHit(total / 256, m.stats.maxHp, d.hitClass, m.rng)) {
       // Phase 5: Sand Leaper 는 경직되면 밀려난다 (출처: MonsterMode.cpp sub_6FC62DF0 — GETHIT 이고 빙결이 아니면 결과 플래그 8 = 밀쳐내기)
       if (m.type.baseId === 'sandleaper1' && source !== 'other') this.knockBack(m);
       else this.startMonsterMode(m, 'GH');
     }
+  }
+
+  /** 보스 계열 (MonStats boss · 슈퍼유니크) */
+  private isBossLike(m: MonsterUnit): boolean {
+    return m.type.boss || (m.flags & MONFLAG.SUPERUNIQUE) !== 0;
+  }
+
+  /** 악마·언데드 대상 스탯 합 (item_demon_* / item_undead_*) */
+  private vsTypeStat(m: MonsterUnit, demonStat: string, undeadStat: string): number {
+    const dv = this.derived();
+    if (!dv) return 0;
+    return (m.type.demon ? dv.stat(demonStat) : 0) + (m.type.undead ? dv.stat(undeadStat) : 0);
+  }
+
+  /**
+   * 악마·언데드 피해 % (ED 합산, 양수만) + 언데드에게 둔기 +50.
+   * 출처: SUNITDMG_FillDamageValues:274-297 (ITEMTYPE_BLUNT +50)
+   */
+  private vsTypeDamagePct(m: MonsterUnit, w: ItemBase | undefined): number {
+    const items = this.data?.items;
+    const blunt = m.type.undead && !!w && !!items && items.isType(w, 'blun') ? 50 : 0;
+    return Math.max(0, this.vsTypeStat(m, 'item_demondamage_percent', 'item_undeaddamage_percent')) + blunt;
+  }
+
+  /**
+   * 명중 판정에 쓰는 대상 방어: 방어 무시(item_ignoretargetac — 유니크·슈퍼유니크·보스·용병 제외, 챔피언은 됨),
+   * 방어 감소 %(item_fractionaltargetac — 보스·슈퍼유니크·용병에게는 절반, 0~100).
+   * 출처: SUNITDMG_IsHitSuccessful:2478-2493
+   */
+  private targetDefense(m: MonsterUnit, missile: boolean): number {
+    const def = this.monsterDefense(m, missile), dv = this.derived();
+    if (!dv || m.pet) return def;
+    const uniq = (m.flags & (MONFLAG.UNIQUE | MONFLAG.SUPERUNIQUE)) !== 0;
+    if (dv.stat('item_ignoretargetac') > 0 && !uniq && !m.type.boss) return 0;
+    let frac = dv.stat('item_fractionaltargetac');
+    if (frac <= 0) return def;
+    if (this.isBossLike(m)) frac = Math.trunc(frac / 2);
+    frac = Math.min(100, frac);
+    return def - Math.trunc((def * frac) / 100);
+  }
+
+  /**
+   * 명중한 플레이어 무기 공격: 회복 불가(item_preventheal — 몬스터 양수 재생 막음), 몬스터 방어 영구 감소(item_damagetargetac, 최소 0).
+   * 출처: SUNITDMG_PreventMonsterHeal (SUnitDmg.cpp:2422, 2572), SUNITDMG_FillDamageValues:265-272
+   */
+  private onPlayerHitMonster(m: MonsterUnit): void {
+    const dv = this.derived();
+    if (!dv || m.pet) return;
+    if (dv.stat('item_preventheal') > 0) m.states.set('preventheal', this.tickCount + 120000);
+    const ac = dv.stat('item_damagetargetac');
+    if (ac) m.stats.defense = Math.max(0, m.stats.defense + ac);
+  }
+
+  /**
+   * 피해를 주는 아이템 사건 (ItemStatCost itemevent domeleedamage / domissiledamage) — 강타(16)·상처 악화(15)·감속(19)·빙결(14)·공포(8)·밀쳐내기(7).
+   * @returns 밀쳐내기 성공
+   * 출처: D2MOO SkillItem.cpp SKILLITEM_EventFunc07/08/14/15/16/19
+   */
+  private itemDamageEvents(m: MonsterUnit, ranged: boolean): boolean {
+    const dv = this.derived(), c = this.character;
+    if (!dv || !c || m.mode === 'DT' || m.mode === 'DD') return false;
+    const roll100 = () => this.rng.pick(100);
+    const champUniq = (m.flags & (MONFLAG.CHAMPION | MONFLAG.UNIQUE)) !== 0;
+    // 강타: 현재 생명 / (일반·챔피언·유니크 4, 보스·슈퍼유니크 8, 원거리 ×2), 물리 저항만큼 감소 (EventFunc16)
+    const cb = dv.stat('item_crushingblow');
+    if (cb > 0 && roll100() < cb && m.hp > 0) {
+      const div = (this.isBossLike(m) ? 8 : 4) * (ranged ? 2 : 1);
+      let hp = Math.trunc((m.hp * 256) / div);
+      hp -= Math.trunc((hp * Math.min(this.monsterResists(m).dm, 100)) / 100);
+      m.hp -= hp / 256;
+      this.events.push({ type: 'crushingBlow', targetId: m.id, damage: hp / 256 });
+    }
+    // 상처 악화: 200 프레임 동안 hpregen −(f(공격자 레벨) + 40), 챔피언·유니크 /2 (EventFunc15, SKILLITEM_CalculateOpenWoundsHpRegen)
+    const ow = dv.stat('item_openwounds');
+    if (ow > 0 && roll100() < ow) {
+      let regen = openWoundsRegen(c.level) + 40;
+      if (champUniq) regen = Math.trunc(regen / 2);
+      m.states.set('openwounds', this.tickCount + 200, { hpregen: -regen });
+    }
+    // 감속: 750 프레임 이동·공격·애니 −v, 챔피언·유니크·보스 50 / 슈퍼유니크 75 / 그 밖 90 상한 (EventFunc19)
+    // 근사: D2MOO 판본의 if (nSlowValue) return 0 반전은 원래 의도(0 이면 없음)로
+    const slow = dv.stat('item_slow');
+    if (slow > 0) {
+      const cap = champUniq || m.type.boss ? 50 : (m.flags & MONFLAG.SUPERUNIQUE) !== 0 ? 75 : 90;
+      const v = Math.min(slow, cap);
+      m.states.set('slowed', this.tickCount + 750, { velocitypercent: -v, attackrate: -v, other_animrate: -v });
+    }
+    // 빙결: 확률 5×(4(v−1) − 대상 레벨 + 공격자 레벨 + 10) (원거리: 공격자 레벨 −6, /3), 길이 2(확률 − rand) + 25 (25~250) — 냉기 저항으로 줄고
+    //       보스·유니크는 냉기 둔화만, 냉기 효과 없는 몬스터는 면역 (EventFunc14, SUNITDMG_ApplyFreezeState)
+    const fz = dv.stat('item_freeze');
+    if (fz > 0 && m.type.coldEffect < 0) {
+      let chance = 5 * (4 * (fz - 1) - m.stats.level + c.level - (ranged ? 6 : 0) + 10);
+      if (ranged) chance = Math.trunc(chance / 3);
+      chance = Math.max(0, Math.min(100, chance));
+      const diff = chance - roll100();
+      if (diff > 0) {
+        let len = Math.max(25, Math.min(250, 2 * diff + 25));
+        len = Math.trunc((len * (100 - Math.max(-100, Math.min(100, this.piercedResists(m).co)))) / 100);
+        if (len > 0) {
+          const eff = m.type.coldEffect;
+          if (this.isBossLike(m) || (m.flags & MONFLAG.UNIQUE) !== 0) m.states.set('cold', this.tickCount + Math.max(1, Math.trunc(len / this.rules.monsterColdDivisor)), { velocitypercent: eff, attackrate: eff, other_animrate: eff });
+          else m.states.set('freeze', this.tickCount + Math.max(1, Math.trunc(len / this.rules.monsterFreezeDivisor)));
+        }
+      }
+    }
+    // 공포: 유니크·챔피언 아니면 (rand & 127) < v 일 때 20 프레임 공포 (EventFunc08 → AIUTIL_ApplyTerrorCurseState)
+    const howl = dv.stat('item_howl');
+    if (howl > 0 && !champUniq && !(m.flags & MONFLAG.SUPERUNIQUE) && (this.rng.pick(128) < howl)) {
+      m.states.set('terror', this.tickCount + 20);
+      m.path = [];
+      m.nextThink = this.tickCount;
+    }
+    // 밀쳐내기: (rand & 127) < 64 (큰 몬스터 32, 작은 몬스터 128) (EventFunc07)
+    if (dv.stat('item_knockback') > 0) {
+      const chance = m.type.large ? 32 : m.type.small ? 128 : 64;
+      if (this.rng.pick(128) < chance) return true;
+    }
+    return false;
   }
 
   /**
@@ -4179,6 +4310,23 @@ export class Game {
     if (life > 0 && c.life < this.maxLife()) c.life = Math.min(this.maxLife(), c.life + life);
     const mana = dv.stat('item_manaafterkill');
     if (mana > 0 && c.mana < this.maxMana()) c.mana = Math.min(this.maxMana(), c.mana + mana);
+    // 처치한 몬스터는 편히 쉰다 (시체를 쓸 수 없음). 출처: SKILLITEM_EventFunc29 (STATE_RESTINPEACE)
+    // 근사(원작 미확인): 상태 대신 시체 사용 불가 표시
+    if (dv.stat('item_restinpeace') > 0) m.corpseUsed = true;
+    // 되살리기 (item_reanimate, param = MonStats 번호): 유니크·챔피언이 아니면 v% 로 그 몬스터가 소환수로 살아난다.
+    // 출처: SKILLITEM_EventFunc31 / SKILLITEM_TimerCallback_ReanimateMonster — 근사(원작 미확인): UMod 21 이벤트(+1500 프레임)를 수명으로
+    if (m.corpseUsed || (m.flags & (MONFLAG.UNIQUE | MONFLAG.CHAMPION)) !== 0) return;
+    for (const l of dv.layered) {
+      if (l.stat !== 'item_reanimate' || l.value <= 0 || this.rng.pick(100) >= l.value) continue;
+      const type = this.data?.monsters.list[l.param];
+      const s = this.skillRecord(0);
+      if (!type || !s) continue;
+      if (this.summonPet(s, 1, type.id, m.x, m.y, 'none', { expires: this.tickCount + 1500 }, { level: m.stats.level })) {
+        m.corpseUsed = true;
+        this.events.push({ type: 'reanimated', targetId: m.id, typeId: type.id });
+      }
+      break;
+    }
   }
 
   /**
@@ -4282,9 +4430,26 @@ export class Game {
   private launchWeaponMissile(s: SkillRecord, lvl: number, tx: number, ty: number, targetId: number | undefined, thrown = false, toHitPct = 0, damagePct = 0): void {
     const w = this.weaponBase(), data = this.data;
     if (!w || !data) return;
-    const def = [...data.missiles.values()].find((m) => m.id === w.missileType) ?? data.missiles.get(thrown ? 'javelin' : 'arrow');
+    // 마법·폭발 화살 (item_magicarrow / item_explosivearrow): 활 기본 공격이 미사일 27 / 41, 레벨 = 값 (출처: D2COMMON_11039_CheckWeaponIsMissileBased)
+    const special = !thrown ? this.specialArrow() : null;
+    const def = (special && [...data.missiles.values()].find((m) => m.id === special.missile)) || [...data.missiles.values()].find((m) => m.id === w.missileType) || data.missiles.get(thrown ? 'javelin' : 'arrow');
     if (!def) return;
+    if (special) {
+      const sk = this.skillFor(def) ?? s;
+      this.spawnPlayerMissile(def, sk, special.lvl, tx, ty, targetId, { srcDam: def.srcDamage < 0 ? 0 : def.srcDamage || 128, useSkillDamage: sk !== s, toHitPct, damagePct });
+      return;
+    }
     this.spawnPlayerMissile(def, s, lvl, tx, ty, targetId, { srcDam: def.srcDamage < 0 ? 0 : def.srcDamage || 128, useSkillDamage: false, thrown, toHitPct, damagePct });
+  }
+
+  /** 마법 화살(27, 화살 필요 없음) · 폭발 화살(41) 아이템 — 활만 (출처: D2Skills.cpp:3340, magicarrow 는 탄약 검사 생략 :1787) */
+  private specialArrow(): { missile: number; lvl: number; noAmmo: boolean } | null {
+    const dv = this.derived();
+    if (!dv || !this.isBowWeapon()) return null;
+    const ex = dv.stat('item_explosivearrow'), ma = dv.stat('item_magicarrow');
+    if (ex > 0) return { missile: 41, lvl: ex, noAmmo: false };
+    if (ma > 0) return { missile: 27, lvl: ma, noAmmo: true };
+    return null;
   }
 
   private isThrownWeapon(): boolean {
@@ -4318,10 +4483,12 @@ export class Game {
       ...(o.chain ? { chain: o.chain } : {}),
       ...(o.spiral ? { spiral: { cx: from.x, cy: from.y, a: Math.atan2(ty - from.y, tx - from.x), r: 0 } } : {}),
       ...(o.seek ? { seek: o.seek } : {}),
+      // 무기 피해를 실은 미사일은 아이템 공격 사건이 붙는다 (출처: Missile.cpp:579 — srcdam ≠ 0 이면 미사일 플래그 1 → DAMAGEHITFLAG_32)
+      ...(o.srcDam > 0 ? { procs: true } : {}),
     };
-    // Pierce 패시브: Pierce 플래그 미사일(화살·투창)이 skill_pierce % 로 적을 뚫고 계속 (출처: skills.txt Pierce passivestat1 skill_pierce, missiles.txt Pierce)
+    // 관통: Pierce 플래그 미사일(화살·투창)이 skill_pierce + item_pierce % 로 적을 뚫고 계속 (출처: Missiles.cpp:319-338, missiles.txt Pierce)
     if (def.pierce) {
-      const pc = this.playerStat('skill_pierce');
+      const pc = this.playerStat('skill_pierce') + (this.derived()?.stat('item_pierce') ?? 0);
       if (pc > 0) m.pierceChance = pc;
     }
     if (def.srvDoFunc === 15) this.attachFrozenOrb(m, def, s, lvl);
@@ -4401,7 +4568,8 @@ export class Game {
           itemDamagePct: dv?.offWeaponEdPct ?? 0,
           masteryDmg: masteryBonus(passives, data.items, w, 'dmg', o.thrown), srcDam: o.srcDam,
         }, this.rng);
-        if (rollCritical(o.thrown ? masteryBonus(passives, data.items, w, 'crit', true) : 0, this.playerStat('passive_critical_strike'), this.rng)) {
+        // 근사(원작 미확인 아님): 원작은 미사일을 만들 때 한 번 판정 (Missile.cpp:798) — 여기서는 맞을 때 굴림
+        if (rollCritical(o.thrown ? masteryBonus(passives, data.items, w, 'crit', true) : 0, this.playerStat('passive_critical_strike'), this.rng, this.derived()?.stat('item_deadlystrike') ?? 0)) {
           d.phys *= 2;
           d.crit = true;
         }
@@ -8327,11 +8495,20 @@ export class Game {
   private missileHit(ms: Missile, m: MonsterUnit, checkToHit: boolean): void {
     const c = this.character;
     if (!c || !ms.roll) return;
-    if (checkToHit && ms.ar !== undefined && !rollPercent(hitChance(ms.ar, this.monsterDefense(m, true), ms.ownerId === this.player.id ? c.level : ms.ownerLevel, m.stats.level), this.rng)) {
+    const mine = ms.procs && ms.ownerId === this.player.id;
+    const ar = ms.ar !== undefined && mine ? ms.ar + this.vsTypeStat(m, 'item_demon_tohit', 'item_undead_tohit') : ms.ar;
+    if (checkToHit && ar !== undefined && !rollPercent(hitChance(ar, mine ? this.targetDefense(m, true) : this.monsterDefense(m, true), ms.ownerId === this.player.id ? c.level : ms.ownerLevel, m.stats.level), this.rng)) {
       this.events.push({ type: 'miss', targetId: m.id });
       return;
     }
+    if (mine) this.onPlayerHitMonster(m);
     const d = ms.roll();
+    // 악마·언데드 피해 % 는 미사일 피해 % 에 (출처: Missile.cpp:647-669 → MissMode.cpp:214-255, −90 하한)
+    // 근사(원작 미확인): 굴린 물리 피해에 곱한다
+    if (mine) {
+      const pct = this.vsTypeDamagePct(m, this.isThrownWeapon() ? this.weaponBase() : undefined);
+      if (pct) d.phys += Math.trunc((d.phys * pct) / 100);
+    }
     if (ms.def.srvDmgFunc === 5) {
       // Blessed Hammer: 언데드 +dParam1%, 악마 +dParam2%. 출처: MISSMODE_SrvDmg05_BlessedHammer
       const base = d.mag;
@@ -8339,7 +8516,7 @@ export class Game {
       if (m.type.demon) d.mag += Math.trunc((base * (ms.def.dmgParams[1] ?? 0)) / 100);
     }
     const byMerc = this.merc?.unitId !== null && ms.ownerId === this.merc?.unitId;
-    this.damageMonster(m, d, byMerc ? 'pet' : 'player', byMerc ? ms.ownerId : undefined);
+    this.damageMonster(m, d, byMerc ? 'pet' : 'player', byMerc ? ms.ownerId : undefined, mine ? 'missile' : undefined);
   }
 
   /** 충돌·소멸: 폭발(Exploding Arrow, 벽에 맞은 Fire Ball), 구름(Plague Javelin) */
@@ -9375,7 +9552,8 @@ export class Game {
         }
         continue;
       }
-      if (m.hp >= m.stats.maxHp || !m.hpRegen) continue;
+      // 회복 불가 (item_preventheal): 양수 재생을 막는다 (출처: MonsterMode.cpp:587 STATE_PREVENTHEAL)
+      if (m.hp >= m.stats.maxHp || !m.hpRegen || m.states.has('preventheal')) continue;
       // Phase 5: Baboon·Bat Demon 쉬는 동안 재생 × (1 + regenX8 / 8)
       m.hp = Math.min(m.stats.maxHp, m.hp + ((m.stats.maxHp * m.type.damageRegen) / 4096) * (1 + (m.regenX8 ?? 0) / 8));
     }
@@ -9517,4 +9695,21 @@ export { aiDistance };
 /** 실효 속도 보너스 EF = ⌊120 × v / (120 + v)⌋ (FHR·FBR). 출처: D2MOO Units.cpp */
 export function effectiveRate(v: number): number {
   return v > 0 ? Math.trunc((120 * v) / (120 + v)) : 0;
+}
+
+/**
+ * 상처 악화 hpregen (1/256/프레임, +40 전): 레벨 구간마다 9·18·27·36·45 씩.
+ * 출처: D2MOO SKILLITEM_CalculateOpenWoundsHpRegen (SkillItem.cpp:1296)
+ */
+export function openWoundsRegen(level: number): number {
+  const L = Math.max(1, level);
+  const steps = [9, 18, 27, 36, 45];
+  let v = 0, prev = 1;
+  for (let i = 0; i < steps.length; i++) {
+    const top = i < 4 ? 15 * (i + 1) : Infinity;
+    if (L <= top) return v + (steps[i] as number) * (L - prev);
+    v += (steps[i] as number) * (top - prev);
+    prev = top;
+  }
+  return v;
 }

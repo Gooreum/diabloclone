@@ -32,6 +32,8 @@ export interface MonsterType {
   id: string;
   /** monstats.txt 행 번호 (hcIdx) */
   hcIdx: number;
+  /** 소환수 피해·명중을 주인의 이 스킬에서 (monstats SkillDamage — Raven·늑대·Grizzly) */
+  skillDamage: string;
   nameStr: string;
   code: string;
   ai: string;
@@ -152,7 +154,7 @@ export class MonsterDb {
       }
       const coldEff = c(r, 'coldeffect');
       const t: MonsterType = {
-        id: r.Id, hcIdx: n(r.hcIdx), nameStr: r.NameStr ?? r.Id, code: r.Code ?? '', ai: r.AI ?? '', baseW: (r2.BaseW ?? 'hth').toUpperCase(),
+        id: r.Id, hcIdx: n(r.hcIdx), skillDamage: r.SkillDamage ?? '', nameStr: r.NameStr ?? r.Id, code: r.Code ?? '', ai: r.AI ?? '', baseW: (r2.BaseW ?? 'hth').toUpperCase(),
         baseId: r.BaseId || r.Id, nextInClass: r.NextInClass ?? '', transLvl: n(r.TransLvl), monType: r.MonType ?? '',
         level: n(c(r, 'Level')), baseLevel: n(r.Level), align: n(r.Align), minGrp: n(r.MinGrp), maxGrp: n(r.MaxGrp),
         minions: [r.minion1 ?? '', r.minion2 ?? ''].filter(Boolean), partyMin: n(r.PartyMin), partyMax: n(r.PartyMax),

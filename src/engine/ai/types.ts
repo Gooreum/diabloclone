@@ -172,6 +172,10 @@ export interface PetInfo {
   /** 센트리: 남은 쏠 횟수 (−1 = 아직 안 셈, AI 첫 생각에서 Skill1 calc4), Death Sentry 가 마지막으로 터뜨린 시체 */
   shots?: number;
   lastCorpse?: number;
+  /** Raven: 다음 공격 가능 프레임 (aip3 × 10 간격). 출처: AITHINK_Fn107_Raven dwAiParam[1] */
+  nextAttack?: number;
+  /** 덩굴 (Plague Poppy·Cycle of Life·Vines): 소환수 스킬 (sumskill1·sumsk1calc) */
+  vine?: { skill: number; lvl: number };
   /** 그림자 (Shadow Warrior/Master): 주인 직업, 장비 (monequip), Master 여부, 주인의 그림자 스킬 레벨, 이번에 쓸 스킬 */
   shadow?: { cls: string; equipment: Record<string, ItemInstance>; master: boolean; ownerSkillLvl: number; use?: { id: number; lvl: number } };
 }

@@ -236,3 +236,117 @@ describe.skipIf(!hasLod)('Phase 1 — 원소', () => {
     expect(town.inner.player.states.has('hurricane')).toBe(false);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 2 — 소환', () => {
+  const pets = (inner: Inner, type: string) => inner.pets.filter((p) => p.pet?.petType === type && p.mode !== 'DT' && p.mode !== 'DD');
+
+  it('Raven: 수는 min(lvl,5), 근처 적을 쪼면 공격 횟수가 줄고 다 쓰면 죽는다', () => {
+    const { g, inner } = game({ skills: { Raven: 3 } });
+    for (let i = 0; i < 7; i++) cast(g, 'Raven', 20.5, 20.5, undefined, 12);
+    expect(pets(inner, 'raven')).toHaveLength(3);
+    const r = pets(inner, 'raven')[0]!;
+    expect(r.pet!.shots).toBe(12 + 2);
+    r.pet!.shots = 1;
+    const z = dummy(g, 23.5, 20.5);
+    for (let i = 0; i < 600 && z.hp === 100000; i++) g.tick();
+    expect(z.hp).toBeLessThan(100000);
+    for (let i = 0; i < 300; i++) g.tick();
+    expect(inner.pets.includes(r)).toBe(false);
+  });
+
+  it('Spirit Wolf: 레벨 = 캐릭터 레벨(calc2 ulvl), 저항 aurastat, 수 min(lvl,5), Grizzly 레벨이 피해 %', () => {
+    const { g, inner } = game({ skills: { 'Summon Spirit Wolf': 2, 'Summon Grizzly': 3 } });
+    for (let i = 0; i < 4; i++) cast(g, 'Summon Spirit Wolf', 23.5, 20.5, undefined, 12);
+    const wolves = pets(inner, 'spiritwolf');
+    expect(wolves).toHaveLength(2);
+    expect(wolves[0]!.stats.level).toBe(30);
+    expect(wolves[0]!.resist.fi).toBeGreaterThanOrEqual(lod.skillCalc!.eval(S('Summon Spirit Wolf'), S('Summon Spirit Wolf').auraStats[0]!.calc, 2, { baseLevel: () => 2, skillLevel: () => 2, unitLevel: 30 }));
+    const grizzlyLn12 = lod.skillCalc!.eval(S('Summon Grizzly'), { k: 'param', name: 'ln12' } as never, 3, { baseLevel: () => 3, skillLevel: () => 3, unitLevel: 30 });
+    expect(wolves[0]!.pet!.damagePct).toBe(grizzlyLn12);
+  });
+
+  it('Grizzly: 1마리, 근처 적을 공격', () => {
+    const { g, inner } = game({ skills: { 'Summon Grizzly': 5 } });
+    cast(g, 'Summon Grizzly', 22.5, 20.5, undefined, 12);
+    cast(g, 'Summon Grizzly', 22.5, 22.5, undefined, 12);
+    expect(pets(inner, 'grizzly')).toHaveLength(1);
+    const z = dummy(g, 25.5, 20.5);
+    for (let i = 0; i < 400 && z.hp === 100000; i++) g.tick();
+    expect(z.hp).toBeLessThan(100000);
+  });
+
+  it('Fenris: 적이 없으면 근처 시체를 먹고 fenris_rage (피해 +100%)', () => {
+    const { g, inner } = game({ skills: { 'Summon Fenris': 5 } });
+    cast(g, 'Summon Fenris', 22.5, 20.5, undefined, 12);
+    const f = pets(inner, 'fenris')[0]!;
+    expect(f).toBeDefined();
+    const body = g.spawnMonster('zombie1', 24.5, 20.5) as unknown as MonsterUnit;
+    body.mode = 'DD';
+    body.hp = 0;
+    for (let i = 0; i < 600 && !f.states.has('fenris_rage'); i++) g.tick();
+    expect(f.states.has('fenris_rage')).toBe(true);
+    expect(f.states.stat('damagepercent')).toBe(100);
+    expect(inner.monsters.includes(body)).toBe(false);
+  });
+
+  it('Plague Poppy: 근처 적에게 덩굴 독 (plague vines → 자취), 덩굴 3종은 하나만', () => {
+    const { g, inner } = game({ skills: { 'Plague Poppy': 5, 'Cycle of Life': 1, Vines: 1 } });
+    const z = dummy(g, 25.5, 20.5);
+    const seen = cast(g, 'Plague Poppy', 23.5, 20.5, undefined, 300);
+    expect(seen.has('plague vines')).toBe(true);
+    expect(seen.has('plague vines trail')).toBe(true);
+    expect(z.states.has('poison')).toBe(true);
+    for (let i = 0; i < 40; i++) g.tick();
+    cast(g, 'Cycle of Life', 21.5, 22.5, undefined, 20);
+    cast(g, 'Vines', 21.5, 22.5, undefined, 20);
+    expect(pets(inner, 'vine')).toHaveLength(1);
+  });
+
+  it('Cycle of Life: 시체를 먹어 주인 생명 회복, Vines: 마나 회복', () => {
+    for (const [skill, stat] of [['Cycle of Life', 'life'], ['Vines', 'mana']] as const) {
+      const { g, inner } = game({ skills: { [skill]: 5 } });
+      cast(g, skill, 22.5, 20.5, undefined, 20);
+      const body = g.spawnMonster('zombie1', 24.5, 20.5) as unknown as MonsterUnit;
+      body.mode = 'DD';
+      body.hp = 0;
+      const c = g.character!;
+      const max = stat === 'life' ? (g as unknown as { maxLife(): number }).maxLife() : (g as unknown as { maxMana(): number }).maxMana();
+      c[stat] = Math.floor(max / 2);
+      // 회복은 한 프레임에 최대치의 calc1 % (dm12 ≥ par1) — 자연 회복과 구분
+      let jump = 0, recycled = false;
+      for (let i = 0; i < 400 && !recycled; i++) {
+        const b = c[stat];
+        g.tick();
+        jump = Math.max(jump, c[stat] - b);
+        recycled = inner.events.some((e) => e.type === 'recycled');
+      }
+      expect(body.corpseUsed).toBe(true);
+      expect(recycled).toBe(true);
+      expect(jump).toBeGreaterThanOrEqual(Math.floor((max * (S(skill === 'Vines' ? 'VineCycler' : 'CorpseCycler').params[0] ?? 0)) / 100));
+    }
+  });
+
+  it('Oak Sage: 반경 안 주인에게 oaksage (최대 생명 +%), 멀어지면 풀린다', () => {
+    const { g, inner } = game({ skills: { 'Oak Sage': 5 } });
+    const base = (g as unknown as { maxLife(): number }).maxLife();
+    cast(g, 'Oak Sage', 21.5, 20.5, undefined, 30);
+    expect(pets(inner, 'totem')).toHaveLength(1);
+    expect(inner.player.states.has('oaksage')).toBe(true);
+    expect((g as unknown as { maxLife(): number }).maxLife()).toBeGreaterThan(base);
+    pets(inner, 'totem')[0]!.x += 60;
+    pets(inner, 'totem')[0]!.nextThink = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 30; i++) g.tick();
+    expect(inner.player.states.has('oaksage')).toBe(false);
+  });
+
+  it('Heart of Wolverine: 피해 %, Spirit of Barbs: 가시 — 토템은 하나만', () => {
+    const { g, inner } = game({ skills: { 'Heart of Wolverine': 5, 'Spirit of Barbs': 5 } });
+    cast(g, 'Heart of Wolverine', 21.5, 20.5, undefined, 30);
+    expect(inner.player.states.stat('damagepercent')).toBeGreaterThan(0);
+    cast(g, 'Spirit of Barbs', 21.5, 21.5, undefined, 30);
+    expect(pets(inner, 'totem')).toHaveLength(1);
+    for (let i = 0; i < 10; i++) g.tick();
+    expect(inner.player.states.stat('thorns_percent')).toBeGreaterThan(0);
+    expect(inner.player.states.has('wolverine')).toBe(false);
+  });
+});

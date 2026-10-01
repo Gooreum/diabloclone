@@ -3626,6 +3626,9 @@ export class Game {
       // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
       case 117:
       case 118: return this.druidMissiles(s, lvl, cast.tx, cast.ty, live?.id);
+      case 114: return this.druidSummon(s, lvl, this.player.x, this.player.y);
+      case 115: return this.druidSummon(s, lvl, cast.tx, cast.ty);
+      case 119: return this.druidSummon(s, lvl, cast.tx, cast.ty);
       case 123: return this.volcano(s, lvl, cast.tx, cast.ty);
       case 124: return this.startDruidStorm(s, lvl);
       case 33: return this.psychicHammer(s, lvl, live);
@@ -4819,6 +4822,20 @@ export class Game {
       }
       if (this.tickCount < a.next) continue;
       a.next = this.tickCount + Math.max(5, calc.eval(a.skill, a.skill.perDelay, a.lvl, none));
+      if (!a.skill.eType && a.skill.auraTargetState) {
+        // 토템 오라 (Oak Sage·Heart of Wolverine·Spirit of Barbs, Do065): 반경 aurarange 안 주인·소환수에게 auratargetstate + aurastat.
+        // 출처: SKILLS_SrvDo065_BasicAura (aurafilter: 아군) — 다음 주기까지 유지
+        const s = a.skill, own: SkillOwner = { baseLevel: (k) => (k === s.id ? a.lvl : 0), skillLevel: (k) => (k === s.id ? a.lvl : 0), unitLevel: pet.stats.level };
+        const until = a.next + 1, range = calc.eval(s, s.auraRangeCalc, a.lvl, own);
+        const stats: Record<string, number> = {};
+        for (const x of s.auraStats) stats[x.stat] = calc.eval(s, x.calc, a.lvl, own);
+        if (!this.isDead && Math.hypot(this.player.x - pet.x, this.player.y - pet.y) <= range) {
+          this.player.states.set(s.auraTargetState, until, stats, { id: s.id, lvl: a.lvl });
+          this.statsDirty = true;
+        }
+        for (const o of this.pets) if (o !== pet && o.mode !== 'DT' && o.mode !== 'DD' && Math.hypot(o.x - pet.x, o.y - pet.y) <= range) o.states.set(s.auraTargetState, until, stats);
+        continue;
+      }
       const min = calc.minElem256(a.skill, a.lvl, none, false), max = calc.maxElem256(a.skill, a.lvl, none, false);
       for (const m of this.monstersNear(pet.x, pet.y, calc.eval(a.skill, a.skill.auraRangeCalc, a.lvl, none))) {
         const d = emptyDamage();
@@ -5690,6 +5707,8 @@ export class Game {
       id: this.nextUnitId++, def, x, y, dx: 0, dy: 0, left: def.range + parent.lvl * def.levRange, age: 0,
       owner: 'player', ownerId: parent.ownerId, ownerLevel: parent.ownerLevel, hitClass: def.hitClass || 0x20, roll, hit: new Set(),
       lvl: parent.lvl, skill: parent.skill, ...(def.nextHit ? { rehit: new Map<number, number>() } : {}),
+      // 덩굴 자취는 생긴 뒤 sHitPar1 프레임 동안만 맞힌다 (MISSMODE_SrvHit50_PlagueVinesTrail)
+      ...(def.srvHitFunc === 50 ? { onTick: (ms: Missile) => { if (ms.age > (def.hitParams[0] ?? 0)) ms.noCollide = true; } } : {}),
     });
   }
 
@@ -5746,6 +5765,23 @@ export class Game {
         this.spawnPlayerMissile(boulder, s, lvl, ms.x + (ms.dx / sp) * 50, ms.y + (ms.dy / sp) * 50, undefined, { srcDam: 0, useSkillDamage: true, from: { x: ms.x, y: ms.y } });
       };
     }
+    if (def.srvDoFunc === 26 && sub) {
+      // plague vines: 남은 프레임이 Param1 의 배수일 때 자취 (MISSMODE_SrvDo26_Vines_PlagueVines)
+      m.trail = undefined;
+      m.noCollide = true;
+      const every = Math.max(def.params[0] ?? 1, 1);
+      const trailSkill = this.skillFor(sub) ?? s;
+      const roll = this.missileDamageRoller(sub, trailSkill, lvl, { srcDam: 0, useSkillDamage: true });
+      m.onTick = (ms) => {
+        if (ms.left % every === 0) this.spawnStillMissile(sub, ms.x, ms.y, ms, roll);
+      };
+    }
+    if (def.srvHitFunc === 50) {
+      // 덩굴 자취는 생긴 뒤 sHitPar1 프레임 동안만 맞힌다 (MISSMODE_SrvHit50_PlagueVinesTrail)
+      m.onTick = (ms) => {
+        if (ms.age > (def.hitParams[0] ?? 0)) ms.noCollide = true;
+      };
+    }
     if (def.srvDoFunc === 28 && sub) {
       // Volcano: 남은 프레임이 (Param3, Param4) 사이에서 calc4(Param1) 프레임마다 반경 aurarange(Param2) 무작위 지점으로 돌덩이 (MISSMODE_SrvDo28_Volcano)
       m.trail = undefined;
@@ -5778,6 +5814,31 @@ export class Game {
       m.pass = (t) => !t.type.large;
       if (sub && !sub.skill) m.groundTrail = { def: sub, roll: this.missileOwnRoller(sub, s, lvl) };
       m.trail = undefined;
+    }
+  }
+
+  /**
+   * 드루이드 소환 (Raven Do114 은 자기 자리, 늑대·Fenris·Grizzly·토템 Do119 는 대상 지점): 펫 레벨 = calc2 (최소 1),
+   * petmax 는 pettype 별. Raven 은 생명 재생이 없고 공격 횟수 par5 + (lvl−1)·par6 를 다 쓰면 죽는다.
+   * 출처: SKILLS_SrvDo114_Raven / SKILLS_SrvDo119_DruidSummon, AITHINK_Fn107_Raven (dwAiParam[0])
+   */
+  private druidSummon(s: SkillRecord, lvl: number, x: number, y: number): void {
+    const calc = this.data?.skillCalc;
+    if (!calc || !s.summon) return;
+    const level = Math.max(1, calc.calc(s, 2, lvl, this.owner()));
+    const extra: Partial<PetInfo> = s.srvDoFunc === 114 ? { shots: lvl > 0 ? (s.params[4] ?? 0) + (lvl - 1) * (s.params[5] ?? 0) : 0 } : {};
+    // 덩굴: 소환수 스킬 (Plague Poppy = Vine Attack, Cycle of Life = CorpseCycler, Vines = VineCycler — monstats Skill1 과 같은 것)
+    if (s.srvDoFunc === 115) {
+      const own = this.data?.skills?.byNameOf(s.sumSkill2 || s.sumSkill1);
+      if (own) extra.vine = { skill: own.id, lvl: Math.max(1, calc.eval(s, s.sumSkill2 ? s.sumSk2Calc : s.sumSk1Calc, lvl, this.owner())) };
+    }
+    const pet = this.summonPet(s, lvl, s.summon, x, y, s.petType, extra, { level });
+    if (!pet) return;
+    if (s.srvDoFunc === 114) pet.hpRegen = false;
+    // 덩굴은 땅에서 솟아난다 (summonArg.nMonMode 8 = S1), vine_beast 상태. 출처: SKILLS_SrvDo115_Vines
+    if (s.srvDoFunc === 115) {
+      if (s.auraState) pet.states.set(s.auraState, Infinity, {});
+      if (pet.type.modes.has('S1')) this.startMonsterMode(pet, 'S1');
     }
   }
 
@@ -8141,6 +8202,17 @@ export class Game {
     stats.defense += data.monsters.levelBase(petLvl, 'AC');
     stats.a1.toHit += data.monsters.levelBase(petLvl, 'TH');
     stats.a2.toHit += data.monsters.levelBase(petLvl, 'TH');
+    // monstats SkillDamage: 피해 = 주인의 그 스킬 물리 피해, 명중 + 그 스킬 ToHit (출처: sub_6FD14D20 — D2MonSkillInfoStrc)
+    // 근사(원작 미확인): 원작 nToHit 이 몬스터 명중을 대신하는지 더하는지 — 여기서는 더한다
+    const dmgSkill = type.skillDamage ? data.skills?.byNameOf(type.skillDamage) : undefined;
+    if (dmgSkill) {
+      const sl = this.skillLevel(dmgSkill);
+      for (const a of [stats.a1, stats.a2]) {
+        a.min = calc.minPhys256(dmgSkill, sl, o) >> 8;
+        a.max = calc.maxPhys256(dmgSkill, sl, o) >> 8;
+        a.toHit += calc.toHit(dmgSkill, sl, o);
+      }
+    }
     const info: PetInfo = { skillId: s.id, petType, expires: Infinity, missileLvl: 0, damagePct: 0, normalDamage: 0, slowPct: 0, ...extra };
     const res = { dm: 0, ma: 0, fi: 0, li: 0, co: 0, po: 0 };
     const pv: Record<string, number> = {};
@@ -8266,6 +8338,12 @@ export class Game {
         pet.mode = 'NU';
         pet.modeStart = this.tickCount;
       }
+      // 덩굴의 솟아나기·스킬(S1)은 애니메이션이 끝나면 서 있기로
+      if (pet.mode === 'S1' && info.vine) {
+        if (this.tickCount < pet.modeEnd) continue;
+        pet.mode = 'NU';
+        pet.modeStart = this.tickCount;
+      }
       if (pet.mode === 'WL' || pet.mode === 'RN') {
         if (pet.path.length) {
           this.advance(pet, (pet.moveSpeed * SUBTILES_PER_YARD) / ENGINE_FPS * (100 + pet.states.stat('velocitypercent')) / 100, (d) => (pet.dir = d), pet.type.sizeX);
@@ -8284,6 +8362,19 @@ export class Game {
         continue;
       }
       pet.nextThink = this.tickCount + Math.max(3, Math.trunc(pet.type.aiDelay / 3));
+      if (info.petType === 'raven') {
+        this.thinkRaven(pet);
+        continue;
+      }
+      if (info.petType === 'totem') {
+        this.thinkTotem(pet);
+        continue;
+      }
+      if (info.petType === 'fenris' && this.fenrisEat(pet)) continue;
+      if (info.vine) {
+        this.thinkVine(pet);
+        continue;
+      }
       if (info.petType === 'hydra') {
         // Hydra: 움직이지 않고 사거리 안 적에게 화염 볼트. 근사(원작 미확인): 원작 Hydra AI 의 사거리·간격 대신 거리 15, 공격 애니메이션마다 한 발
         const enemy = this.inTown ? undefined : this.monstersNear(pet.x, pet.y, 15)[0];
@@ -8312,6 +8403,150 @@ export class Game {
       pet.targetId = undefined;
       if (toOwner > 5) this.petMoveTo(pet, p.x + (pet.rng.pick(5) - 2), p.y + (pet.rng.pick(5) - 2), toOwner > 8);
     }
+  }
+
+  /**
+   * Raven AI: 공격 횟수를 다 쓰면 죽고, 주인에서 50 넘으면 곁으로, 28 넘으면 달려간다. 다음 공격 프레임이 지났고 aip4 % 이고
+   * 대상이 aip5 안이면 근접이면 쪼고(횟수 −1, 다음 공격 = aip3 × 10 프레임 뒤) 아니면 다가간다. 그 밖엔 주인 둘레 aip2~aip1 을 돈다.
+   * 출처: AITHINK_Fn107_Raven (RAVEN_AI_PARAM_CIRCLE_OWNER_MAX/MIN_DISTANCE, ATTACK_DELAY, ATTACK_CHANCE_PCT, MAX_TARGET_DISTANCE)
+   * 근사(원작 미확인): 주인 둘레를 도는 경로(AITACTICS_WalkAroundTargetWithScaledDistance)는 평균 거리의 무작위 지점으로
+   */
+  private thinkRaven(pet: MonsterUnit): void {
+    const info = pet.pet as PetInfo, p = this.player, ap = pet.type.aiParams;
+    if ((info.shots ?? 0) <= 0) {
+      pet.hp = 0;
+      this.startMonsterMode(pet, 'DT');
+      this.events.push({ type: 'petDied', petId: pet.id });
+      return;
+    }
+    const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
+    if (toOwner > 50) return this.warpPet(pet);
+    if (toOwner > 28) return this.petMoveTo(pet, p.x, p.y, true);
+    const t = this.inTown ? undefined : this.monstersNear(pet.x, pet.y, ap[4] ?? 35)[0];
+    if (t && this.tickCount > (info.nextAttack ?? 0) && pet.rng.pick(100) < (ap[3] ?? 0)) {
+      pet.targetId = t.id;
+      if (isInMeleeRange(pet.x, pet.y, pet.type.sizeX, pet.type.meleeRange, t.x, t.y, t.type.sizeX, 1)) {
+        this.startMonsterMode(pet, 'A1');
+        pet.dir = dir64(t.x - pet.x, t.y - pet.y);
+        info.nextAttack = this.tickCount + 10 * (ap[2] ?? 0);
+        info.shots = (info.shots ?? 0) - 1;
+      } else this.petMoveTo(pet, t.x, t.y, true);
+      return;
+    }
+    const lo = ap[1] ?? 6, hi = ap[0] ?? 10;
+    if (toOwner < lo || toOwner > hi) {
+      const a = pet.rng.pick(64) * (Math.PI / 32), r = (lo + hi) / 2;
+      this.petMoveTo(pet, p.x + Math.cos(a) * r, p.y + Math.sin(a) * r, false);
+    }
+  }
+
+  /**
+   * 토템 AI: 공격하지 않는다. 주인에서 aip3 넘으면 곁으로 옮겨 가고, aip4 넘으면 주인이 걸을 때 따라간다.
+   * 출처: AITHINK_Fn109_Totem (TOTEM_AI_PARAM_TELEPORT_TO_OWNER_DISTANCE, FOLLOW_OWNER_DISTANCE)
+   * 근사(원작 미확인): 적에게서 물러나기(WALK_AWAY_CHANCE)는 하지 않는다
+   */
+  private thinkTotem(pet: MonsterUnit): void {
+    const p = this.player, ap = pet.type.aiParams;
+    const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
+    if (toOwner > (ap[2] ?? 30)) return this.warpPet(pet);
+    if (toOwner > (ap[3] ?? 20) && (p.mode === 'WL' || p.mode === 'RN' || p.mode === 'TW')) this.petMoveTo(pet, p.x, p.y, p.mode === 'RN');
+  }
+
+  /**
+   * Fenris: 싸울 적이 없으면 aip3 % 로 근처 시체를 먹고 fenris_rage (피해 +par2 %, par1 프레임). 시체는 사라진다.
+   * 출처: AITHINK_Fn108_Fenris (DRUIDWOLF_FENRIS_AI_PARAM_EAT_CORPSE_CHANCE_PCT) → monstats Skill1 'fenris rage' (Do137)
+   * 근사(원작 미확인): 시체 찾는 거리 10
+   */
+  private fenrisEat(pet: MonsterUnit): boolean {
+    if (this.inTown || this.monstersNear(pet.x, pet.y, 12).length) return false;
+    if (pet.rng.pick(100) >= (pet.type.aiParams[2] ?? 0)) return false;
+    const body = this.monsters.find((m) => m.mode === 'DD' && !m.corpseUsed && !m.pet && Math.hypot(m.x - pet.x, m.y - pet.y) <= 10);
+    const rage = this.data?.skills?.byNameOf('fenris rage');
+    if (!body || !rage) return false;
+    body.corpseUsed = true;
+    this.monsters.splice(this.monsters.indexOf(body), 1);
+    this.spawnVisual(rage.cltMissile[0] ?? 'corpseexplosion', body.x, body.y);
+    pet.states.set(rage.auraState, this.tickCount + (rage.params[0] ?? 0), { damagepercent: rage.params[1] ?? 0 });
+    this.events.push({ type: 'fenrisRage', petId: pet.id });
+    return true;
+  }
+
+  /**
+   * 덩굴 AI. Plague Poppy(Vines AI): 시야 aip2 안 적에게 aip1 프레임마다 Vine Attack, 이미 중독된 적에게서는 물러난다.
+   * Cycle of Life·Vines(CycleOfLife AI): 시야 aip2 안 쓸 수 있는 시체로 가서 주인 생명(마나)이 다 차지 않았으면 aip1 프레임마다 먹는다.
+   * 주인에서 aip5 넘으면 곁으로. 출처: AITHINK_Fn110_Vines / AITHINK_Fn111_CycleOfLife
+   * 근사(원작 미확인): 물러나기(Escape) 는 하지 않고 제자리에 머문다
+   */
+  private thinkVine(pet: MonsterUnit): void {
+    const info = pet.pet as PetInfo, p = this.player, ap = pet.type.aiParams, c = this.character;
+    const vine = info.vine, s = vine ? this.skillRecord(vine.skill) : undefined;
+    if (!vine || !s || !c) return;
+    const toOwner = Math.hypot(pet.x - p.x, pet.y - p.y);
+    if (toOwner >= (ap[4] ?? 35)) return this.warpPet(pet);
+    if (this.inTown) return;
+    const ready = this.tickCount > (info.nextAttack ?? 0) + (ap[0] ?? 0);
+    if (s.srvDoFunc === 130) {
+      const t = this.monstersNear(pet.x, pet.y, ap[1] ?? 20).find((m) => !m.states.has('poison'));
+      if (!t || !ready) return;
+      info.nextAttack = this.tickCount;
+      pet.targetId = t.id;
+      if (pet.type.modes.has('S1')) this.startMonsterMode(pet, 'S1');
+      this.vineAttack(s, vine.lvl, pet, t);
+      return;
+    }
+    // CorpseCycler·VineCycler (St63): 시체 반경 clamp(aurarange, 5, 50)
+    const range = Math.min(50, Math.max(5, this.data?.skillCalc?.eval(s, s.auraRangeCalc, vine.lvl, this.owner()) ?? 10));
+    const body = this.monsters.find((m) => m.mode === 'DD' && !m.corpseUsed && !m.pet && Math.hypot(m.x - pet.x, m.y - pet.y) <= Math.min(range, ap[1] ?? 20));
+    if (!body) return;
+    const life = s.srvMissileA === 'recycler delay';
+    const need = life ? c.life < this.maxLife() : c.mana < this.maxMana();
+    if (!isInMeleeRange(pet.x, pet.y, pet.type.sizeX, Math.max(pet.type.meleeRange, 2), body.x, body.y, body.type.sizeX, 1)) {
+      this.petMoveTo(pet, body.x, body.y, false);
+      return;
+    }
+    if (!need || !ready) return;
+    info.nextAttack = this.tickCount;
+    if (pet.type.modes.has('S1')) this.startMonsterMode(pet, 'S1');
+    this.recycleCorpse(s, vine.lvl, body);
+  }
+
+  /**
+   * Vine Attack: 대상 자리에서 calc1 개의 plague vines 가 네 방향으로 흔들리며 뻗고, Param1 프레임마다 독 덩굴 자취(Plague Poppy 스킬 피해).
+   * 출처: SKILLS_SrvDo130_VineAttack (ChargedBolt init, x/yOffsets) → MISSMODE_SrvDo26_Vines_PlagueVines → plague vines trail (SrvHit50: 처음 sHitPar1 프레임만 맞힘)
+   */
+  private vineAttack(s: SkillRecord, lvl: number, pet: MonsterUnit, t: MonsterUnit): void {
+    const data = this.data, calc = data?.skillCalc;
+    const def = data?.missiles.get(s.srvMissileA);
+    if (!calc || !def) return;
+    const n = calc.calc(s, 1, lvl, this.owner());
+    const OX = [0, 0, 1, -1], OY = [1, -1, 0, 0];
+    for (let i = 0; i < n; i++) {
+      const k = i % 4;
+      this.spawnPlayerMissile(def, s, lvl, t.x + (OX[k] ?? 0) * 10, t.y + (OY[k] ?? 0) * 10, undefined, { srcDam: 0, useSkillDamage: true, wander: true, from: { x: t.x, y: t.y } });
+    }
+  }
+
+  /**
+   * CorpseCycler·VineCycler: 시체를 먹고(더 쓸 수 없게) recycler delay 미사일 — 남은 프레임이 Param1 이 될 때 주인 생명(마나)을 최대치의 calc1 % 회복.
+   * 출처: SKILLS_SrvSt63_Corpse_VineCycler → MISSMODE_SrvDo29_RecyclerDelay / SrvDo33_VineRecyclerDelay
+   */
+  private recycleCorpse(s: SkillRecord, lvl: number, body: MonsterUnit): void {
+    const data = this.data, calc = data?.skillCalc, c = this.character;
+    const def = data?.missiles.get(s.srvMissileA);
+    if (!calc || !def || !c) return;
+    body.corpseUsed = true;
+    const pct = calc.calc(s, 1, lvl, this.owner());
+    const life = def.srvDoFunc === 29;
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: body.x, y: body.y, dx: 0, dy: 0, left: def.range, age: 0, owner: 'player', ownerId: this.player.id, ownerLevel: c.level,
+      hitClass: 0, hit: new Set(), lvl, skill: s, noCollide: true,
+      onTick: (ms) => {
+        if (ms.left !== (def.params[0] ?? 0) || this.isDead) return;
+        if (life) c.life = Math.min(this.maxLife(), c.life + Math.trunc((this.maxLife() * pct) / 100));
+        else c.mana = Math.min(this.maxMana(), c.mana + Math.trunc((this.maxMana() * pct) / 100));
+        this.events.push({ type: 'recycled', life, pct });
+      },
+    });
   }
 
   private petMoveTo(pet: MonsterUnit, x: number, y: number, run: boolean): void {
@@ -8358,7 +8593,18 @@ export class Game {
     if (!rollPercent(hitChance(atk.toHit, this.monsterDefense(t, false), pet.stats.level, t.stats.level), pet.rng)) return;
     const d = emptyDamage();
     const base = rollDamage({ min: atk.min + info.normalDamage, max: atk.max + info.normalDamage }, pet.rng);
-    d.phys = Math.trunc((base * 256 * (100 + info.damagePct)) / 100);
+    // Grizzly: aip3 % 로 BearSmite (피해 +calc1 %, 기절 ln12). 출처: AITHINK_Fn112_DruidBear → monstats Skill1 BearSmite (St32/Do2)
+    // 근사(원작 미확인): BearSmite 기절 길이를 calc2 max(250, ln12) 대신 ln12 (par1 + (lvl−1)·par2) 로
+    let smite = 0;
+    if (info.petType === 'grizzly' && pet.rng.pick(100) < (pet.type.aiParams[2] ?? 0)) {
+      const bs = this.data?.skills?.byNameOf(pet.type.skills[0]?.name ?? '');
+      const own: SkillOwner = { baseLevel: () => 1, skillLevel: () => 1, unitLevel: pet.stats.level };
+      if (bs && this.data?.skillCalc) {
+        smite = this.data.skillCalc.calc(bs, 1, 1, own);
+        d.stunLen = linearPct(bs.params[0] ?? 0, bs.params[1] ?? 0, 1);
+      }
+    }
+    d.phys = Math.trunc((base * 256 * (100 + info.damagePct + smite + pet.states.stat('damagepercent'))) / 100);
     d.hitClass = pet.type.hitClass;
     this.damageMonster(t, d, 'pet');
     // Clay Golem: 맞은 적 감속 (item_slow). 근사(원작 미확인): 지속 50 프레임

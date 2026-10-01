@@ -79,7 +79,10 @@ export class ObjectDb {
     return Object.assign(Object.create(ObjectDb.prototype) as ObjectDb, this, { difficulty: d, levels });
   }
 
-  constructor(t: { objects: TxtRow[]; objGroup: TxtRow[]; shrines: TxtRow[]; levels: TxtRow[] }) {
+  /**
+   * @param expansion 확장팩 게임 — 지역 레벨은 levels.txt MonLvl{1,2,3}Ex (출처: DATATBLS_GetMonsterLevelInArea — bExpansion 이면 wMonLvlEx, 아니면 wMonLvl)
+   */
+  constructor(t: { objects: TxtRow[]; objGroup: TxtRow[]; shrines: TxtRow[]; levels: TxtRow[] }, expansion = false) {
     for (const r of t.objects) {
       // 'Expansion' 구분선은 Id 가 비어 있다 (그대로 두면 0 번 Dummy 를 덮는다)
       if (!r.Id) continue;
@@ -111,11 +114,12 @@ export class ObjectDb {
       for (let k = 0; k < 8; k++) entries.push({ id: n(r[`ID${k}`]), density: n(r[`DENSITY${k}`]), prob: n(r[`PROB${k}`]) });
       this.groups[n(r.Offset) || i] = { id: i, entries, shrines: n(r.SHRINES) === 1, wells: n(r.WELLS) === 1 };
     });
+    const ex = expansion ? 'Ex' : '';
     for (const r of t.levels) {
       const id = n(r.Id);
       if (!r.Name || r.Name === 'Expansion') continue;
       this.levels.set(id, {
-        id, act: n(r.Act), waypoint: r.Waypoint === undefined || r.Waypoint === '' ? 255 : n(r.Waypoint), monLvl: n(r.MonLvl1), monLvlByDiff: [n(r.MonLvl1), n(r.MonLvl2), n(r.MonLvl3)], themes: n(r.Themes),
+        id, act: n(r.Act), waypoint: r.Waypoint === undefined || r.Waypoint === '' ? 255 : n(r.Waypoint), monLvl: n(r[`MonLvl1${ex}`]), monLvlByDiff: [1, 2, 3].map((d) => n(r[`MonLvl${d}${ex}`])), themes: n(r.Themes),
         objGrp: Array.from({ length: 8 }, (_, k) => n(r[`ObjGrp${k}`])), objPrb: Array.from({ length: 8 }, (_, k) => n(r[`ObjPrb${k}`])),
       });
     }

@@ -123,9 +123,13 @@ export class MonsterDb {
   /** 난이도별 표 (같은 원본 행을 읽은 표끼리 나눠 쓴다) */
   private readonly byDiff: Map<Difficulty, MonsterDb>;
 
-  constructor(monstats: TxtRow[], monstats2: TxtRow[], monLvl: TxtRow[], monSeq: TxtRow[] = [], difficulty: Difficulty = 0, shared?: Map<Difficulty, MonsterDb>) {
+  /** 확장팩 게임 (원작 pGame->bExpansion — 클래식 난이도 보정 없음, 악몽·지옥 몬스터는 지역 레벨) */
+  readonly expansion: boolean;
+
+  constructor(monstats: TxtRow[], monstats2: TxtRow[], monLvl: TxtRow[], monSeq: TxtRow[] = [], difficulty: Difficulty = 0, shared?: Map<Difficulty, MonsterDb>, expansion = false) {
     this.monLvl = monLvl;
     this.difficulty = difficulty;
+    this.expansion = expansion;
     this.src = { monstats, monstats2, monLvl, monSeq };
     this.byDiff = shared ?? new Map();
     this.byDiff.set(difficulty, this);
@@ -200,7 +204,7 @@ export class MonsterDb {
    * 출처: 원작 D2MonStatsTxt 는 난이도 칸을 배열로 들고 pGame->nDifficulty 로 고른다 — 여기서는 난이도마다 표 하나
    */
   forDifficulty(d: Difficulty): MonsterDb {
-    return this.byDiff.get(d) ?? new MonsterDb(this.src.monstats, this.src.monstats2, this.src.monLvl, this.src.monSeq, d, this.byDiff);
+    return this.byDiff.get(d) ?? new MonsterDb(this.src.monstats, this.src.monstats2, this.src.monLvl, this.src.monSeq, d, this.byDiff, this.expansion);
   }
 
   /** 같은 계열 안의 순번 (BaseId = 0). 출처: D2Common DATATBLS_GetMonsterChainInfo (BaseId 부터 NextInClass 를 따라간 위치) */
@@ -273,9 +277,9 @@ export interface MonsterStats {
   elem: { min: number; max: number }[];
 }
 
-/** 클래식 Nightmare/Hell 보정 몬스터인가 (선한 몬스터 — NPC·용병·소환수 — 는 제외). 출처: MONSTERS_ApplyClassicScaling nAlign != MONALIGN_GOOD */
+/** 클래식 Nightmare/Hell 보정 몬스터인가 (선한 몬스터 — NPC·용병·소환수 — 는 제외). 출처: MONSTERS_ApplyClassicScaling (!bExpansion && nDifficulty != NORMAL && nAlign != MONALIGN_GOOD) */
 export function classicScaled(db: MonsterDb, t: MonsterType): boolean {
-  return db.difficulty > 0 && t.align !== 1;
+  return !db.expansion && db.difficulty > 0 && t.align !== 1;
 }
 
 /**
@@ -287,11 +291,14 @@ export function classicScaled(db: MonsterDb, t: MonsterType): boolean {
  *   - 공격 피해·명중은 원작이 공격할 때 현재 레벨(보정 뒤 레벨)로 다시 계산하므로 그 레벨로, 그리고 피해 ×10/12·명중 ×10/15 (MonsterMode.cpp)
  *   - 원소 피해도 보정 뒤 레벨 (MonsterMode.cpp 0x40+i, 클래식 감소 없음)
  * level 인자를 주면 (소환수 등) 그 레벨로만 계산하고 클래식 보정은 하지 않는다.
+ * 확장팩 (출처: Monster.cpp — bExpansion && 난이도 > 0 && !NORATIO && !BOSS 면 nLevel = DATATBLS_GetMonsterLevelInArea): 악몽·지옥 몬스터의 레벨은
+ *   그 지역 레벨 (areaLevel = levels.txt MonLvl{2,3}Ex), 보스·noRatio 는 monstats Level(N)/(H). 클래식 보정 없음
  */
-export function rollMonsterStats(db: MonsterDb, t: MonsterType, rng: Rng, level?: number): MonsterStats {
+export function rollMonsterStats(db: MonsterDb, t: MonsterType, rng: Rng, level?: number, areaLevel?: number): MonsterStats {
   const d = db.difficulty;
   const classic = level === undefined && classicScaled(db, t);
-  const statLvl = level ?? t.level;
+  const area = level === undefined && db.expansion && d > 0 && !t.noRatio && !t.boss && areaLevel ? areaLevel : undefined;
+  const statLvl = level ?? area ?? t.level;
   const lvl = classic ? 25 * d + t.baseLevel : statLvl;
   const ratio = (at: number, col: 'AC' | 'TH' | 'HP' | 'DM' | 'XP', pct: number) => (t.noRatio ? pct : Math.trunc((db.levelBase(at, col) * pct) / 100));
   const minHp = ratio(statLvl, 'HP', t.minHpPct), maxHp = ratio(statLvl, 'HP', t.maxHpPct);

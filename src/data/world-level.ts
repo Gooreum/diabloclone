@@ -160,7 +160,7 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
       // 출처: levels.txt 몬스터 풀 + 방 단위 배치 (spawn.ts). 원작처럼 몬스터 없는 방(POPULATION_ZERO: Populate=0 프리셋·이동 타일 방)은 제외
       // 출처: sub_6FC66260 — 이동 지점·마을 포털 자리에서 levels.txt WarpDist(거리²) 안에는 놓지 않는다
       // 난이도: 월드를 만드는 GameData 의 몬스터 표 난이도 (withDifficulty) — MonDen·MonUMin/Max·nmon 목록
-      const info = levelMonsterInfo(tables.table('Levels'), rec.levelName, gameData.monsters.difficulty ?? 0);
+      const info = levelMonsterInfo(tables.table('Levels'), rec.levelName, gameData.monsters.difficulty ?? 0, gameData.expansion);
       const rooms = lv.layout.rooms.filter((r) => !(r.flags & ROOM.POPULATION_ZERO));
       const warpPts = lv.layout.warps.map((w) => ({ x: w.x, y: w.y }));
       const ti11 = lv.layout.tileInfo.find((t) => t.index === 11);

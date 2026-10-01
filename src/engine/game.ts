@@ -1075,11 +1075,16 @@ export class Game {
    * 몬스터 한 마리 (파티·수식어 없음 — 원작 nFlags 64 스폰). leaderId = 주인(무리 리더).
    * 레이어 외형은 레벨 몬스터 영역의 변형 세트에서 고른다 (출처: MonsterChoose.cpp sub_6FC62020)
    */
+  /** 지금 레벨의 지역 레벨 (DATATBLS_GetMonsterLevelInArea — 확장팩 MonLvlEx, 클래식 MonLvl, 난이도 칸) */
+  private areaLevel(): number | undefined {
+    return this.data?.objects?.levels.get(this.level.def.levelNo ?? 0)?.monLvl || undefined;
+  }
+
   spawnMonster(typeId: string, x: number, y: number, leaderId?: number, opts: { mode?: MonMode } = {}): MonsterUnit {
     if (!this.data) throw new Error('spawnMonster requires game data');
     const type = this.data.monsters.get(typeId);
     const rng = new Rng(Number(this.rng.next() & 0xffffffffn) || 1);
-    const stats = rollMonsterStats(this.data.monsters, type, rng);
+    const stats = rollMonsterStats(this.data.monsters, type, rng, undefined, this.areaLevel());
     const id = this.nextUnitId++;
     const m = this.newMonsterUnit(id, type, stats, rng, x, y);
     m.leaderId = leaderId ?? id;
@@ -7682,7 +7687,7 @@ export class Game {
           if (data.monsters.types.has(id)) {
             const hpPct = t.hp / Math.max(1, t.stats.maxHp);
             t.type = data.monsters.get(id);
-            t.stats = rollMonsterStats(data.monsters, t.type, t.rng);
+            t.stats = rollMonsterStats(data.monsters, t.type, t.rng, undefined, this.areaLevel());
             t.hp = Math.max(1, Math.round(t.stats.maxHp * hpPct));
             t.aiOverride = 'Whipped';
             t.ai = [0, 0, 0];
@@ -8117,7 +8122,7 @@ export class Game {
     if (!data?.monsters.types.has(typeId)) return;
     const hpPct = m.hp / Math.max(1, m.stats.maxHp);
     m.type = data.monsters.get(typeId);
-    m.stats = rollMonsterStats(data.monsters, m.type, m.rng);
+    m.stats = rollMonsterStats(data.monsters, m.type, m.rng, undefined, this.areaLevel());
     m.hp = Math.max(1, Math.round(m.stats.maxHp * hpPct));
     m.ai = [0, 0, 0];
     m.states.set('changeclass', Infinity);
@@ -8131,7 +8136,7 @@ export class Game {
     const id = m.type.minions[0];
     if (!id || !data.monsters.types.has(id)) return;
     m.type = data.monsters.get(id);
-    m.stats = rollMonsterStats(data.monsters, m.type, m.rng);
+    m.stats = rollMonsterStats(data.monsters, m.type, m.rng, undefined, this.areaLevel());
     m.hp = 0;
     this.events.push({ type: 'monsterReinitialized', monsterId: m.id, typeId: id });
   }
@@ -9336,7 +9341,7 @@ export class Game {
     const spot = this.map.walkable(Math.floor(x), Math.floor(y)) ? { x: Math.floor(x), y: Math.floor(y) } : nearestWalkable(this.map, { x, y }, 6);
     if (!spot) return null;
     const rng = new Rng(this.npcRng.roll() || 1);
-    const stats = rollMonsterStats(data.monsters, type, rng);
+    const stats = rollMonsterStats(data.monsters, type, rng, undefined, this.areaLevel());
     const m = this.newMonsterUnit(this.nextUnitId++, type, stats, rng, spot.x + 0.5, spot.y + 0.5);
     m.components = Object.fromEntries(Object.keys(type.layers).map((k) => [k, 0]));
     m.levelKey = this.level.def.id;

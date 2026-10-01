@@ -40,7 +40,11 @@ export interface LevelMonsterInfo {
   warpDist: number;
 }
 
-export function levelMonsterInfo(levels: TxtRow[], levelName: string, difficulty: Difficulty = 0): LevelMonsterInfo {
+/**
+ * @param expansion 확장팩 게임 — 계열 고르기 지역 레벨 = MonLvl{d+1}Ex (출처: MonsterRegion.cpp — bExpansion 이면 dwDungeonLevelEx = wMonLvlEx[nDifficulty]).
+ *   근사(원작 미확인): 클래식은 예전처럼 MonLvl1Ex 를 둔다 (원작 wMonLvl[nDifficulty] — 클래식 회귀를 바꾸지 않으려고)
+ */
+export function levelMonsterInfo(levels: TxtRow[], levelName: string, difficulty: Difficulty = 0, expansion = false): LevelMonsterInfo {
   const r = levels.find((x) => x.LevelName === levelName || x.Name === levelName);
   if (!r) throw new Error(`levels.txt: ${levelName} not found`);
   const pool: string[] = [], nmon: string[] = [], umon: string[] = [];
@@ -55,7 +59,7 @@ export function levelMonsterInfo(levels: TxtRow[], levelName: string, difficulty
   const d = difficulty;
   return {
     id: r.Id ?? '', difficulty: d, monDen: Math.min(n(r[diffColumn('MonDen', d)]), 10000), pool, spawnPool: d > 0 ? nmon : pool, umon, numMon: n(r.NumMon),
-    bossMin: n(r[diffColumn('MonUMin', d)]), bossMax: n(r[diffColumn('MonUMax', d)]), monLvlEx: n(r.MonLvl1Ex), monLvl: n(r[`MonLvl${d + 1}`]), warpDist: n(r.WarpDist),
+    bossMin: n(r[diffColumn('MonUMin', d)]), bossMax: n(r[diffColumn('MonUMax', d)]), monLvlEx: n(r[expansion ? `MonLvl${d + 1}Ex` : 'MonLvl1Ex']), monLvl: n(r[`MonLvl${d + 1}`]), warpDist: n(r.WarpDist),
   };
 }
 

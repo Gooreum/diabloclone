@@ -122,15 +122,15 @@ function cleanQuestWords(v: unknown): number[] | null {
   return Array.isArray(v) && v.every((w) => Number.isInteger(w) && w >= 0 && w <= 0xffff) ? [...(v as number[])] : null;
 }
 
-/** 막 번호 (클래식 0~3, 그 밖은 0) */
-function cleanAct(v: unknown): number {
-  return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 3 ? (v as number) : 0;
+/** 막 번호 (클래식 0~3, 확장팩 0~4, 그 밖은 0). 출처: PlrSave2.cpp — NUM_ACTS 이상이면 Act I */
+function cleanAct(v: unknown, expansion = false): number {
+  return Number.isInteger(v) && (v as number) >= 0 && (v as number) <= (expansion ? 4 : 3) ? (v as number) : 0;
 }
 
-/** 난이도별 마지막 막 정리 (길이 3, 0~3). 배열이 아니면 [difficulty] 칸만 act (예전 저장) */
-function cleanActByDiff(v: unknown, act: number, difficulty: Difficulty): number[] {
-  const out = Array.from({ length: DIFFICULTY_COUNT }, (_, d) => cleanAct(Array.isArray(v) ? v[d] : 0));
-  if (!Array.isArray(v)) out[difficulty] = cleanAct(act);
+/** 난이도별 마지막 막 정리 (길이 3). 배열이 아니면 [difficulty] 칸만 act (예전 저장) */
+function cleanActByDiff(v: unknown, act: number, difficulty: Difficulty, expansion = false): number[] {
+  const out = Array.from({ length: DIFFICULTY_COUNT }, (_, d) => cleanAct(Array.isArray(v) ? v[d] : 0, expansion));
+  if (!Array.isArray(v)) out[difficulty] = cleanAct(act, expansion);
   return out;
 }
 
@@ -143,8 +143,8 @@ function cleanProgression(v: unknown): number | undefined {
  * 게임을 시작할 막: 고른 난이도의 마지막 막 (그 난이도를 처음 하면 Act 1).
  * 출처: PlrSave2.cpp — nAct = nTown[pGame->nDifficulty] & 0x7F (NUM_ACTS 이상이면 Act I)
  */
-export function startActFor(save: Pick<CharacterSave, 'actByDiff'> | null, difficulty: Difficulty): number {
-  return cleanAct(save?.actByDiff?.[difficulty]);
+export function startActFor(save: Pick<CharacterSave, 'actByDiff' | 'expansion'> | null, difficulty: Difficulty): number {
+  return cleanAct(save?.actByDiff?.[difficulty], save?.expansion === true);
 }
 
 /**
@@ -171,8 +171,9 @@ export function makeSave(name: string, character: Character, gold: number, items
   const normalQuest = byDiff.questFlagsByDiff[0];
   const difficulty = toDifficulty(items.difficulty);
   // 이번 게임 난이도 칸 = 지금 막 (원작 saveHeader.nTown[pGame->nDifficulty] = 현재 막 | 0x80)
-  const actByDiff = cleanActByDiff(items.actByDiff ?? [], 0, difficulty);
-  actByDiff[difficulty] = cleanAct(items.act);
+  const exp = items.expansion === true;
+  const actByDiff = cleanActByDiff(items.actByDiff ?? [], 0, difficulty, exp);
+  actByDiff[difficulty] = cleanAct(items.act, exp);
   const progression = cleanProgression(items.progression);
   return {
     version: SAVE_VERSION,
@@ -190,7 +191,7 @@ export function makeSave(name: string, character: Character, gold: number, items
     merc: items.merc ? structuredClone(items.merc) : null,
     quests: [...(items.quests ?? [])],
     ...(normalQuest ? { questFlags: [...normalQuest] } : {}),
-    act: cleanAct(items.act),
+    act: cleanAct(items.act, exp),
     difficulty: toDifficulty(items.difficulty),
     difficultyUnlocked: toDifficulty(Math.max(toDifficulty(items.difficultyUnlocked), toDifficulty(items.difficulty)) as Difficulty),
     waypointsByDiff: byDiff.waypointsByDiff,
@@ -289,7 +290,7 @@ export function parseSave(text: string): CharacterSave {
   if (qf) s.questFlags = qf;
   else delete s.questFlags;
   // 다막·난이도 필드가 없던 저장 호환: Act 1, Normal, 난이도별 기록의 Normal 칸 = waypoints/questFlags
-  s.act = cleanAct(s.act);
+  s.act = cleanAct(s.act, s.expansion === true);
   s.difficulty = toDifficulty(s.difficulty);
   s.difficultyUnlocked = toDifficulty(Math.max(toDifficulty(s.difficultyUnlocked), s.difficulty) as Difficulty);
   // Normal 칸은 waypoints/questFlags 가 기준 (예전 저장·예전 코드가 쓰는 칸), Nightmare·Hell 은 난이도별 배열
@@ -303,7 +304,7 @@ export function parseSave(text: string): CharacterSave {
   if (nq) s.questFlags = [...nq];
   else delete s.questFlags;
   // 난이도별 마지막 막이 없던 저장: 마지막 난이도 칸만 act
-  s.actByDiff = cleanActByDiff(s.actByDiff, s.act, s.difficulty);
+  s.actByDiff = cleanActByDiff(s.actByDiff, s.act, s.difficulty, s.expansion === true);
   const prog = cleanProgression(s.progression);
   if (prog !== undefined) s.progression = prog;
   else delete s.progression;

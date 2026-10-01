@@ -157,7 +157,7 @@ d('막 사이 웨이포인트 (levels.txt Waypoint 번호는 전역)', () => {
     expect(data.objects!.levels.get(40)).toMatchObject({ act: 1, waypoint: 9 });
     expect(data.objects!.levels.get(75)).toMatchObject({ act: 2, waypoint: 18 });
     expect(data.objects!.levels.get(103)).toMatchObject({ act: 3, waypoint: 27 });
-    expect(ACT_TOWNS).toEqual([1, 40, 75, 103]);
+    expect(ACT_TOWNS).toEqual([1, 40, 75, 103, 109]);
     expect([actTownKey(0), actTownKey(1), levelKey(41), levelKey(200)]).toEqual(['town', 'lutgholein', 'rockywaste', 'level200']);
   });
 

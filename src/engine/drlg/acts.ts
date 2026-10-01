@@ -31,11 +31,16 @@ export interface ActDrlg {
   generate(data: DrlgData, seed: number): DrlgWorld;
 }
 
-/** 출처: levels.txt Act 칸 — 막별 마을 (Rogue Encampment 1, Lut Gholein 40, Kurast Docks 75, Pandemonium Fortress 103) */
-export const ACT_TOWNS: readonly number[] = [LEVEL.ROGUEENCAMPMENT, 40, 75, 103];
+/** 출처: levels.txt Act 칸 — 막별 마을 (Rogue Encampment 1, Lut Gholein 40, Kurast Docks 75, Pandemonium Fortress 103, 확장팩 Harrogath 109) */
+export const ACT_TOWNS: readonly number[] = [LEVEL.ROGUEENCAMPMENT, 40, 75, 103, 109];
 
 /** 클래식 막 수 (Act 1~4) */
 export const ACT_COUNT = 4;
+
+/** 판본별 막 수. 출처: D2MOO Clients.cpp — NUM_ACTS (클래식 4, 확장팩 5) */
+export function actCount(expansion: boolean): number {
+  return expansion ? 5 : ACT_COUNT;
+}
 
 /** 막별 DRLG 등록표. 없는 막은 아직 만들지 않은 것 (Phase 2~4) */
 export const ACT_DRLG: Readonly<Record<number, ActDrlg>> = {

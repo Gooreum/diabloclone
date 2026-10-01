@@ -195,8 +195,8 @@ export interface HireCandidate { index: number; name: string; init: HirelingInit
  */
 export const LEVEL_REFRESH: readonly string[] = ['charsi', 'gheed', 'fara', 'hratli', 'asheara', 'halbu', 'jamella'];
 
-/** 막 마을 엔진 레벨 키 (data/world-level.ts LEVEL_KEYS: 1 Rogue Encampment, 40 Lut Gholein, 75 Kurast Docks, 103 Pandemonium Fortress) */
-export const ACT_TOWN_KEYS: readonly string[] = ['town', 'lutgholein', 'kurastdocks', 'pandemonium'];
+/** 막 마을 엔진 레벨 키 (data/world-level.ts LEVEL_KEYS: 1 Rogue Encampment, 40 Lut Gholein, 75 Kurast Docks, 103 Pandemonium Fortress, 109 Harrogath) */
+export const ACT_TOWN_KEYS: readonly string[] = ['town', 'lutgholein', 'kurastdocks', 'pandemonium', 'harrogath'];
 
 /** 퀘스트 기록 번호 (출처: D2MOO Quests.h QUESTSTATEFLAG_A2Q6 = 14 Duriel, QUESTSTATEFLAG_A3Q6 = 22 Mephisto, A2Q0 = 8, A3Q0 = 16) */
 export const QUESTFLAG_A2Q0 = 8;

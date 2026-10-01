@@ -54,6 +54,7 @@ import { QUEST_INIT_FNS, QuestControl, type ActsQuestHost } from './quests/index
 import { applyResistPenalty, difficultyRules, type DifficultyRules } from './difficulty';
 import { QFLAG, QUEST, QuestRecord } from './quests/record';
 import { LEVEL } from './drlg/types';
+import { actCount } from './drlg/acts';
 import { mercCanEquip, mercDerived, mercSkillBonus, mercSlotFor, type MercDerived, type MercSlot } from './mercequip';
 
 /**
@@ -9383,8 +9384,8 @@ export class Game {
         g.difficultyUnlocked = Math.max(g.difficultyUnlocked, Math.min(g.difficulty + 1, 2)) as 0 | 1 | 2;
       },
       progress: (nAct) => {
-        // 출처: CLIENTS_UpdateCharacterProgression — 클래식 막 4개
-        g.progression = Math.max(g.progression, nAct + g.difficulty * 4);
+        // 출처: CLIENTS_UpdateCharacterProgression — 난이도마다 NUM_ACTS (클래식 4, 확장팩 5)
+        g.progression = Math.max(g.progression, nAct + g.difficulty * actCount(g.expansion));
       },
       difficulty: () => g.difficulty,
       act: () => g.act,

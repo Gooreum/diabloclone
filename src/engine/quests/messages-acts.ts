@@ -13,10 +13,13 @@ export const QW = {
   A2Q0: 8, A2Q1: 9, A2Q2: 10, A2Q3: 11, A2Q4: 12, A2Q5: 13, A2Q6: 14, A2COMPLETED: 15,
   A3Q0: 16, A3Q1: 17, A3Q2: 18, A3Q3: 19, A3Q4: 20, A3Q5: 21, A3Q6: 22, A3COMPLETED: 23,
   A4Q0: 24, A4Q1: 25, A4Q2: 26, A4Q3: 27, A4COMPLETED: 28,
+  // 확장팩 Act 5: 워드 34 는 원작에서 쓰지 않는다 (Quests.h "Unused: 34") — 막 번호 계산의 기준(Q0)으로만 쓴다
+  A5Q0: 34, A5Q1: 35, A5Q2: 36, A5Q3: 37, A5Q4: 38, A5Q5: 39, A5Q6: 40,
 } as const;
 
 /** 퀘스트 기록 워드 → (막, 막 안의 퀘스트 번호). Act 1 은 워드 = 번호 */
 export function questOfWord(word: number): { act: number; quest: number } {
+  if (word >= QW.A5Q1 && word <= QW.A5Q6) return { act: 4, quest: word - QW.A5Q0 };
   if (word >= QW.A4Q0) return { act: 3, quest: word - QW.A4Q0 };
   if (word >= QW.A3Q0) return { act: 2, quest: word - QW.A3Q0 };
   if (word >= QW.A2Q0) return { act: 1, quest: word - QW.A2Q0 };
@@ -25,7 +28,7 @@ export function questOfWord(word: number): { act: number; quest: number } {
 
 /** (막, 번호) → 기록 워드 */
 export function wordOfQuest(act: number, quest: number): number {
-  return [0, QW.A2Q0, QW.A3Q0, QW.A4Q0][act]! + quest;
+  return [0, QW.A2Q0, QW.A3Q0, QW.A4Q0, QW.A5Q0][act]! + quest;
 }
 
 /** 퀘스트 이름 string.tbl 키 (qstsa2q1 …) */

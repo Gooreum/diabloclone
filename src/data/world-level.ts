@@ -72,6 +72,11 @@ export const LEVEL_KEYS: Record<number, string> = {
   106: 'cityofthedamned',
   107: 'riverofflame',
   108: 'chaossanctuary',
+  // 확장팩 Act 5 (출처: levels.txt 109~132 LevelName)
+  109: 'harrogath', 110: 'bloodyfoothills', 111: 'frigidhighlands', 112: 'arreatplateau', 113: 'crystallinepassage', 114: 'frozenriver',
+  115: 'glacialtrail', 116: 'driftercavern', 117: 'frozentundra', 118: 'ancientsway', 119: 'icycellar', 120: 'arreatsummit',
+  121: 'nihlathakstemple', 122: 'hallsofanguish', 123: 'hallsofpain', 124: 'hallsofvaught', 125: 'abaddon', 126: 'pitofacheron',
+  127: 'infernalpit', 128: 'worldstonekeep1', 129: 'worldstonekeep2', 130: 'worldstonekeep3', 131: 'throneofdestruction', 132: 'worldstonechamber',
 };
 
 /** levels.txt Id → 엔진 레벨 id (모든 막에서 겹치지 않는다) */

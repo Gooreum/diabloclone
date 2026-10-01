@@ -622,6 +622,26 @@ export class ItemGen {
       let prev = 0;
       const param = Number(m.param) || 0;
       for (const b of blocks) {
+        // 스킬 발동(11)·충전(19)·무작위 스킬(12)·단일 스킬/오라/다른 직업 스킬(22): 스킬 param 은 번호 또는 skills.txt 이름
+        if (b.func === 11 || b.func === 19) {
+          const sk = this.skillParam(m.param);
+          if (sk < 0) continue;
+          const lvl = this.propSkillLevel(sk, item.ilvl, m.max);
+          if (b.func === 11) this.add(item, b.stat, (lvl & 63) + (sk << 6), m.min > 0 ? m.min : 5);
+          else this.add(item, b.stat, (lvl & 63) + (sk << 6), chargesValue(lvl, m.min, rng));
+          continue;
+        }
+        if (b.func === 12) {
+          const sk = this.rollValue(m.min, m.max, rng);
+          if (param > 0) this.add(item, b.stat, sk, param);
+          continue;
+        }
+        if (b.func === 22) {
+          const sk = this.skillParam(m.param);
+          const v = this.rollValue(m.min, m.max, rng);
+          if (sk >= 0 && v) this.add(item, b.stat, sk, v);
+          continue;
+        }
         let v = 0;
         switch (b.func) {
           case 1: case 2: case 4: case 8: case 13: case 14:
@@ -654,7 +674,7 @@ export class ItemGen {
             this.add(item, 'item_numsockets', 0, v);
             break;
           case 21: this.add(item, b.stat, b.val, v); break;
-          case 22: case 11: case 12: case 19: case 24: this.add(item, b.stat, param, v); break;
+          case 24: this.add(item, b.stat, param, v); break;
           default: if (b.stat) this.add(item, b.stat, param, v);
         }
         // 방어% 또는 (상급의) 방어 → 기본 방어 = maxac + 1 (출처: sub_6FD92CF0)
@@ -664,6 +684,28 @@ export class ItemGen {
         }
       }
     }
+  }
+
+  /** 속성 param → 스킬 번호 (숫자 또는 skills.txt skill 이름), 없으면 −1 */
+  private skillParam(p: string): number {
+    if (p === '' || p === undefined) return -1;
+    const num = Number(p);
+    if (Number.isFinite(num)) return this.skillRows.some((r) => n(r.Id) === num) ? num : -1;
+    const row = this.skillRows.find((r) => r.skill === p);
+    return row ? n(row.Id) : -1;
+  }
+
+  /**
+   * 발동·충전 스킬 레벨 (속성 max): > 0 그 값, 0 → (아이템 레벨 − 스킬 reqlevel)/4 + 1 (1~maxlvl, 기본 20),
+   * < 0 → (아이템 레벨 − reqlevel) / max(1, −((99 − reqlevel)/max)) (최소 1). 출처: D2MOO ITEMMODS_PropertyFunc11 / 19
+   */
+  private propSkillLevel(skill: number, ilvl: number, max: number): number {
+    const row = this.skillRows.find((r) => n(r.Id) === skill);
+    const req = n(row?.reqlevel);
+    if (max > 0) return max;
+    if (max === 0) return Math.max(1, Math.min(n(row?.maxlvl) || 20, Math.trunc((ilvl - req) / 4) + 1));
+    const div = Math.max(1, -Math.trunc(Math.max(1, 99 - req) / max));
+    return Math.max(1, Math.trunc((ilvl - req) / div));
   }
 
   private add(item: ItemInstance, stat: string, param: number, value: number): void {
@@ -717,3 +759,22 @@ export const statOf = (item: ItemInstance, stat: string, param = 0): number => {
 };
 
 export type { ItemStat };
+
+/**
+ * 충전 스킬 값 = 최대 << 8 | 현재. 최대 = 속성 min (0 → 5, 음수 → 레벨 × −min / 8 − min, 1~255), 현재는 [최대/8 + 1, 최대] 무작위.
+ * 출처: D2MOO ITEMMODS_PropertyFunc19
+ */
+export function chargesValue(level: number, min: number, rng: Rng): number {
+  let max: number;
+  if (!min) max = 5;
+  else {
+    let m = min;
+    if (m < 0) m = Math.trunc((level * -m) / 8) - m;
+    max = m > 1 ? Math.min(m, 255) : 1;
+  }
+  const cur = (rng.pick(Math.max(1, max - Math.trunc(max / 8))) + Math.trunc(max / 8) + 1) & 0xff;
+  return (max << 8) | cur;
+}
+
+/** 충전 스킬 값 풀기 */
+export const chargesOf = (value: number): { max: number; cur: number } => ({ max: (value >> 8) & 0xff, cur: value & 0xff });

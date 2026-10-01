@@ -36,6 +36,8 @@ export interface SkillRecord {
   seqInput: number;
   reqLevel: number; maxLvl: number; reqSkills: string[];
   leftSkill: boolean; inTown: boolean; passive: boolean; aura: boolean;
+  /** 아이템 효과 (skills.txt ItemEffect · ItemTarget 1 자신 / 2 무작위 지점 / 3 시체 / 4 마지막 공격자 · ItemTgtDo · ItemCheckStart) */
+  itemEffect: number; itemTarget: number; itemTgtDo: boolean; itemCheckStart: boolean;
   targetableOnly: boolean; searchEnemyXY: boolean; searchEnemyNear: boolean; targetCorpse: boolean;
   attackNoMana: boolean; useAttackRate: boolean; durability: boolean; decQuant: boolean; lob: boolean;
   delay: CalcNode | null;
@@ -83,6 +85,7 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     reqLevel: n(r.reqlevel), maxLvl: n(r.maxlvl),
     reqSkills: [r.reqskill1, r.reqskill2, r.reqskill3].filter((x): x is string => !!x),
     leftSkill: flag(r.leftskill), inTown: flag(r.InTown), passive: flag(r.passive), aura: flag(r.aura),
+    itemEffect: n(r.ItemEffect), itemTarget: n(r.ItemTarget), itemTgtDo: flag(r.ItemTgtDo), itemCheckStart: flag(r.ItemCheckStart),
     targetableOnly: flag(r.TargetableOnly), searchEnemyXY: flag(r.SearchEnemyXY), searchEnemyNear: flag(r.SearchEnemyNear), targetCorpse: flag(r.TargetCorpse),
     attackNoMana: flag(r.AttackNoMana), useAttackRate: flag(r.UseAttackRate), durability: flag(r.durability), decQuant: flag(r.decquant), lob: flag(r.lob),
     delay: calc(r.delay), perDelay: calc(r.perdelay), immediate: flag(r.immediate),

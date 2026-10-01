@@ -411,6 +411,12 @@ export class Game {
   readonly store: ItemStore;
   /** 장착이 바뀌어 파생 스탯을 다시 계산해야 함 */
   private statsDirty = true;
+  /** 아이템 오라 (스킬 번호 → 레벨·다음 주기) */
+  private readonly itemAuras = new Map<number, { skill: SkillRecord; lvl: number; next: number }>();
+  /** 아이템 스킬 발동 중 (발동한 스킬이 다시 발동을 부르지 않게) */
+  private inItemSkill = false;
+  /** 마지막으로 플레이어를 친 몬스터 (ItemTarget 4) */
+  private lastAttackerId: number | undefined;
   /** 자동 수리·수량 다음 프레임 (아이템 id → 프레임) */
   private readonly replenishAt = new Map<number, number>();
   private derivedCache: Derived | null = null;
@@ -915,6 +921,7 @@ export class Game {
     for (const cmd of this.queue.splice(0)) this.apply(cmd);
     this.expireStates();
     this.updateAura();
+    this.updateItemAuras();
     this.updatePlayer();
     this.checkExits();
     this.updateObjects();
@@ -1400,6 +1407,7 @@ export class Game {
       const t = this.talking();
       const refreshed = this.npc.levelUp(t && (this.talk?.mode === 'trade' || this.talk?.mode === 'gamble') ? t.type.id : undefined);
       this.events.push({ type: 'levelUp', level: c.level });
+      this.procItemSkills('item_skillonlevelup', undefined, this.player);
       if (refreshed.length) this.events.push({ type: 'storeRefresh', npcs: refreshed });
     }
   }
@@ -2311,10 +2319,46 @@ export class Game {
       this.aura = { skill: s, lvl, next: s.immediate ? this.tickCount : this.tickCount + 1 };
       this.passiveCache = null;
     }
-    if (this.tickCount < this.aura.next) return;
+    // 같은 오라를 아이템이 더 높은 레벨로 주면 그쪽만 상태를 쓴다 (출처: sub_6FD10EC0 — 낮은 레벨은 무시)
+    if ((this.itemAuras.get(s.id)?.lvl ?? 0) > lvl) return;
+    this.runAura(this.aura);
+  }
+
+  /**
+   * 아이템 오라 (item_aura, param = 오라 스킬, 값 = 레벨 — +스킬 미적용): 직업 오라와 따로 함께 돈다.
+   * 출처: D2MOO SKILLITEM_ActivateAura / D2GAME_MONSTERS_AiFunction10_6FD13610 (EVENTTYPE_PERIODICSTATS, 레벨 = item_aura 합)
+   */
+  private updateItemAuras(): void {
+    const dv = this.derived();
+    const want = new Map<number, number>();
+    if (dv && !this.isDead) for (const l of dv.layered) if (l.stat === 'item_aura' && l.value > 0) want.set(l.param, (want.get(l.param) ?? 0) + l.value);
+    for (const [id, run] of this.itemAuras) {
+      if (want.get(id) === run.lvl) continue;
+      if (this.aura?.skill.auraState !== run.skill.auraState) this.player.states.remove(run.skill.auraState);
+      this.itemAuras.delete(id);
+    }
+    for (const [id, lvl] of want) {
+      const s = this.skillRecord(id);
+      if (!s || !s.aura || !s.auraState) continue;
+      let run = this.itemAuras.get(id);
+      if (!run) {
+        run = { skill: s, lvl, next: s.immediate ? this.tickCount : this.tickCount + 1 };
+        this.itemAuras.set(id, run);
+      }
+      if (this.aura?.skill.id === id && this.aura.lvl >= lvl) continue;
+      this.runAura(run);
+    }
+  }
+
+  /** 오라 한 주기 (직업·아이템 공통): 주기마다 자신 상태·주변 몬스터 효과, 마나 소모. 출처: SKILLS_SrvDo065_BasicAura 등 */
+  private runAura(run: { skill: SkillRecord; lvl: number; next: number }): void {
+    const c = this.character, calc = this.data?.skillCalc;
+    if (!c || !calc) return;
+    const s = run.skill, lvl = run.lvl;
+    if (this.tickCount < run.next) return;
     const o = this.owner();
     const period = Math.max(5, calc.eval(s, s.perDelay, lvl, o));
-    this.aura.next = this.tickCount + period;
+    run.next = this.tickCount + period;
     const until = this.tickCount + period + 1;
     const mana256 = calc.manaCost256(s, lvl);
     const hasMana = c.mana * 256 >= mana256;
@@ -3949,6 +3993,8 @@ export class Game {
     const arAll = ar + this.vsTypeStat(m, 'item_demon_tohit', 'item_undead_tohit');
     if (!spec.shield && !rollPercent(hitChance(arAll + Math.trunc((arAll * pct) / 100), this.targetDefense(m, false), c.level, m.stats.level), this.rng)) {
       this.events.push({ type: 'miss', targetId: m.id });
+      // 공격 시도 사건 (domeleeattack): 빗나가도 (출처: SUnitDmg.cpp:2377)
+      this.procItemSkills('item_skillonattack', m, m);
       return false;
     }
     this.onPlayerHitMonster(m);
@@ -3989,6 +4035,7 @@ export class Game {
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
     this.damageMonster(m, d, 'player', undefined, 'melee');
+    this.procItemSkills('item_skillonattack', m, m);
     if (!spec.shield) this.wearWeapon();
     // 생명·마나 흡수: 준 물리 피해의 lifedrainmindam / manadrainmindam % (Normal LifeStealDivisor 1). 출처: itemstatcost.txt, DifficultyLevels.txt
     const dvl = this.derived();
@@ -4037,6 +4084,12 @@ export class Game {
    */
   /** @param proc 플레이어 무기 공격 (근접 / 무기 피해를 실은 미사일) — 아이템 공격 사건 (강타·상처 악화·감속 …) */
   private damageMonster(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other' = 'player', attackerId?: number, proc?: 'melee' | 'missile'): void {
+    this.applyMonsterDamage(m, raw, source, attackerId, proc);
+    // 명중 사건 (domeleedamage / domissiledamage) 의 스킬 발동 — 대상이 죽었으면 그 자리에 (출처: SKILLITEM_EventFunc20)
+    if (proc && source === 'player' && !m.pet && !m.hidden) this.procItemSkills('item_skillonhit', m.mode === 'DT' || m.mode === 'DD' ? undefined : m, { x: m.x, y: m.y });
+  }
+
+  private applyMonsterDamage(m: MonsterUnit, raw: DamagePacket, source: 'player' | 'pet' | 'other', attackerId: number | undefined, proc: 'melee' | 'missile' | undefined): void {
     if (m.pet) {
       this.damagePet(m, raw);
       return;
@@ -4211,6 +4264,23 @@ export class Game {
       m.path = [];
       m.nextThink = this.tickCount;
     }
+    // 실명: 확률 5×(공격자 레벨 + 4v − 대상 레벨 + 6) (원거리 /3, 1~99), 성공 폭 d 로 Dim Vision 레벨 d/5 + 1 (1~20) (EventFunc09)
+    const stu = dv.stat('item_stupidity');
+    if (stu > 0) {
+      let chance = 5 * (c.level + 4 * stu - m.stats.level + 6);
+      if (ranged) chance = Math.trunc(chance / 3);
+      chance = Math.max(1, Math.min(99, chance));
+      const diff = chance - roll100();
+      const dim = this.data?.skills?.byNameOf('Dim Vision');
+      if (diff > 0 && dim && !this.inItemSkill) {
+        this.inItemSkill = true;
+        try {
+          this.skillEvent({ skill: dim, lvl: Math.max(1, Math.min(20, Math.trunc(diff / 5) + 1)), targetId: m.id, tx: m.x, ty: m.y, start: this.tickCount, end: this.tickCount, hitTicks: [], fired: 0 }, 0);
+        } finally {
+          this.inItemSkill = false;
+        }
+      }
+    }
     // 밀쳐내기: (rand & 127) < 64 (큰 몬스터 32, 작은 몬스터 128) (EventFunc07)
     if (dv.stat('item_knockback') > 0) {
       const chance = m.type.large ? 32 : m.type.small ? 128 : 64;
@@ -4300,12 +4370,68 @@ export class Game {
   }
 
   /**
+   * 아이템 효과 스킬: 마나·쿨다운·애니 없이 즉시 효과 (skills.txt ItemEffect 가 있는 스킬만).
+   * 대상 = ItemTarget (1 자신 · 2 ±20 무작위 지점 · 3 근처 시체 · 4 마지막 공격자, 그 밖은 상대).
+   * 출처: D2MOO SKILLITEM_CastSkillOnTarget / OnPosition → SKILLITEM_HandleItemEffectSkill → D2GAME_SKILLS_Handler (a6 = 1)
+   * 근사(원작 미확인): ItemTgtDo(상대가 자기에게 시전 — Teleport) 는 건너뛴다, ItemEffect 의 별도 srvdofunc(36·151)는 skills.txt srvdofunc 로
+   */
+  private castItemSkill(skillId: number, lvl: number, target: MonsterUnit | undefined, at: Pt): boolean {
+    const s = this.skillRecord(skillId), p = this.player;
+    if (!s || !s.itemEffect || lvl <= 0 || s.itemTgtDo || this.isDead) return false;
+    let tx = target?.x ?? at.x, ty = target?.y ?? at.y, targetId = target && target.mode !== 'DT' && target.mode !== 'DD' ? target.id : undefined;
+    if (s.itemTarget === 1) {
+      tx = p.x;
+      ty = p.y;
+      targetId = undefined;
+    } else if (s.itemTarget === 2) {
+      tx = p.x + this.rng.pick(41) - 20;
+      ty = p.y + this.rng.pick(41) - 20;
+      targetId = undefined;
+    } else if (s.itemTarget === 3) {
+      const corpse = this.monsters.filter((m) => m.mode === 'DD' && !m.corpseUsed && !m.pet).sort((a, b) => Math.hypot(a.x - tx, a.y - ty) - Math.hypot(b.x - tx, b.y - ty))[0];
+      if (!corpse) return false;
+      tx = corpse.x;
+      ty = corpse.y;
+      targetId = corpse.id;
+    } else if (s.itemTarget === 4) {
+      const last = this.monsters.find((m) => m.id === this.lastAttackerId && m.mode !== 'DT' && m.mode !== 'DD') ?? target;
+      if (!last) return false;
+      tx = last.x;
+      ty = last.y;
+      targetId = last.id;
+    }
+    if (s.itemCheckStart && !this.startCheck(s, targetId)) return false;
+    this.inItemSkill = true;
+    try {
+      this.skillEvent({ skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount, hitTicks: [], fired: 0 }, 0);
+    } finally {
+      this.inItemSkill = false;
+    }
+    this.events.push({ type: 'itemSkill', skill: s.id, level: lvl });
+    return true;
+  }
+
+  /**
+   * 아이템 스킬 발동 (layer = 스킬 << 6 | 레벨, 값 = 확률 %, 같은 layer 합산): 공격 시도·명중·피격·처치·죽음·레벨업.
+   * 출처: D2MOO SKILLITEM_EventFunc20 (attack/hit/kill) · 21 (struck) · 30 (death/levelup), ItemStatCost itemevent
+   */
+  private procItemSkills(stat: 'item_skillonattack' | 'item_skillonhit' | 'item_skillongethit' | 'item_skillonkill' | 'item_skillondeath' | 'item_skillonlevelup', target: MonsterUnit | undefined, at: Pt): void {
+    if (this.inItemSkill) return;
+    const dv = this.derived();
+    if (!dv) return;
+    const byLayer = new Map<number, number>();
+    for (const l of dv.layered) if (l.stat === stat) byLayer.set(l.param, (byLayer.get(l.param) ?? 0) + l.value);
+    for (const [layer, chance] of byLayer) if (chance > 0 && this.rng.pick(100) < chance) this.castItemSkill(layer >> 6, layer & 63, target, at);
+  }
+
+  /**
    * 처치 사건 (kill): 처치 후 생명(item_healafterkill)·악마 처치 후 생명(item_healafterdemonkill)·마나(item_manaafterkill), 최대치까지.
    * 출처: D2MOO SKILLITEM_EventFunc28 / EventFunc18 / EventFunc17 (ItemStatCost itemevent kill)
    */
   private onPlayerKill(m: MonsterUnit): void {
     const c = this.character, dv = this.derived();
     if (!c || !dv || this.isDead) return;
+    this.procItemSkills('item_skillonkill', undefined, { x: m.x, y: m.y });
     const life = dv.stat('item_healafterkill') + (m.type.demon ? dv.stat('item_healafterdemonkill') : 0);
     if (life > 0 && c.life < this.maxLife()) c.life = Math.min(this.maxLife(), c.life + life);
     const mana = dv.stat('item_manaafterkill');
@@ -6593,10 +6719,13 @@ export class Game {
     // 근접으로 맞으면 공격자가 피해 (물리·번개, 고정값 — 공격자 저항 적용). 출처: SKILLITEM_EventFunc06 / EventFunc10 (damagedinmelee)
     if (!missile && attacker) this.attackerTakesDamage(attacker);
     if (attacker && total > 0) this.onMonsterHitPlayer(attacker);
+    if (attacker) this.lastAttackerId = attacker.id;
     if (c.life <= 0) {
       this.playerDie();
       return;
     }
+    // 피격 사건 (damagedinmelee / damagedbymissile, GETHIT 결과): 공격자에게 (출처: SKILLITEM_EventFunc21)
+    if (total > 0) this.procItemSkills('item_skillongethit', attacker, attacker ?? p);
     // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
     // 피격 애니 속도 50 + EFHR %. 출처: D2MOO Units.cpp:1540 (item_fastergethitrate)
     if (total * 12 >= this.maxLife() && !p.cast) {
@@ -8179,6 +8308,8 @@ export class Game {
 
   private playerDie(): void {
     const p = this.player;
+    // 죽음 사건 (killed): 쓰러지는 자리에 (출처: SKILLITEM_EventFunc30)
+    this.procItemSkills('item_skillondeath', undefined, p);
     p.path = [];
     p.action = null;
     p.cast = null;

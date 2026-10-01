@@ -329,3 +329,71 @@ describe.skipIf(!hasGameData)('2단계 — 공격 쪽 아이템 사건', () => {
     expect(off(b.game).startCheck(lod.skills!.byId.get(0), undefined)).toBe(false);
   });
 });
+
+describe.skipIf(!hasGameData)('3단계 발동 — 아이템 스킬 · 아이템 오라', () => {
+  const sk = (name: string) => lod.skills!.byNameOf(name)!.id;
+  const layer = (name: string, lvl: number) => (sk(name) << 6) | lvl;
+  const off = (g: Game) => g as unknown as Offense & { gainExperience(n: number): void };
+  const tough = (g: Game, x = 22.5) => {
+    const z = g.spawnMonster('zombie1', x, 20.5);
+    z.hp = 1000;
+    z.stats.maxHp = 2000;
+    z.nextThink = 1e9;
+    return z;
+  };
+
+  it('명중 시 100% Amplify Damage: 맞힌 몬스터에 amplifydamage, 마나는 그대로', () => {
+    const { game, ch, inner } = setup({ rarm: item('axe', [{ stat: 'item_skillonhit', param: layer('Amplify Damage', 3), value: 100 }]) });
+    const z = tough(game);
+    const mana = ch.mana;
+    off(game).damageMonster(z, emptyDamage(), 'player', undefined, 'melee');
+    expect(z.states.has('amplifydamage')).toBe(true);
+    expect(ch.mana).toBe(mana);
+    expect(inner.events.some((e) => e.type === 'itemSkill' && e.skill === sk('Amplify Damage') && e.level === 3)).toBe(true);
+  });
+
+  it('맞을 때 100% Frost Nova: 피격되면 발동하고 근처 몬스터가 냉기 피해', () => {
+    const { game, inner } = setup({ tors: item('qui', [{ stat: 'item_skillongethit', param: layer('Frost Nova', 5), value: 100 }]) });
+    const z = tough(game);
+    inner.hitPlayer({ min: 5, max: 5, toHit: 1 }, 1, 0, false, z, undefined, true);
+    expect(inner.events.some((e) => e.type === 'itemSkill' && e.skill === sk('Frost Nova'))).toBe(true);
+    z.hpRegen = false;
+    const ev: GameEvent[] = [];
+    for (let i = 0; i < 30; i++) ev.push(...game.tick());
+    expect(ev.some((e) => e.type === 'monsterHit' && e.targetId === z.id)).toBe(true);
+  });
+
+  it('처치·레벨업 시 발동', () => {
+    const { game, inner } = setup({ lrin: item('rin', [
+      { stat: 'item_skillonkill', param: layer('Nova', 2), value: 100 },
+      { stat: 'item_skillonlevelup', param: layer('Frost Nova', 2), value: 100 },
+    ]) }, { level: 1 });
+    off(game).killMonster(tough(game), 'player');
+    expect(inner.events.some((e) => e.type === 'itemSkill' && e.skill === sk('Nova'))).toBe(true);
+    off(game).gainExperience(10000);
+    expect(inner.events.some((e) => e.type === 'itemSkill' && e.skill === sk('Frost Nova'))).toBe(true);
+  });
+
+  it('처리 함수가 없는 스킬(Druid Firestorm) 발동은 오류 없이 지나간다', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_skillonhit', param: layer('Firestorm', 3), value: 100 }]) });
+    const z = tough(game);
+    expect(() => off(game).damageMonster(z, emptyDamage(), 'player', undefined, 'melee')).not.toThrow();
+  });
+
+  it('실명 (item_stupidity): 레벨 차이가 크면 Dim Vision 이 걸린다', () => {
+    const { game } = setup({ rarm: item('axe', [{ stat: 'item_stupidity', value: 10 }]) });
+    const z = tough(game);
+    off(game).damageMonster(z, emptyDamage(), 'player', undefined, 'melee');
+    expect(z.states.has('dimvision')).toBe(true);
+  });
+
+  it('아이템 오라 Might 5: 장착하면 might 상태, 직업 오라(Prayer)와 함께', () => {
+    const might = lod.skills!.byNameOf('Might')!, prayer = lod.skills!.byNameOf('Prayer')!;
+    const { game, ch, inner } = setup({ lrin: item('rin', [{ stat: 'item_aura', param: might.id, value: 5 }]) }, { cls: 'Paladin' });
+    ch.skills[prayer.id] = 1;
+    ch.rightSkill = prayer.id;
+    for (let i = 0; i < 5; i++) game.tick();
+    expect(inner.player.states.has(might.auraState)).toBe(true);
+    expect(inner.player.states.has(prayer.auraState)).toBe(true);
+  });
+});

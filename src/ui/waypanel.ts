@@ -13,9 +13,9 @@ export interface WaypointRow { no: number; levelKey: string; name: string; activ
 export const WP_PANEL = { x: 80, y: 60, w: 320, h: 432 } as const;
 /** 줄(아이콘 칸) 위치: 배경 그림의 금테 칸 (x 15, y 57 + 36·i) */
 const ROW = { iconX: 16, iconY: 58, step: 36, textX: 60 } as const;
-const TAB = { x: 2, y: 3, w: 78, h: 30 } as const;
-/** 클래식 막 탭 수 (I~IV) */
-const TABS = 4;
+/** 막 탭 칸. 출처(그림 측정): 클래식 waygatetabs.dc6 프레임 78×30 (4 탭), 확장팩 expwaygatetabs.dc6 프레임 63×31 (5 탭) */
+const TAB4 = { x: 2, y: 3, w: 78, h: 30 } as const;
+const TAB5 = { x: 2, y: 3, w: 63, h: 31 } as const;
 const CLOSE = { x: 272, y: 384, w: 36, h: 36 } as const;
 
 export class WaypointPanel {
@@ -25,15 +25,23 @@ export class WaypointPanel {
   /** 막 탭별 줄 (월드가 없는 막은 빈 목록) */
   rowsByAct: WaypointRow[][] = [];
   /** 누를 수 있는 탭 (월드가 있는 막) */
-  tabEnabled: boolean[] = [true, false, false, false];
+  tabEnabled: boolean[];
   private readonly frames = new Map<string, Drawable[] | null>();
   private readonly assets: AsyncAssets;
   private readonly pal: Palette;
+  /** 막 탭 수 (클래식 4, 확장팩 5) */
+  readonly tabs: number;
+  private readonly tabFile: string;
+  private readonly TAB: { x: number; y: number; w: number; h: number };
 
-  constructor(assets: AsyncAssets, pal: Palette) {
+  constructor(assets: AsyncAssets, pal: Palette, tabs: 4 | 5 = 4) {
     this.assets = assets;
     this.pal = pal;
-    for (const f of ['waygatebackground', 'waygatetabs', 'waygateicons']) this.load(f);
+    this.tabs = tabs;
+    this.tabFile = tabs === 5 ? 'expwaygatetabs' : 'waygatetabs';
+    this.TAB = tabs === 5 ? TAB5 : TAB4;
+    this.tabEnabled = Array.from({ length: tabs }, (_, i) => i === 0);
+    for (const f of ['waygatebackground', this.tabFile, 'waygateicons']) this.load(f);
   }
 
   private load(name: string): void {
@@ -54,7 +62,7 @@ export class WaypointPanel {
   }
 
   get ready(): boolean {
-    return ['waygatebackground', 'waygatetabs', 'waygateicons'].every((n) => !!this.frames.get(n));
+    return ['waygatebackground', this.tabFile, 'waygateicons'].every((n) => !!this.frames.get(n));
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
@@ -66,9 +74,10 @@ export class WaypointPanel {
       const pos = [[0, 0], [256, 0], [0, 256], [256, 256]];
       bg.forEach((c, i) => ctx.drawImage(c as CanvasImageSource, P.x + (pos[i]?.[0] ?? 0), P.y + (pos[i]?.[1] ?? 0)));
     }
-    const tabs = this.frames.get('waygatetabs');
+    const tabs = this.frames.get(this.tabFile);
+    const TAB = this.TAB;
     // 탭 프레임 짝: 선택 2a, 비선택 2a+1 (근사(원작 미확인))
-    if (tabs) for (let a = 0; a < TABS; a++) {
+    if (tabs) for (let a = 0; a < this.tabs; a++) {
       const f = tabs[a * 2 + (a === this.tab ? 0 : 1)];
       if (f) ctx.drawImage(f as CanvasImageSource, P.x + TAB.x + a * TAB.w, P.y + TAB.y);
     }
@@ -88,7 +97,8 @@ export class WaypointPanel {
     if (x < P.x || y < P.y || x > P.x + P.w || y > P.y + P.h) return null;
     if (x >= P.x + CLOSE.x && x <= P.x + CLOSE.x + CLOSE.w && y >= P.y + CLOSE.y && y <= P.y + CLOSE.y + CLOSE.h) return 'close';
     // 막 탭: 월드가 있는 막만 고를 수 있다
-    if (y >= P.y + TAB.y && y < P.y + TAB.y + TAB.h && x >= P.x + TAB.x && x < P.x + TAB.x + TABS * TAB.w) {
+    const TAB = this.TAB;
+    if (y >= P.y + TAB.y && y < P.y + TAB.y + TAB.h && x >= P.x + TAB.x && x < P.x + TAB.x + this.tabs * TAB.w) {
       const a = Math.floor((x - P.x - TAB.x) / TAB.w);
       if (this.tabEnabled[a]) this.tab = a;
       return 'panel';
@@ -101,6 +111,7 @@ export class WaypointPanel {
 
   /** 막 탭 a 의 화면 중심 (테스트·자동화용) */
   tabCenter(a: number): { x: number; y: number } {
+    const TAB = this.TAB;
     return { x: WP_PANEL.x + TAB.x + a * TAB.w + TAB.w / 2, y: WP_PANEL.y + TAB.y + TAB.h / 2 };
   }
 

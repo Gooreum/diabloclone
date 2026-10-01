@@ -9,7 +9,7 @@ import { buildGameData, withDifficulty } from './data/gamedata';
 import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
 import { actLevels, actPalettePath, actWorldPaths, buildActWorld, levelKey, WORLD_TABLES, type ActWorld, type WorldLevel } from './data/world';
-import { ACT_COUNT, actAvailable } from './engine/drlg/acts';
+import { actAvailable, actCount } from './engine/drlg/acts';
 import type { GameTables } from './data/tables';
 import { CLASS_TOKEN, Game, type GameData } from './engine/game';
 import { ENGINE_FPS } from './engine/index';
@@ -477,7 +477,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)
   const detachSound = attachSound(game, { assets, tables, data, cls });
   // 웨이포인트 패널·자동 지도·신전 메시지
-  const wpPanel = new WaypointPanel(assets, pal);
+  // 막 수: 클래식 4, 확장팩 5 (탭 그림도 판본별)
+  const ACTS = actCount(data.expansion ?? false);
+  const wpPanel = new WaypointPanel(assets, pal, ACTS === 5 ? 5 : 4);
   const automap = new AutomapRenderer(assets, pal, new AutomapTable(tables.table('AutoMap')));
   let automapMode: AutomapMode = 'off';
   let automapStyle: 'full' | 'mini' = 'full';
@@ -496,13 +498,13 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   // 만들 수 있는 다른 막 파일은 배경으로 미리 읽는다
   // 한 막씩 차례로, 적은 동시 요청으로 (지금 막의 그림 읽기를 막지 않게)
   void (async () => {
-    for (let a = 0; a < ACT_COUNT; a++) await prefetchAct(sh, a, true).catch(() => undefined);
+    for (let a = 0; a < ACTS; a++) await prefetchAct(sh, a, true).catch(() => undefined);
   })();
-  // 웨이포인트 (levels.txt Waypoint 번호는 막을 가로질러 하나): 클래식 막 I~IV 탭
-  const allWaypoints = data.objects ? waypointLevels([...data.objects.levels.values()]).filter((w) => w.act < ACT_COUNT) : [];
+  // 웨이포인트 (levels.txt Waypoint 번호는 막을 가로질러 하나): 클래식 막 I~IV, 확장팩 I~V 탭
+  const allWaypoints = data.objects ? waypointLevels([...data.objects.levels.values()]).filter((w) => w.act < ACTS) : [];
   const levelNameOf = new Map(tables.table('Levels').map((r) => [Number(r.Id), r.LevelName ?? '']));
   const openWaypointPanel = () => {
-    for (let a = 0; a < ACT_COUNT; a++) {
+    for (let a = 0; a < ACTS; a++) {
       wpPanel.tabEnabled[a] = actAvailable(a);
       wpPanel.rowsByAct[a] = !actAvailable(a) ? [] : allWaypoints.filter((w) => w.act === a).map((w) => {
         const key = game.levelKeyOf(w.levelNo) ?? (a === game.act ? '' : levelKey(w.levelNo));
@@ -516,7 +518,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   };
   const questTabs = () => {
     const have = new Set(game.questControl.availableActs);
-    for (let a = 0; a < ACT_COUNT; a++) questPanel.tabEnabled[a] = have.has(a);
+    for (let a = 0; a < ACTS; a++) questPanel.tabEnabled[a] = have.has(a);
     if (!questPanel.open) questPanel.tab = have.has(game.act) ? game.act : 0;
   };
   // 아이템 UI: 이름·설명(원작 문자열), 인벤토리 그림(DC6), 패널 좌표(inventory.txt)
@@ -548,7 +550,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const hirePanel = new HirePanel();
   const mercBar = new MercBar(assets, pal);
   // 퀘스트 로그 (원작 questbackground.dc6 · a1q1~6.dc6 아이콘)
-  const questPanel = new QuestPanel(assets, pal);
+  const questPanel = new QuestPanel(assets, pal, ACTS === 5 ? 5 : 4);
   const str = (k: string) => tables.string(k);
   const npcName = (typeId: string) => tables.string(data.monsters.types.get(typeId)?.nameStr ?? typeId);
   let lastInter: ReturnType<Game['snapshot']>['interaction'] = null;

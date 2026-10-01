@@ -432,7 +432,7 @@ function pickLavaPreset(_L: MazeLevel, r: MazeRoom, reset: boolean): void {
 }
 
 /** 출처: DRLGMAZE_FillBlankMazeSpaces — 처음 방 목록의 방마다 8 방향 빈 자리를 LAVA_X 방으로 */
-function fillBlankMazeSpaces(L: MazeLevel, prest: number, ignore: MazeRoom | null): void {
+export function fillBlankMazeSpaces(L: MazeLevel, prest: number, ignore: MazeRoom | null): void {
   for (const cur of [...L.rooms]) {
     if (cur === ignore) continue;
     for (let j = 0; j < 8; j++) {

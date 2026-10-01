@@ -50,7 +50,7 @@ export function spawnValid(lv: OutdoorLevel, x: number, y: number): boolean {
 }
 
 /** 출처: DRLGOUTDOORS_TestGridCellNonLvlLink */
-const nonLvlLink = (lv: OutdoorLevel, x: number, y: number) => (g2(lv, x, y) & G2.LVL_LINK) === 0;
+export const nonLvlLink = (lv: OutdoorLevel, x: number, y: number) => (g2(lv, x, y) & G2.LVL_LINK) === 0;
 
 /** 출처: DRLGOUTDOORS_TestOutdoorLevelPreset */
 export function testPreset(ctx: Ctx, lv: OutdoorLevel, x: number, y: number, prest: number, offset: number, flags: number): boolean {
@@ -321,8 +321,19 @@ function subFile(ctx: Ctx, rec: LvlSubRec) {
   return { groups: raw.groups, wall, floor };
 }
 
+/**
+ * 원작 D2UnkOutdoorStrc 의 갈래 함수 (Act 5 Barricade: field_24 = sub_6FD84820 검사, field_28 = sub_6FD84780 프리셋 번호).
+ * 없으면 Act 1/2/4 규칙 (벽 칸 = prestBase + 번호, TestGridCellNonLvlLink).
+ */
+export interface SubHooks {
+  /** field_24: 칸 검사 (cur = 격자 0 프리셋, fl/wl = 치환 파일 바닥·벽 값) */
+  test?(lv: OutdoorLevel, x: number, y: number, cur: number, fl: number, wl: number): boolean;
+  /** field_28: 벽 칸 (스타일, 순번) → 프리셋 Def (-5 = 건너뜀) */
+  map?(lv: OutdoorLevel, style: number, seq: number): number;
+}
+
 /** 출처: DRLGOUTDOORS_AddAct124SecondaryBorder → DRLGTILESUB_AddSecondaryBorder */
-export function addSecondaryBorder(ctx: Ctx, lv: OutdoorLevel, subId: number, prestBase: number): void {
+export function addSecondaryBorder(ctx: Ctx, lv: OutdoorLevel, subId: number, prestBase: number, hooks: SubHooks = {}): void {
   const rows = ctx.data.lvlSub;
   let ri = rows.findIndex((r) => r.type === subId);
   let wildcard = -1;
@@ -354,8 +365,8 @@ export function addSecondaryBorder(ctx: Ctx, lv: OutdoorLevel, subId: number, pr
       for (let i = 0; i < area; i++) {
         const { x, y } = c[i] as { x: number; y: number };
         if (small && x === 2 && y === 2) continue;
-        if (!testReplaceSub(ctx, lv, x, y, f, grp, rec, prestBase, wildcard)) continue;
-        replaceSub(ctx, lv, x, y, f, grp, rec, prestBase, wildcard, (lv.seed.pick(grp.alternatives) + 1) * (grp.w + 1));
+        if (!testReplaceSub(ctx, lv, x, y, f, grp, rec, prestBase, wildcard, hooks)) continue;
+        replaceSub(ctx, lv, x, y, f, grp, rec, prestBase, wildcard, (lv.seed.pick(grp.alternatives) + 1) * (grp.w + 1), hooks);
         if (rec.bordType === 0) { stop = true; break; }
         if (rec.bordType === 1) break;
       }
@@ -368,7 +379,7 @@ type SubF = ReturnType<typeof subFile>;
 type Grp = { x: number; y: number; w: number; h: number; alternatives: number };
 
 /** 출처: DRLGTILESUB_TestReplaceSubPreset */
-function testReplaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: SubF, grp: Grp, rec: LvlSubRec, prestBase: number, wildcard: number): boolean {
+function testReplaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: SubF, grp: Grp, rec: LvlSubRec, prestBase: number, wildcard: number, hooks: SubHooks): boolean {
   const gs = rec.gridSize;
   const bx = a1 - (a1 % gs), by = a2 - (a2 % gs);
   for (let j = 0; j < grp.h; j++)
@@ -377,7 +388,9 @@ function testReplaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: S
       const wl = f.wall ? f.wall.get(i + grp.x, j + grp.y) : 0;
       const x = bx + i * gs, y = by + j * gs;
       const cur = lv.grid[0].get(x, y);
-      if (wl & 1) {
+      if (hooks.test) {
+        if (!hooks.test(lv, x, y, cur, fl, wl)) return false;
+      } else if (wl & 1) {
         const v18 = ((wl >>> 8) & 0xff) - 1;
         if (v18 !== wildcard && v18 + prestBase !== cur) return false;
         if (!nonLvlLink(lv, x, y)) return false;
@@ -389,7 +402,7 @@ function testReplaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: S
 }
 
 /** 출처: DRLGTILESUB_ReplaceSubPreset */
-function replaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: SubF, grp: Grp, rec: LvlSubRec, prestBase: number, wildcard: number, a6: number): void {
+function replaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: SubF, grp: Grp, rec: LvlSubRec, prestBase: number, wildcard: number, a6: number, hooks: SubHooks): void {
   const gs = rec.gridSize;
   const bx = a1 - (a1 % gs), by = a2 - (a2 % gs);
   for (let j = 0; j < grp.h; j++)
@@ -399,7 +412,7 @@ function replaceSub(ctx: Ctx, lv: OutdoorLevel, a1: number, a2: number, f: SubF,
       const x = bx + i * gs, y = by + j * gs;
       if (wl & 1) {
         const v17 = ((wl >>> 8) & 0xff) - 1;
-        const v18 = v17 + prestBase;
+        const v18 = hooks.map ? hooks.map(lv, (wl >>> 20) & 0x3f, (wl >>> 8) & 0xff) : v17 + prestBase;
         if (v18 !== -5 && v17 !== wildcard) spawnPresetEx(ctx, lv, x, y, v18, 0, true);
       } else if (fl & 2) {
         // 출처: DRLGOUTDOORS_AlterAdjacentPresetGridCells — 셀을 일반 야외 방으로 되돌림

@@ -8,6 +8,7 @@ import { ACT2_ALL, generateAct2World } from './act2';
 import { ACT3_ALL, generateAct3World } from './act3';
 import { LEVEL, type DrlgData } from './types';
 import { ACT4_ALL, LEVEL4, generateAct4World } from './act4';
+import { ACT5_ALL, generateAct5World } from './act5';
 
 /** 막 DRLG 한 레벨 (Act 1 과 같은 모양: 배치 결과·특수 위치·가장자리 접촉) */
 export type DrlgLevel = Act1Level;
@@ -48,6 +49,8 @@ export const ACT_DRLG: Readonly<Record<number, ActDrlg>> = {
   1: { act: 1, town: 40, levels: ACT2_ALL, generate: (data, seed) => generateAct2World(data, seed) },
   3: { act: 3, town: LEVEL4.FORTRESS, levels: ACT4_ALL, generate: (data, seed) => generateAct4World(data, seed) },
   2: { act: 2, town: 75, levels: ACT3_ALL, generate: (data, seed) => generateAct3World(data, seed) },
+  // 확장팩 (Harrogath 109 ~ Worldstone Chamber 132). 클래식 판본에서는 막 수가 4 라 쓰지 않는다
+  4: { act: 4, town: 109, levels: ACT5_ALL, generate: (data, seed) => generateAct5World(data, seed) },
 };
 
 /** 막 DRLG (없으면 "아직 없음" 오류) */

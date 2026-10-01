@@ -86,9 +86,11 @@ function buildBasicMaze(L: MazeLevel, tombs: TombPick): void {
   }
 }
 
-/** 출처: DRLGMAZE_PlaceAct2TombPrev_Act5BaalPrev — 첫 방 둘레 세 방향에 방을 붙이고 첫 방을 이전 층 방(세 갈래)으로 */
-function placeTombPrev(L: MazeLevel): void {
-  const PREV = [MZ2.TOMB_PREV_NSE, MZ2.TOMB_PREV_SEW, MZ2.TOMB_PREV_NSW, MZ2.TOMB_PREV_NEW];
+/**
+ * 출처: DRLGMAZE_PlaceAct2TombPrev_Act5BaalPrev — 첫 방 둘레 세 방향에 방을 붙이고 첫 방을 이전 층 방(세 갈래)으로.
+ * @param PREV 원작 dword_6FDCE8B4 열 (Act 2 무덤: TOMB_PREV_NSE/SEW/NSW/NEW, Act 5 월드스톤 킵: BAAL_PREV_…)
+ */
+export function placeTombPrev(L: MazeLevel, PREV: readonly number[] = [MZ2.TOMB_PREV_NSE, MZ2.TOMB_PREV_SEW, MZ2.TOMB_PREV_NSW, MZ2.TOMB_PREV_NEW]): void {
   const first = L.rooms[0] as MazeRoom;
   let dir = L.seed.roll() & 3;
   for (let i = 0; i < 3; i++) {

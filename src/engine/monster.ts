@@ -167,7 +167,7 @@ export class MonsterDb {
         aiDelay: n(c(r, 'aidel')), aiDist: n(c(r, 'aidist')), toBlock: n(c(r, 'ToBlock')), damageRegen: n(r.DamageRegen), crit: n(r.Crit),
         treasure: [1, 2, 3, 4].map((i) => c(r, `TreasureClass${i}`) ?? ''),
         tcQuestId: n(r.TCQuestId), tcQuestCP: n(r.TCQuestCP), skills, elem,
-        sizeX: n(r2.SizeX) || 1, small: n(r2.Small) === 1, large: n(r2.Large) === 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
+        sizeX: n(r2.SizeX) || 1, small: n(r2.small) === 1, large: n(r2.large) === 1, meleeRange: n(r2.MeleeRng), hitClass: n(r2.HitClass),
         resist: { dm: n(c(r, 'ResDm')), ma: n(c(r, 'ResMa')), fi: n(c(r, 'ResFi')), li: n(c(r, 'ResLi')), co: n(c(r, 'ResCo')), po: n(c(r, 'ResPo')) },
         coldEffect: coldEff === undefined || coldEff === '' ? -50 : n(coldEff),
         noRatio: n(r.noRatio) === 1,

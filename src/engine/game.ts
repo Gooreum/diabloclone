@@ -18,7 +18,7 @@ import { ChaosState, SEAL_IDS, type ChaosAction } from './chaos';
 import { addExperience, spendStat, HOTKEY_SLOTS, type Character, type ClassName, type ClassStats, type ExpTable, type SkillHotkey } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
-import { StateList, type StateOverlayDef } from './states';
+import { StateList, type StateInfo, type StateOverlayDef } from './states';
 import { ItemStore, WEAPON_SLOTS, type WeaponSlot } from './itemstore';
 import { computeDerived, itemSkillBonus, skillBonusOf, usableCharms, type Derived, type ItemSkillBonus } from './charstats';
 import { gemStats, statOf } from './itemgen';
@@ -30,6 +30,7 @@ import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
 import { diminishing, levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
 import { cobraLeech, kickDamage, linearPct, MAX_CHARGES, PROGRESSIVE_STATES, progressiveCalc, progressiveMissile } from './skills/assassin';
+import { boulderKnockChance } from './skills/druid';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addDamage, addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
@@ -107,6 +108,8 @@ export interface GameData {
   stateOverlays?: Map<string, StateOverlayDef[]>;
   /** states.txt group (같은 group 상태는 서로 지운다 — Fade·Burst of Speed, 아머 3종) */
   stateGroups?: Map<string, number>;
+  /** states.txt 주기 함수·변신 정보 */
+  stateInfo?: Map<string, StateInfo>;
   /** overlay.txt 이름(소문자) → 그림 (무술 차지 prgoverlay) */
   overlays?: Map<string, StateOverlayDef>;
   /** monequip.txt (그림자 전사·마스터 장비) */
@@ -400,6 +403,8 @@ interface Missile {
   procs?: boolean;
   /** 이미 터짐 (Immolation Arrow 가 적중과 소멸에서 두 번 터지지 않게) */
   exploded?: boolean;
+  /** CollideKill 미사일이 이 유닛은 지나간다 (Molten Boulder: 큰 몬스터가 아니면 — MISSMODE_SrvHit47 반환 2) */
+  pass?: (m: MonsterUnit) => boolean;
   /** NextHit 미사일 (Shock Web 가시·Blade Sentinel): 맞힌 유닛을 NextDelay 프레임 뒤 다시 맞힌다 — id → 다시 맞힐 수 있는 age */
   rehit?: Map<number, number>;
   /** 확장 몬스터 미사일 (Phase 5: 관통·지속 피해·유도·폭발·적중 효과) — updateMonMissileEx */
@@ -481,6 +486,8 @@ export class Game {
   private aura: { skill: SkillRecord; lvl: number; next: number } | null = null;
   /** Thunder Storm: 다음 번개 틱, 직전 대상 */
   private stormNext = 0;
+  /** Armageddon·Hurricane 상태별 다음 주기 프레임 (상태 이름 → 프레임) */
+  private readonly druidStorm = new Map<string, number>();
   private stormLast = -1;
   /** Attract: 몬스터 id → 노릴 대상(저주받은 몬스터) id, 만료 틱 */
   private readonly attracted = new Map<number, { target: number; until: number }>();
@@ -949,6 +956,7 @@ export class Game {
     this.updatePets();
     this.updatePetAuras();
     this.updateThunderStorm();
+    this.updateDruidStorms();
     this.updateBladeShield();
     this.updateMissiles();
     this.regen();
@@ -3510,7 +3518,11 @@ export class Game {
         // Meteor / Blizzard: 목표 지점에 중심 미사일. 출처: SKILLS_SrvDo028_Meteor_Blizzard_Eruption_BaalTaunt_Catapult
         if (this.inTown) return;
         if (s.srvMissileA.startsWith('meteor')) this.castMeteor(s, lvl, cast.tx, cast.ty);
-        else this.castBlizzard(s, lvl, cast.tx, cast.ty);
+        else if (data.missiles.get(s.srvMissileA)?.srvDoFunc === 25) {
+          // Fissure(Eruption): 중심 미사일이 calc2 프레임마다 반경 calc1 안에 갈라짐 (MISSMODE_SrvDo25_EruptionCenter)
+          const def = data.missiles.get(s.srvMissileA);
+          if (def) this.spawnPlayerMissile(def, s, lvl, cast.tx, cast.ty, undefined, { srcDam: 0, useSkillDamage: true, from: { x: cast.tx, y: cast.ty } });
+        } else this.castBlizzard(s, lvl, cast.tx, cast.ty);
         return;
       }
       case 29: {
@@ -3612,6 +3624,10 @@ export class Game {
       }
       case 76: return; // Whirlwind 판정은 updateCast (회전 이동 중 시퀀스 이벤트마다)
       // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
+      case 117:
+      case 118: return this.druidMissiles(s, lvl, cast.tx, cast.ty, live?.id);
+      case 123: return this.volcano(s, lvl, cast.tx, cast.ty);
+      case 124: return this.startDruidStorm(s, lvl);
       case 33: return this.psychicHammer(s, lvl, live);
       case 43: return this.shockWeb(s, lvl, cast.tx, cast.ty);
       case 44: return this.bladeSentinel(s, lvl, cast.tx, cast.ty);
@@ -5556,9 +5572,9 @@ export class Game {
     return !!w && !!items && items.isType(w, 'thro');
   }
 
-  private spawnPlayerMissile(def: MissileDef, s: SkillRecord, lvl: number, tx: number, ty: number, targetId: number | undefined, o: PlayerMissileOpts): void {
+  private spawnPlayerMissile(def: MissileDef, s: SkillRecord, lvl: number, tx: number, ty: number, targetId: number | undefined, o: PlayerMissileOpts): Missile | undefined {
     const p = this.player, c = this.character, data = this.data;
-    if (!c || !data) return;
+    if (!c || !data) return undefined;
     const from = o.from ?? { x: p.x, y: p.y };
     const speed = missileStep(o.velocity ?? def.vel + Math.trunc((lvl * def.velLev) / 8));
     let dx = tx - from.x, dy = ty - from.y;
@@ -5603,7 +5619,9 @@ export class Game {
     // 지면 불(Fire Wall)은 매 프레임, 독 구름은 Param1 프레임마다
     if (sub && isGroundFire(sub)) m.groundTrail = { def: sub, roll: this.missileDamageRoller(sub, this.skillFor(sub) ?? s, lvl, { srcDam: 0, useSkillDamage: true }) };
     else if (sub) m.trail = { def: sub, every: Math.max(1, sub.params[0] || 2), roll: this.missileDamageRoller(sub, s, lvl, { srcDam: 0, useSkillDamage: true }) };
+    this.attachDruidMissile(m, def, s, lvl);
     this.missiles.push(m);
+    return m;
   }
 
   /**
@@ -5638,6 +5656,218 @@ export class Game {
       const roll = this.missileDamageRoller(nova, this.skillFor(nova) ?? s, lvl, { srcDam: 0, useSkillDamage: true });
       for (const i of orbNovaIndices(def.hitParams[0] ?? 4)) shoot(nova, i, ms, roll);
     };
+  }
+
+  // ---------------------------------------------------------------- 드루이드 원소
+
+  /**
+   * Firestorm(Do117)·Twister/Tornado(Do118): calc1 발. Firestorm 은 첫 발이 대상으로 곧게, 나머지는 흔들리는 경로(ChargedBolt init).
+   * 출처: SKILLS_SrvDo117_Firestorm / SKILLS_SrvDo118_Twister_Tornado → sub_6FCFE4C0
+   * 근사(원작 미확인): D2MOO 디컴파일의 Firestorm 개수 검사(nParam >= 0 이면 실패)는 부호 오타로 보고 Do118 처럼 1 이상이면 쏜다
+   */
+  private druidMissiles(s: SkillRecord, lvl: number, tx: number, ty: number, targetId?: number): void {
+    const data = this.data, calc = data?.skillCalc;
+    const def = data?.missiles.get(s.srvMissileA);
+    if (!calc || !def) return;
+    let n = calc.calc(s, 1, lvl, this.owner());
+    if (n <= 0) return;
+    const p = this.player;
+    if (s.srvDoFunc === 117) {
+      this.spawnPlayerMissile(def, s, lvl, tx, ty, targetId, { srcDam: 0, useSkillDamage: true });
+      n--;
+    }
+    const base = Math.atan2(ty - p.y, tx - p.x);
+    for (let i = 0; i < n; i++) {
+      const a = base + ((this.rng.pick(9) - 4) * Math.PI) / 12;
+      this.spawnPlayerMissile(def, s, lvl, p.x + Math.cos(a) * 10, p.y + Math.sin(a) * 10, undefined, { srcDam: 0, useSkillDamage: true, wander: true });
+    }
+  }
+
+  /** 제자리 미사일 (Firestorm 불길·Fissure 갈라짐): 스킬 피해, NextHit 이면 NextDelay 프레임 뒤 다시 맞힌다 */
+  private spawnStillMissile(def: MissileDef, x: number, y: number, parent: Missile, roll: () => DamagePacket): void {
+    if (!this.map.walkable(Math.floor(x), Math.floor(y))) return;
+    this.missiles.push({
+      id: this.nextUnitId++, def, x, y, dx: 0, dy: 0, left: def.range + parent.lvl * def.levRange, age: 0,
+      owner: 'player', ownerId: parent.ownerId, ownerLevel: parent.ownerLevel, hitClass: def.hitClass || 0x20, roll, hit: new Set(),
+      lvl: parent.lvl, skill: parent.skill, ...(def.nextHit ? { rehit: new Map<number, number>() } : {}),
+    });
+  }
+
+  /**
+   * 드루이드 미사일 함수 (missiles.txt pSrvDoFunc / pSrvHitFunc):
+   * Do23 maker 가 새 칸마다 SubMissile 불길, Do25 Eruption 갈라짐, Do27 Tornado 주기 범위 피해,
+   * Hit48 Molten Boulder 솟아남 → 굴러가는 바위, 바위(Do6)는 불 자취(SubMissile, 자체 피해)를 남기며 큰 몬스터가 아니면 지나간다(Hit47).
+   * 출처: MISSMODE_SrvDo23_24 / SrvDo25_EruptionCenter / SrvDo27_Tornado / SrvHit47 / SrvHit48
+   */
+  private attachDruidMissile(m: Missile, def: MissileDef, s: SkillRecord, lvl: number): void {
+    const data = this.data, calc = data?.skillCalc;
+    if (!data || !calc) return;
+    const o = this.owner();
+    const sub = def.subMissile1 ? data.missiles.get(def.subMissile1) : undefined;
+    if (def.srvDoFunc === 23 && sub) {
+      m.trail = undefined;
+      m.groundTrail = undefined;
+      const roll = this.missileDamageRoller(sub, this.skillFor(sub) ?? s, lvl, { srcDam: 0, useSkillDamage: true });
+      let cell = -1;
+      m.onTick = (ms) => {
+        const k = Math.floor(ms.x) * 4096 + Math.floor(ms.y);
+        if (k === cell) return;
+        cell = k;
+        this.spawnStillMissile(sub, ms.x, ms.y, ms, roll);
+      };
+    }
+    if (def.srvDoFunc === 25 && sub) {
+      m.trail = undefined;
+      m.noCollide = true;
+      const range = calc.calc(s, 1, lvl, o), every = calc.calc(s, 2, lvl, o);
+      const roll = this.missileDamageRoller(sub, this.skillFor(sub) ?? s, lvl, { srcDam: 0, useSkillDamage: true });
+      m.onTick = (ms) => {
+        if (every <= 0 || ms.left % every !== 0) return;
+        const r = range - 1;
+        this.spawnStillMissile(sub, ms.x + this.rng.pick(2 * r + 1) - r, ms.y + this.rng.pick(2 * r + 1) - r, ms, roll);
+      };
+    }
+    if (def.srvDoFunc === 27) {
+      const every = (def.params[0] ?? 0) > 0 ? (def.params[0] ?? 1) : Math.max(calc.calc(s, 4, lvl, o), 1);
+      const radius = (def.params[1] ?? 0) > 0 ? (def.params[1] ?? 1) : Math.max(calc.eval(s, s.auraRangeCalc, lvl, o), 1);
+      m.rehit = new Map();
+      m.onTick = (ms) => {
+        if (ms.left % every !== 0 || !ms.roll) return;
+        for (const t of this.monstersNear(ms.x, ms.y, radius)) this.damageMonster(t, ms.roll(), 'player');
+      };
+    }
+    if (def.nextHit && !m.rehit) m.rehit = new Map();
+    if (def.srvHitFunc === 48) {
+      const boulder = def.hitSubMissile1 ? data.missiles.get(def.hitSubMissile1) : undefined;
+      m.noCollide = true;
+      m.onEnd = (ms) => {
+        if (!boulder) return;
+        const sp = Math.hypot(ms.dx, ms.dy) || 1;
+        this.spawnPlayerMissile(boulder, s, lvl, ms.x + (ms.dx / sp) * 50, ms.y + (ms.dy / sp) * 50, undefined, { srcDam: 0, useSkillDamage: true, from: { x: ms.x, y: ms.y } });
+      };
+    }
+    if (def.srvDoFunc === 28 && sub) {
+      // Volcano: 남은 프레임이 (Param3, Param4) 사이에서 calc4(Param1) 프레임마다 반경 aurarange(Param2) 무작위 지점으로 돌덩이 (MISSMODE_SrvDo28_Volcano)
+      m.trail = undefined;
+      const every = (def.params[0] ?? 0) > 0 ? (def.params[0] ?? 1) : Math.max(calc.calc(s, 4, lvl, o), 1);
+      const radius = (def.params[1] ?? 0) > 0 ? (def.params[1] ?? 1) : Math.max(calc.eval(s, s.auraRangeCalc, lvl, o), 1);
+      m.onTick = (ms) => {
+        if (ms.left <= (def.params[2] ?? 0) || ms.left >= (def.params[3] ?? 0) || ms.left % every !== 0) return;
+        const tx = ms.x + this.rng.pick(2 * radius + 1) - radius, ty = ms.y + this.rng.pick(2 * radius + 1) - radius;
+        const rock = this.spawnPlayerMissile(sub, s, lvl, tx, ty, undefined, { srcDam: 0, useSkillDamage: true, from: { x: ms.x, y: ms.y } });
+        if (rock) rock.left = Math.max(1, Math.round(Math.hypot(tx - ms.x, ty - ms.y) / (Math.hypot(rock.dx, rock.dy) || 1)));
+      };
+    }
+    if (def.srvHitFunc === 51 || def.srvHitFunc === 56) {
+      // Volcano 돌덩이: 떨어진 자리에 작은 불 (HitSubMissile1, 스킬 피해). Armageddon: 반경 sHitPar1 피해 + armageddonfire (자체 피해)
+      // 출처: MISSMODE_SrvHit51_VolcanoDebris / MISSMODE_SrvHit56_ArmageddonControl
+      const fire = def.hitSubMissile1 ? data.missiles.get(def.hitSubMissile1) : undefined;
+      m.noCollide = true;
+      m.trail = undefined;
+      m.onEnd = (ms) => {
+        if (def.srvHitFunc === 56 && ms.roll) {
+          const r = (def.hitParams[0] ?? 0) > 0 ? (def.hitParams[0] ?? 1) : Math.max(calc.eval(s, s.auraRangeCalc, lvl, o), 1);
+          for (const t of this.monstersNear(ms.x, ms.y, r)) this.damageMonster(t, ms.roll(), 'player');
+        }
+        if (!fire) return;
+        const roll = fire.skill ? this.missileDamageRoller(fire, this.skillFor(fire) ?? s, lvl, { srcDam: 0, useSkillDamage: true }) : this.missileOwnRoller(fire, s, lvl);
+        this.spawnStillMissile(fire, ms.x, ms.y, ms, roll);
+      };
+    }
+    if (def.srvHitFunc === 47) {
+      m.pass = (t) => !t.type.large;
+      if (sub && !sub.skill) m.groundTrail = { def: sub, roll: this.missileOwnRoller(sub, s, lvl) };
+      m.trail = undefined;
+    }
+  }
+
+  /** Volcano: 목표 지점에 화산 미사일. 출처: SKILLS_SrvDo123_Volcano */
+  private volcano(s: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const def = this.data?.missiles.get(s.srvMissileA);
+    if (!def || !this.map.walkable(Math.floor(tx), Math.floor(ty))) return;
+    this.spawnPlayerMissile(def, s, lvl, tx, ty, undefined, { srcDam: 0, useSkillDamage: true, from: { x: tx, y: ty } });
+  }
+
+  /**
+   * Armageddon·Hurricane: 자신에게 aurastate (지속 auralencalc, 최소 1) — 주기 par4 마다 states.txt srvactivefunc.
+   * 출처: SKILLS_SrvDo124_Armageddon_Hurricane (EVENTTYPE_ACTIVESTATE, dwParam[3])
+   */
+  private startDruidStorm(s: SkillRecord, lvl: number): void {
+    const calc = this.data?.skillCalc;
+    if (!calc || !s.auraState) return;
+    const o = this.owner();
+    const stats: Record<string, number> = {};
+    for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+    this.player.states.set(s.auraState, this.tickCount + Math.max(1, calc.eval(s, s.auraLenCalc, lvl, o)), stats, { id: s.id, lvl });
+    this.druidStorm.set(s.auraState, this.tickCount + (s.params[3] ?? 0));
+  }
+
+  /**
+   * 폭풍 주기: 145 Hurricane = 반경 aurarange 안 적에게 스킬 물리 + 냉기, 146 Armageddon = 반경 안 무작위 지점(5번 시도)에 armageddoncontrol.
+   * 마을(스킬 InTown 아님)에 들어가면 상태가 풀린다. 출처: SKILLS_SrvDo145_Unused / SKILLS_SrvDo146_Unused (states.txt srvactivefunc)
+   * 근사(원작 미확인): 떨어지는 바위·잔해 그림(cltmissile)은 대표 미사일 하나를 그린다
+   */
+  private updateDruidStorms(): void {
+    const data = this.data, calc = data?.skillCalc, p = this.player;
+    if (!data || !calc) return;
+    for (const [state, next] of this.druidStorm) {
+      const st = p.states.get(state);
+      const s = st?.skill ? this.skillRecord(st.skill.id) : undefined;
+      if (!st?.skill || !s) {
+        this.druidStorm.delete(state);
+        continue;
+      }
+      if (this.inTown && !s.inTown) {
+        p.states.remove(state);
+        this.druidStorm.delete(state);
+        continue;
+      }
+      if (this.tickCount < next) continue;
+      this.druidStorm.set(state, this.tickCount + Math.max(1, s.params[3] ?? 1));
+      if (this.inTown) continue;
+      const lvl = st.skill.lvl, o = this.owner();
+      const range = calc.eval(s, s.auraRangeCalc, lvl, o);
+      if (range <= 0) continue;
+      const active = data.stateInfo?.get(state)?.srvActive ?? 0;
+      if (active === 145) {
+        const min = calc.minPhys256(s, lvl, o), max = calc.maxPhys256(s, lvl, o);
+        const swoosh = s.cltMissile?.[0];
+        if (swoosh) this.spawnVisual(swoosh, p.x + this.rng.pick(2 * range + 1) - range, p.y + this.rng.pick(2 * range + 1) - range);
+        for (const m of this.monstersNear(p.x, p.y, range)) {
+          const d = emptyDamage();
+          if (max > 0) d.phys += min + this.rng.pick(Math.max(0, max - min));
+          const el = this.skillElemental(s, lvl);
+          if (el) addElemental(d, el.eType, el.amount, el.len);
+          this.damageMonster(m, d, 'player');
+        }
+      } else if (active === 146) {
+        const def = data.missiles.get(s.srvMissileA);
+        if (!def) continue;
+        for (let k = 0; k < 5; k++) {
+          const x = Math.floor(p.x) + this.rng.pick(2 * range + 1) - range + 0.5, y = Math.floor(p.y) + this.rng.pick(2 * range + 1) - range + 0.5;
+          if (!this.map.walkable(Math.floor(x), Math.floor(y))) continue;
+          this.spawnPlayerMissile(def, s, lvl, x, y, undefined, { srcDam: 0, useSkillDamage: true, from: { x, y } });
+          const rock = s.cltMissile?.[1];
+          if (rock) this.spawnVisual(rock, x - 10, y - 10, { life: def.range, to: { x, y } });
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Molten Boulder 가 큰 몬스터에 막힘: 반경(sHitPar1, 0 이면 스킬 aurarange) 안 피해 + 운석 자리 18곳(sHitPar2 간격)에 불 자취.
+   * 출처: MISSMODE_SrvHit47_MoltenBoulder → MISSMODE_CreateMeteor_MoltenBoulderSubmissiles
+   */
+  private boulderBurst(ms: Missile): void {
+    const s = ms.skill, data = this.data, calc = data?.skillCalc;
+    if (!s || !calc || !data || !ms.roll) return;
+    const radius = (ms.def.hitParams[0] ?? 0) > 0 ? (ms.def.hitParams[0] ?? 0) : Math.max(calc.eval(s, s.auraRangeCalc, ms.lvl, this.owner()), 1);
+    for (const t of this.monstersNear(ms.x, ms.y, radius)) this.damageMonster(t, ms.roll(), 'player');
+    const fire = ms.def.hitSubMissile1 ? data.missiles.get(ms.def.hitSubMissile1) : undefined;
+    if (!fire) return;
+    const roll = this.missileOwnRoller(fire, s, ms.lvl);
+    for (let i = 0; i < 18; i += Math.max(ms.def.hitParams[1] ?? 1, 1)) this.spawnGroundFire(fire, ms.x + (METEOR_FIRE_X[i] ?? 0), ms.y + (METEOR_FIRE_Y[i] ?? 0), roll, ms);
   }
 
   private skillFor(def: MissileDef): SkillRecord | undefined {
@@ -5700,6 +5930,10 @@ export class Game {
         // Ice Blast: 냉기 지속시간만큼 빙결. 출처: MISSMODE_SrvDmg04_IceBlast
         d.freezeLen = d.coldLen;
         d.coldLen = 0;
+      } else if (def.srvDmgFunc === 9) {
+        // Twister: 기절 dParam1 (0 이면 스킬 par2), HitClass 0x60. 출처: MISSMODE_SrvDmg09_Twister
+        d.stunLen = (def.dmgParams[0] ?? 0) > 0 ? (def.dmgParams[0] ?? 0) : (s.params[1] ?? 0);
+        d.hitClass = 0x60;
       } else if (def.srvDmgFunc === 7) {
         // War Cry: 기절 dParam1 (0 이면 par1 + (lvl−1) × par2), HitClass 0x60. 출처: MISSMODE_SrvDmg07_Warcry_ShockWave
         d.stunLen = (def.dmgParams[0] ?? 0) > 0 ? (def.dmgParams[0] ?? 0) : lvl > 0 ? (s.params[0] ?? 0) + (lvl - 1) * (s.params[1] ?? 0) : 0;
@@ -7634,6 +7868,20 @@ export class Game {
       dmg = (es[0] ?? 0) / 256;
       if (elem) elem = { ...elem, fire: (es[1] ?? 0) / crit, ltng: (es[2] ?? 0) / crit, cold: (es[3] ?? 0) / crit, mag: (es[4] ?? 0) / crit };
     }
+    // Cyclone Armor: 화염·냉기·번개를 흡수량(bonearmor, 1/256)이 남는 동안 이 순서로 흡수, 다 쓰면 상태가 풀린다.
+    // 출처: D2GAME_EventFunc25_6FD00140 (auraevent absorbdamage, 저항 전 UNITEVENT_ABSORBDAMAGE)
+    const ca = this.player.states.get('cyclonearmor');
+    if (ca && elem) {
+      let left = ca.stats.bonearmor ?? 0;
+      const take = (v: number) => {
+        const a = Math.min(Math.max(0, v) * crit, left);
+        left -= a;
+        return Math.max(0, v - a / crit);
+      };
+      elem = { ...elem, fire: take(elem.fire), cold: take(elem.cold), ltng: take(elem.ltng) };
+      ca.stats.bonearmor = left;
+      if (left <= 0) this.player.states.remove('cyclonearmor');
+    }
     // 물리: normal_damage_reduction 을 먼저 빼고 damageresist % (최대 50, Amplify Damage −100).
     // 원소: magic_damage_reduction 을 먼저 빼고 저항 % → % 흡수(최대 40) → 고정 흡수, 흡수량은 생명으로.
     // 출처: D2MOO SUNITDMG_ApplyResistancesAndAbsorb (sgDamageStatTable: 화염·번개·냉기·마법 = DAMAGE_REDUCTION_MAGICAL), ExecuteEvents dwAbsLife
@@ -9559,7 +9807,7 @@ export class Game {
       ms.group?.add(m.id);
       ms.rehit?.set(m.id, ms.age + Math.max(1, ms.def.nextDelay));
       this.onMissileCollide(ms, m);
-      if (ms.def.collideKill) {
+      if (ms.def.collideKill && !ms.pass?.(m)) {
         if (ms.pierceChance && this.rng.pick(100) < ms.pierceChance) continue;
         this.missileEnd(ms, m);
         return true;
@@ -9593,6 +9841,10 @@ export class Game {
     }
     if (def.srvHitFunc === 9 && ms.roll) {
       this.immolationHit(ms);
+      return;
+    }
+    if (def.srvHitFunc === 47 && m.type.large) {
+      this.boulderBurst(ms);
       return;
     }
     this.missileHit(ms, m, true);
@@ -9675,6 +9927,11 @@ export class Game {
     }
     const byMerc = this.merc?.unitId !== null && ms.ownerId === this.merc?.unitId;
     this.damageMonster(m, d, byMerc ? 'pet' : 'player', byMerc ? ms.ownerId : undefined, mine ? 'missile' : undefined);
+    // Molten Boulder: 몬스터 크기에 따른 확률로 넉백 (출처: MISSMODE_SrvDmg14_MoltenBoulder — wResultFlags |= 8)
+    if (ms.def.srvDmgFunc === 14 && m.mode !== 'DT' && m.mode !== 'DD') {
+      const chance = boulderKnockChance(ms.def.dmgParams[0] ?? 0, ms.def.dmgParams[1] ?? 0, m.type);
+      if (chance > 0 && this.rng.pick(100) < chance) this.knockBack(m);
+    }
   }
 
   /** 충돌·소멸: 폭발(Exploding Arrow, 벽에 맞은 Fire Ball), 구름(Plague Javelin) */
@@ -10826,7 +11083,7 @@ interface PlayerMissileOpts {
 /** 미사일이 유닛에 닿는 거리 */
 const reachOf = (d: MissileDef, m: MonsterUnit): number => (d.size + 1) / 2 + m.type.sizeX / 2;
 /** 지면 불 미사일 (Blaze·Fire Wall: pSrvDmgFunc 3, 제자리에서 닿는 적에게 매 프레임 피해) */
-const isGroundFire = (d: MissileDef): boolean => d.srvDmgFunc === 3;
+const isGroundFire = (d: MissileDef): boolean => d.srvDmgFunc === 3 || d.srvDoFunc === 5;
 /** 지속 피해 미사일 (Inferno 불꽃: DamageRate 가 있고 관통) */
 const isContinuous = (d: MissileDef): boolean => isGroundFire(d) || (d.damageRate > 0 && !d.collideKill);
 

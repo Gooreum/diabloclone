@@ -111,6 +111,19 @@ export function parseStateOverlays(states: Record<string, string | undefined>[],
 }
 
 /** states.txt group (같은 group 의 상태는 하나만 — SrvDo018 DefensiveBuff 가 지운다). 0 이면 없음 */
+/** states.txt 변신·주기 정보: srvactivefunc (Hurricane 145·Armageddon 146), restrict·transform, gfxtype 1 = 몬스터 그림 gfxclass (monstats hcIdx) */
+export interface StateInfo { srvActive: number; restrict: boolean; transform: boolean; gfxType: number; gfxClass: number }
+
+export function parseStateInfo(states: Record<string, string | undefined>[]): Map<string, StateInfo> {
+  const out = new Map<string, StateInfo>();
+  for (const r of states) {
+    if (!r.state) continue;
+    const info = { srvActive: Number(r.srvactivefunc) || 0, restrict: r.restrict === '1', transform: r.transform === '1', gfxType: Number(r.gfxtype) || 0, gfxClass: Number(r.gfxclass) || 0 };
+    if (info.srvActive || info.restrict || info.transform || info.gfxType) out.set(r.state, info);
+  }
+  return out;
+}
+
 export function parseStateGroups(states: Record<string, string | undefined>[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of states) if (r.state && Number(r.group)) out.set(r.state, Number(r.group));

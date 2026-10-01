@@ -65,6 +65,12 @@ export interface SkillRecord {
   progressive: boolean; prgStack: boolean; srvPrgFunc: number[]; prgCalc: (CalcNode | null)[]; prgDam: number; prgOverlay: string; prgSound: string;
   /** 대상에게 그리는 오버레이 (skills.txt tgtoverlay) */
   tgtOverlay: string;
+  /** 변신 제한 (restrict 0 변신 중 못 씀 · 1 언제나 · 2 State1~3 일 때만) */
+  restrict: number; states: string[];
+  /** 두 번째 소환수 스킬 (Cycle of Life·Vines 의 CorpseCycler·VineCycler) */
+  sumSkill2: string; sumSk2Calc: CalcNode | null;
+  /** 클라이언트 미사일 (cltmissile·a·b·c — Hurricane 잔해·Armageddon 바위 그림) */
+  cltMissile: string[];
 }
 
 function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => string): SkillRecord {
@@ -106,6 +112,9 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     progressive: flag(r.progressive), prgStack: flag(r.prgstack), srvPrgFunc: [n(r.srvprgfunc1), n(r.srvprgfunc2), n(r.srvprgfunc3)],
     prgCalc: [calc(r.prgcalc1), calc(r.prgcalc2), calc(r.prgcalc3)], prgDam: n(r.prgdam), prgOverlay: r.prgoverlay ?? '', prgSound: r.prgsound ?? '',
     tgtOverlay: r.tgtoverlay ?? '',
+    restrict: n(r.restrict), states: [r.State1, r.State2, r.State3].map((x) => x ?? ''),
+    sumSkill2: r.sumskill2 ?? '', sumSk2Calc: calc(r.sumsk2calc),
+    cltMissile: [r.cltmissilea, r.cltmissileb, r.cltmissilec].filter((x): x is string => !!x),
   };
 }
 

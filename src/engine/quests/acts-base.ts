@@ -60,8 +60,10 @@ export interface ActsQuestHost extends QuestHost {
   npcPos(typeId: string): { x: number; y: number } | null;
   /** SuperUniques.txt 행 → 이름 키 (MONSTERUNIQUE_GetBossHcIdx 비교용) */
   superUniqueKey?(idx: number): string | undefined;
-  /** 유닛 없애기 (SUNIT_RemoveUnit — 몬스터·NPC) */
+  /** 유닛 없애기 (SUNIT_RemoveUnit — 몬스터·NPC·오브젝트) */
   removeUnit?(levelNo: number, id: number): void;
+  /** 플레이어 직업 (charstats class — 'Amazon' …) */
+  playerClass?(): string | undefined;
 }
 
 /** 원작 D2QuestDataStrc 에서 쓰는 칸 */

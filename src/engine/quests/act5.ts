@@ -6,6 +6,7 @@
 // (https://github.com/ThePhrozenKeep/D2MOO)
 import type { ObjectUnit } from '../objects';
 import type { QuestSpeech } from './act1';
+import { OBJMODE } from '../objects';
 import { QUALITY } from '../treasure';
 import { QFLAG } from './record';
 import { ActQuestBase, QuestData, type ActsKill, type ActsQuestHost } from './acts-base';
@@ -15,20 +16,52 @@ import { NPC_MESSAGES_ACT5 } from './messages-act5';
 /** Act 5 levels.txt 번호 (출처: LevelsIds.h) */
 export const L5 = {
   HARROGATH: 109, BLOODYFOOTHILLS: 110, FRIGIDHIGHLANDS: 111, ARREATPLATEAU: 112, CRYSTALLINEPASSAGE: 113, FROZENRIVER: 114,
-  NIHLATHAKSTEMPLE: 121, HALLSOFANGUISH: 122, HALLSOFPAIN: 123, HALLSOFVAUGHT: 124, ARREATSUMMIT: 120, WORLDSTONEKEEP1: 128,
+  ICYCELLAR: 119, NIHLATHAKSTEMPLE: 121, HALLSOFANGUISH: 122, HALLSOFPAIN: 123, HALLSOFVAUGHT: 124, ARREATSUMMIT: 120, WORLDSTONEKEEP1: 128,
   THRONEOFDESTRUCTION: 131, WORLDSTONECHAMBER: 132,
 } as const;
 
-/** objects.txt InitFn — 71 LarzukStandard, 62 CagedWussie */
-export const ACT5_INIT_FNS = [71, 62] as const;
+/** objects.txt InitFn — 71 LarzukStandard, 62 CagedWussie, 66 DrehyaStartInTown, 67 DrehyaStartOutsideTown, 68 NihlathakStartInTown, 74 FrozenAnya */
+export const ACT5_INIT_FNS = [71, 62, 66, 67, 68, 74] as const;
 
 /** 출처: gdwAct5Q2RuneCodes — Tal · Ral · Ort (구출 15 명 3 개, 14 명 2 개, 그 밖 1 개) */
 export const A5Q2_RUNES = ['r07', 'r08', 'r09'] as const;
 
 /** 출처: OBJECT_CAINPORTAL (objects.txt 189) — 풀려난 포로가 들어가는 붉은 포털 */
 const OBJ_CAINPORTAL = 189;
+/** 출처: OBJECT_FROZEN_ANYA (objects.txt 558) */
+const OBJ_FROZEN_ANYA = 558;
 
-const { A5Q1, A5Q2 } = QW;
+/**
+ * A5Q3 Anya 보상 레어 (직업 순서: Amazon · Sorceress · Necromancer · Paladin · Barbarian · Druid · Assassin).
+ * 출처: ACT5Q3_Callback11_ScrollMessage gdw{Normal,Exceptional,Elite}<직업>RewardCodes (4 글자 코드를 거꾸로 적은 값)
+ */
+export const A5Q3_REWARDS: Record<'normal' | 'exceptional' | 'elite', readonly (readonly string[])[]> = {
+  normal: [
+    ['am1', 'am2', 'am3', 'am4', 'am5'], ['ob1', 'ob2', 'ob3', 'ob4', 'ob5'], ['ne1', 'ne2', 'ne3', 'ne4', 'ne5'], ['pa1', 'pa2', 'pa3', 'pa4', 'pa5'],
+    ['ba1', 'ba2', 'ba3', 'ba4', 'ba5'], ['dr1', 'dr2', 'dr3', 'dr4', 'dr5'], ['ktr', 'wrb', 'axf', 'ces', 'clw', 'btl', 'skr'],
+  ],
+  exceptional: [
+    ['am6', 'am7', 'am8', 'am9', 'ama'], ['ob6', 'ob7', 'ob8', 'ob9', 'oba'], ['ne6', 'ne7', 'ne8', 'ne9', 'nea'], ['pa6', 'pa7', 'pa8', 'pa9', 'paa'],
+    ['ba6', 'ba7', 'ba8', 'ba9', 'baa'], ['dr6', 'dr7', 'dr8', 'dr9', 'dra'], ['9ar', '9wb', '9xf', '9cs', '9lw', '9tw', '9qr'],
+  ],
+  elite: [
+    ['amb', 'amc', 'amd', 'ame', 'amf'], ['obb', 'obc', 'obd', 'obe', 'obf'], ['neb', 'nec', 'ned', 'nee', 'nef'], ['pab', 'pac', 'pad', 'pae', 'paf'],
+    ['bab', 'bac', 'bad', 'bae', 'baf'], ['drb', 'drc', 'drd', 'dre', 'drf'], ['7ar', '7wb', '7xf', '7cs', '7lw', '7tw', '7qr'],
+  ],
+};
+/** 출처: D2Constants.h 직업 번호 (dwClassId) */
+const CLASS_INDEX: Record<string, number> = { Amazon: 0, Sorceress: 1, Necromancer: 2, Paladin: 3, Barbarian: 4, Druid: 5, Assassin: 6 };
+
+/** 저항 두루마리를 읽은 다른 난이도 수 (저장 questFlagsByDiff 의 A5Q3 CUSTOM3). 출처: ACT5Q3_ApplyResistanceReward — 세 난이도 기록을 모두 본다 */
+export function questResistDiffs(byDiff: readonly (readonly number[] | null)[], difficulty: number): number {
+  let n = 0;
+  byDiff.forEach((w, d) => {
+    if (d !== difficulty && w && ((w[QW.A5Q3] ?? 0) & (1 << QFLAG.CUSTOM3))) n++;
+  });
+  return n;
+}
+
+const { A5Q1, A5Q2, A5Q3 } = QW;
 const TOWN = L5.HARROGATH;
 
 /**
@@ -45,10 +78,19 @@ export class Act5Quests extends ActQuestBase {
     cages: [] as { x: number; y: number; level: number; pows: number[]; opened: boolean; portalAt: number }[],
   };
 
+  // A5Q3 (D2Act5Quest3Strc): unk0x84 = anya (0 얼음 · 1 녹음 · 2 마을), unk0x88 = nihLeft (Nihlathak 이 마을을 떠남)
+  private q3 = {
+    malahIntro: false, malahActivated: false, potions: 0, rewarded: false, anya: 0, nihLeft: false,
+    frozenSpawned: false, frozenId: -1, frozenLevel: 0, timerActive: false, timerStep: 0, anyaAt: { x: 0, y: 0 },
+    icedId: -1, icedLevel: 0, portalOut: false,
+    townObj: null as { x: number; y: number } | null, drehyaTownId: -1, nihTownId: -1,
+  };
+
   constructor(h: ActsQuestHost) {
     super(h);
     this.q[A5Q1] = new QuestData(A5Q1, 4);
     this.q[A5Q2] = new QuestData(A5Q2, 4);
+    this.q[A5Q3] = new QuestData(A5Q3, 5);
   }
 
   /** 퀘스트 차례 (SeqCallback). 출처: ACT5Q1 (끝나면 → 32 A5Q2), ACT5Q2 (fState 0 이면 1) */
@@ -60,6 +102,13 @@ export class Act5Quests extends ActQuestBase {
         return this.seq(A5Q2);
       case A5Q2:
         if (d.state !== 5 && d.notIntro) {
+          if (!d.state) d.state = 1;
+          return true;
+        }
+        return this.seq(A5Q3);
+      case A5Q3:
+        // 출처: ACT5Q3_SeqCallback (→ 34 A5Q4)
+        if (d.state < 5 && d.notIntro) {
           if (!d.state) d.state = 1;
           return true;
         }
@@ -77,10 +126,30 @@ export class Act5Quests extends ActQuestBase {
 
   startGame(): void {
     this.startCommon();
+    this.startedQ3();
     this.startedQ2();
     this.startedQ1();
     // 출처: QUESTS_SequenceCycler — 퀘스트 31 (A5Q1) 의 SeqCallback
     this.seq(A5Q1);
+  }
+
+  /** 출처: ACT5Q3_Callback13_PlayerStartedGame */
+  private startedQ3(): void {
+    const d = this.Q(A5Q3), x = this.q3;
+    if (this.item('ice')) x.potions = 1;
+    if (this.has(A5Q3, QFLAG.REWARDGRANTED) || this.has(A5Q3, QFLAG.COMPLETEDBEFORE)) {
+      x.anya = 2;
+      x.nihLeft = true;
+      return;
+    }
+    if (!d.notIntro) return;
+    if (this.has(A5Q3, QFLAG.LEAVETOWN)) d.state = 3;
+    else if (!this.has(A5Q3, QFLAG.STARTED)) {
+      if (x.potions) [d.state, d.lastState] = [3, 4];
+      return;
+    } else d.state = 2;
+    d.lastState = 1;
+    if (x.potions) [d.state, d.lastState] = [3, 4];
   }
 
   /** 출처: ACT5Q2_Callback13_PlayerStartedGame — ENTERAREA 는 지운다 */
@@ -104,6 +173,13 @@ export class Act5Quests extends ActQuestBase {
   /** 출처: ACT5Q1_UnitIterate_UpdateQuestStateFlags */
   private updateFlags(w: number): void {
     const d = this.Q(w);
+    if (w === A5Q3) {
+      // 출처: ACT5Q3_UnitIterate_UpdateQuestStateFlags (보상 받음 = 비트 0 또는 대기면 그대로)
+      if (this.done(A5Q3)) return;
+      if (d.state === 2) this.set(A5Q3, QFLAG.STARTED);
+      else if (d.state === 3) this.set(A5Q3, QFLAG.LEAVETOWN);
+      return;
+    }
     if (w === A5Q2) {
       // 출처: ACT5Q2_UnitIterate_UpdateQuestStateFlags
       if (this.done(A5Q2)) return;
@@ -127,6 +203,14 @@ export class Act5Quests extends ActQuestBase {
       if (this.has(A5Q1, QFLAG.REWARDPENDING) && !this.has(A5Q1, QFLAG.CUSTOM1)) return true;
       if (d1.notIntro && d1.state === 1 && !this.done(A5Q1)) return true;
     }
+    // 출처: ACT5Q3_ActiveFilterCallback
+    const d3 = this.Q(A5Q3);
+    if (npc === 'malah') {
+      if (this.has(A5Q3, QFLAG.REWARDPENDING) && !this.has(A5Q3, QFLAG.CUSTOM4)) return true;
+      if (!this.done(A5Q3) && (d3.state === 1 || (d3.state === 4 && !this.q3.potions))) return true;
+    }
+    if (npc === 'drehyaiced' && d3.notIntro && d3.state < 5 && !this.item('ice')) return true;
+    if (npc === 'drehya' && this.has(A5Q3, QFLAG.REWARDPENDING) && !this.has(A5Q3, QFLAG.CUSTOM5)) return true;
     // 출처: ACT5Q2_ActiveFilterCallback
     if (npc === 'qual-kehk') {
       const d2 = this.Q(A5Q2);
@@ -140,7 +224,40 @@ export class Act5Quests extends ActQuestBase {
     const out: QuestSpeech[] = [];
     this.activateQ1(npc, out);
     this.activateQ2(npc, out);
+    this.activateQ3(npc, out);
     return out;
+  }
+
+  /** 출처: ACT5Q3_Callback00_NpcActivate */
+  private activateQ3(npc: string, out: QuestSpeech[]): void {
+    const d = this.Q(A5Q3), x = this.q3;
+    if (npc === 'drehyaiced') {
+      // fState 6 (Nihlathak 의 신전에 먼저 감) 이면 얼음 Anya 는 사라진다 (MONMODE_DEAD)
+      if (d.state === 6) this.removeIced();
+      return;
+    }
+    if (npc === 'malah') {
+      if (d.state === 4) {
+        if (!this.item('ice') && !x.potions) this.chain(A5Q3, 3, npc, out);
+        return;
+      }
+      if (this.lostScroll()) this.chain(A5Q3, 5, npc, out);
+    }
+    if (this.has(A5Q3, QFLAG.REWARDPENDING)) {
+      if (npc === 'drehya' && this.has(A5Q3, QFLAG.CUSTOM5)) return;
+      if (npc === 'malah' && this.has(A5Q3, QFLAG.CUSTOM4)) return;
+      return this.chain(A5Q3, 5, npc, out);
+    }
+    if (d.guid) return this.chain(A5Q3, 6, npc, out);
+    if (this.has(A5Q3, QFLAG.REWARDGRANTED) || (d.state >= 5 && !this.has(A5Q3, QFLAG.PRIMARYGOALDONE)) || !d.notIntro) return;
+    const i = [-1, 0, 1, 2, 3, 4, 5][d.state] ?? -1;
+    if (i !== -1) this.chain(A5Q3, i, npc, out);
+  }
+
+  /** 출처: ACT5Q3 Malah 20132 다시 주기 조건 — 끝냈고, 이번 게임에 안 줬고, CUSTOM4 인데 읽지 않았고 (CUSTOM3), 두루마리가 없다 */
+  private lostScroll(): boolean {
+    return (this.has(A5Q3, QFLAG.REWARDGRANTED) || this.has(A5Q3, QFLAG.COMPLETEDBEFORE)) && !this.q3.rewarded
+      && this.has(A5Q3, QFLAG.CUSTOM4) && !this.has(A5Q3, QFLAG.CUSTOM3) && !this.item('tr2');
   }
 
   /** 출처: ACT5Q2_Callback00_NpcActivate */
@@ -169,6 +286,7 @@ export class Act5Quests extends ActQuestBase {
   }
 
   scrollMessage(npc: string, index: number): void {
+    this.scrollQ3(npc, index);
     // 출처: ACT5Q1_Callback11_ScrollMessage — 20077: Larzuk 이 시작, 20090: 보상 (Larzuk 에게 아이템을 주면 소켓 — CUSTOM1)
     if (npc === 'larzuk' && index === 20077) {
       this.q1.larzukStart = true;
@@ -212,7 +330,83 @@ export class Act5Quests extends ActQuestBase {
     }
   }
 
+  /** 출처: ACT5Q3_Callback11_ScrollMessage */
+  private scrollQ3(npc: string, index: number): void {
+    const d = this.Q(A5Q3), x = this.q3;
+    if (npc === 'malah' && index === 20116) {
+      x.malahIntro = true;
+      d.state = 2;
+      this.updateFlags(A5Q3);
+      return;
+    }
+    if (npc === 'malah' && index === 20127) {
+      // 해동 물약 (Malah's Potion 'ice')
+      if (!this.item('ice') && !x.potions && this.h.giveItem('ice', 0, QUALITY.NORMAL)) {
+        x.potions++;
+        x.malahActivated = true;
+      }
+      return;
+    }
+    if (npc === 'malah' && index === 20132) {
+      if (!this.has(A5Q3, QFLAG.REWARDPENDING) || this.has(A5Q3, QFLAG.REWARDGRANTED)) {
+        // 잃어버린 두루마리를 다시 (이번 게임에 한 번)
+        if (this.lostScroll() && this.h.giveItem('tr2', 0, QUALITY.NORMAL)) x.rewarded = true;
+        return;
+      }
+      if (!this.h.giveItem('tr2', 0, QUALITY.NORMAL)) return;
+      this.set(A5Q3, QFLAG.CUSTOM4);
+      if (this.has(A5Q3, QFLAG.CUSTOM5)) {
+        this.clr(A5Q3, QFLAG.REWARDPENDING);
+        this.set(A5Q3, QFLAG.REWARDGRANTED);
+      } else if (d.notIntro && d.lastState < 6) this.iterate(A5Q3, 6);
+      if (x.anya === 1) {
+        // Anya 가 아직 얼음 동굴에 있으면 마을로
+        this.removeIced();
+        x.anya = 2;
+        this.spawnDrehyaInTown();
+      }
+      this.h.emit({ type: 'questReward', quest: A5Q3, act: this.act, reward: 'resistScroll' });
+      return;
+    }
+    if (index === 20131 && d.notIntro) {
+      // 얼음 Anya 의 말 (물약 없이 건드림) — Malah 에게 물약을 받으러
+      if (d.state <= 3) {
+        d.state = 4;
+        this.townNpcsLeave();
+      }
+      if (d.lastState < 3) this.iterate(A5Q3, 3);
+      return;
+    }
+    if (npc !== 'drehya' || index !== 20136) return;
+    if (!this.has(A5Q3, QFLAG.REWARDPENDING) || this.has(A5Q3, QFLAG.REWARDGRANTED) || this.has(A5Q3, QFLAG.CUSTOM6)) return;
+    // 직업별 레어: 악몽 45 초과 → 고급, 지옥 65 초과 → 엘리트 (원작 nGameType 3 조건은 싱글에 없음)
+    const lvl = Math.max(this.h.playerLevel(), 1), diff = this.h.difficulty();
+    const tier = diff === 1 && lvl > 45 ? 'exceptional' : diff === 2 && lvl > 65 ? 'elite' : 'normal';
+    const list = A5Q3_REWARDS[tier][CLASS_INDEX[this.h.playerClass?.() ?? ''] ?? 4] as readonly string[];
+    const code = list[this.h.seed.pick(list.length)] as string;
+    if (!this.h.giveItem(code, lvl, QUALITY.RARE)) return;
+    this.set(A5Q3, QFLAG.CUSTOM5);
+    if (this.has(A5Q3, QFLAG.CUSTOM4)) {
+      this.clr(A5Q3, QFLAG.REWARDPENDING);
+      this.set(A5Q3, QFLAG.REWARDGRANTED);
+    }
+    this.set(A5Q3, QFLAG.CUSTOM6);
+    this.h.emit({ type: 'questReward', quest: A5Q3, act: this.act, reward: 'rare', code });
+  }
+
   npcDeactivate(npc: string): void {
+    // 출처: ACT5Q3_Callback02_NpcDeactivate
+    if (npc === 'malah') {
+      const d3 = this.Q(A5Q3);
+      if (this.q3.malahIntro) {
+        this.iterate(A5Q3, 1);
+        this.q3.malahIntro = false;
+      }
+      if (d3.notIntro && this.q3.malahActivated && d3.lastState < 4) {
+        this.iterate(A5Q3, 4);
+        this.q3.malahActivated = false;
+      }
+    }
     // 출처: ACT5Q2_Callback02_NpcDeactivate
     if (npc === 'qual-kehk' && this.q2.qualKehk && this.q2.killed < 5) {
       this.iterate(A5Q2, 1);
@@ -250,6 +444,7 @@ export class Act5Quests extends ActQuestBase {
   // ------------------------------------------------------------ 레벨 이동
 
   changeLevel(oldNo: number, newNo: number): void {
+    this.changeLevelQ3(oldNo, newNo);
     // 출처: ACT5Q1_Callback03_ChangedLevel
     const d1 = this.Q(A5Q1);
     if (newNo < L5.BLOODYFOOTHILLS || newNo > L5.ARREATPLATEAU) {
@@ -279,6 +474,109 @@ export class Act5Quests extends ActQuestBase {
       if (d2.lastState || !d2.notIntro || this.q2.killed >= 5) return;
       this.iterate(A5Q2, 1);
     }
+  }
+
+  /** 출처: ACT5Q3_Callback03_ChangedLevel */
+  private changeLevelQ3(oldNo: number, newNo: number): void {
+    const d = this.Q(A5Q3), x = this.q3;
+    if (newNo === L5.ARREATPLATEAU) {
+      if (d.notIntro && !d.state) {
+        d.state = 1;
+        this.townNpcsLeave();
+      }
+    } else if ((newNo === L5.CRYSTALLINEPASSAGE || newNo === L5.ICYCELLAR) && d.notIntro) {
+      if (d.state <= 2) d.state = 3;
+      if (!d.lastState) this.iterate(A5Q3, 1);
+      this.updateFlags(A5Q3);
+      this.townNpcsLeave();
+    }
+    if (oldNo === TOWN) {
+      d.guid = false;
+      if (d.state === 2) {
+        if (this.done(A5Q3)) return;
+        d.state = 3;
+        if (!d.lastState) this.iterate(A5Q3, 1);
+        this.updateFlags(A5Q3);
+      }
+    }
+    // Anya 를 구하기 전에 Nihlathak 의 신전으로: 퀘스트는 다른 곳에서 끝남 (COMPLETEDNOW), fState 6
+    if (newNo < L5.NIHLATHAKSTEMPLE || newNo > L5.HALLSOFVAUGHT || !d.notIntro || d.state >= 5) return;
+    if (!this.done(A5Q3) && !this.has(A5Q3, QFLAG.PRIMARYGOALDONE)) {
+      this.set(A5Q3, QFLAG.COMPLETEDNOW);
+      this.h.emit({ type: 'questUpdate', quest: A5Q3, act: this.act, status: this.status(A5Q3) });
+    }
+    d.state = 6;
+    x.anya = 2;
+    x.nihLeft = true;
+  }
+
+  /**
+   * 출처: sub_6FCB4400 — 마을 Anya (녹기 전에 섰다면) 와 Nihlathak 을 없앤다 (Nihlathak 은 HP 0 · MONMODE_DEAD, 마을 오브젝트 QUESTFN 이
+   *   ACT5Q3_RemoveNihlathakFromTown 을 다시 부름). unk0x88 = 1 (Nihlathak 이 떠남 — 신전 Nihlathak 이 선다)
+   */
+  private townNpcsLeave(): void {
+    const x = this.q3;
+    if (x.drehyaTownId >= 0 && x.anya !== 2) {
+      this.h.removeUnit?.(TOWN, x.drehyaTownId);
+      x.drehyaTownId = -1;
+    }
+    if (x.nihTownId >= 0) {
+      this.h.removeUnit?.(TOWN, x.nihTownId);
+      x.nihTownId = -1;
+    }
+    x.nihLeft = true;
+  }
+
+  /** Nihlathak 이 마을을 떠났다 (A5Q4 신전 Nihlathak — OBJECTS_InitFunction69 조건) */
+  nihlathakLeft(): boolean {
+    return this.q3.nihLeft;
+  }
+
+  /** 출처: ACT5Q3_RemoveDrehyaIced — 얼음 동굴의 Anya (DrehyaIced) 를 없앤다 */
+  private removeIced(): void {
+    const x = this.q3;
+    if (x.icedId < 0) return;
+    this.h.removeUnit?.(x.icedLevel, x.icedId);
+    x.icedId = -1;
+  }
+
+  /**
+   * 출처: ACT5Q3_SpawnDrehyaInTown (sub_6FCB53D0 → unk0x84 = 2) — 마을 Anya 자리 (오브젝트 459) 에 Anya (QUESTS_SpawnCriticalMonster)
+   *   와 그 자리에 붉은 포털 (OBJECT_CAINPORTAL). 그 뒤 차례 (SeqCallback)
+   */
+  private spawnDrehyaInTown(): void {
+    const x = this.q3, at = x.townObj;
+    if (!at || x.drehyaTownId >= 0) return;
+    const id = this.h.spawnMonster(TOWN, 'drehya', at.x, at.y, { npc: true });
+    if (id === null) return;
+    x.drehyaTownId = id;
+    this.h.createObject(TOWN, OBJ_CAINPORTAL, Math.floor(at.x), Math.floor(at.y), 1);
+    this.seq(A5Q3);
+  }
+
+  /**
+   * 출처: AITHINK_Fn031_NpcOutOfTown (DrehyaIced) — 녹은 Anya 가 (x+3, y+3) 로 걸어가 붉은 포털 (ACT5Q3_SpawnDrehyaPortalOutsideTown) 을
+   *   열고, 포털로 걸어가 사라진다 (sub_6FCB53D0 — 마을에 Anya·포털). AI 마다 sub_6FCB5430: fLastState < 2 면 로그 2
+   * 근사(원작 미확인): 걷기 대신 제자리 — 포털은 25 프레임, 사라지는 것은 75 프레임 뒤 (원작 AI 대기 20 프레임 × 걸음 수 근사)
+   */
+  private icedLeaves(): void {
+    const x = this.q3;
+    let step = 0;
+    this.timer(25, () => {
+      if (x.icedId < 0) return true;
+      const d = this.Q(A5Q3);
+      if (d.notIntro && d.lastState < 2) this.iterate(A5Q3, 2);
+      step++;
+      if (step === 1 && !x.portalOut) {
+        x.portalOut = !!this.h.createObject(x.icedLevel, OBJ_CAINPORTAL, Math.floor(x.anyaAt.x) + 3, Math.floor(x.anyaAt.y) + 3, 1);
+        return false;
+      }
+      if (step < 3) return false;
+      this.removeIced();
+      x.anya = 2;
+      this.spawnDrehyaInTown();
+      return true;
+    });
   }
 
   // ------------------------------------------------------------ 몬스터
@@ -366,8 +664,101 @@ export class Act5Quests extends ActQuestBase {
   /** 출처: OBJECTS_InitFunction71_LarzukStandard — 마을 DS1 의 Larzuk 자리 오브젝트 (543) 에 Larzuk 을 한 번 세운다 */
   initObject(o: ObjectUnit): void {
     if (o.type.initFn === 62) return this.initCage(o);
+    if (o.type.initFn === 66) return this.initDrehyaTown(o);
+    if (o.type.initFn === 67) return this.initDrehyaOutside(o);
+    if (o.type.initFn === 68) return this.initNihlathakTown(o);
+    if (o.type.initFn === 74) return this.initFrozenAnya(o);
     if (o.type.initFn !== 71 || this.q1.larzukSpawned) return;
     if (this.h.spawnMonster(TOWN, 'larzuk', o.x, o.y, { npc: true }) !== null) this.q1.larzukSpawned = true;
+  }
+
+  /** 출처: OBJECTS_InitFunction66_DrehyaStartInTown — 자리를 기억하고, 이미 녹았으면 (unk0x84 2) 마을 Anya 를 세운다 */
+  private initDrehyaTown(o: ObjectUnit): void {
+    const x = this.q3;
+    x.townObj = { x: o.x, y: o.y };
+    if (x.anya !== 2) return;
+    this.seq(A5Q3);
+    if (x.drehyaTownId >= 0) return;
+    const id = this.h.spawnMonster(TOWN, 'drehya', o.x, o.y, { npc: true });
+    if (id !== null) x.drehyaTownId = id;
+  }
+
+  /** 출처: OBJECTS_InitFunction67_DrehyaStartOutsideTown → 25 프레임 뒤 ACT5Q3_SpawnFrozenDrehya — 그 자리에 얼음 Anya 오브젝트 558 */
+  private initDrehyaOutside(o: ObjectUnit): void {
+    if (!this.Q(A5Q3).notIntro || this.q3.frozenSpawned) return;
+    const level = this.h.levelNo();
+    this.timer(25, () => {
+      const x = this.q3;
+      if (x.frozenSpawned || !this.Q(A5Q3).notIntro) return true;
+      const f = this.h.createObject(level, OBJ_FROZEN_ANYA, Math.floor(o.x), Math.floor(o.y), 0);
+      if (!f) return false;
+      x.frozenSpawned = true;
+      x.frozenId = f.id;
+      x.frozenLevel = level;
+      return true;
+    });
+  }
+
+  /** 출처: OBJECTS_InitFunction68_NihlathakStartInTown — 아직 떠나지 않았으면 마을 Nihlathak */
+  private initNihlathakTown(o: ObjectUnit): void {
+    const x = this.q3;
+    if (x.nihLeft || x.nihTownId >= 0) return;
+    const id = this.h.spawnMonster(TOWN, 'nihlathak', o.x, o.y, { npc: true });
+    if (id !== null) x.nihTownId = id;
+  }
+
+  /** 출처: OBJECTS_InitFunction74_FrozenAnya — fLastState < 2 면 로그 2 ("Rescue Anya") */
+  private initFrozenAnya(o: ObjectUnit): void {
+    const d = this.Q(A5Q3);
+    this.q3.frozenId = o.id;
+    if (d.notIntro && d.lastState < 2) this.iterate(A5Q3, 2);
+  }
+
+  /**
+   * 출처: OBJECTS_OperateFunction67_FrozenAnya — 물약이 있으면: 물약을 지우고 fState 5, unk0x84 = 1, PGD + REWARDPENDING, 로그 5, FX 16,
+   *   타이머 (ACT5Q3_SpawnDrehyaIcedMonsterOutsideTown: 첫 번째 = 오브젝트 OPENED, 두 번째 = 그 자리에 DrehyaIced, 오브젝트 없앰).
+   *   물약이 없으면 대사 20131, fLastState 1 이면 로그 3
+   */
+  private operateFrozenAnya(o: ObjectUnit): boolean {
+    const d = this.Q(A5Q3), x = this.q3;
+    if (!this.item('ice')) {
+      this.h.emit({ type: 'questSpeech', npcId: o.id, typeId: 'drehyaiced', quest: A5Q3, index: 20131, key: 'A5Q3FoundAnyaAnya' });
+      if (d.lastState === 1) this.iterate(A5Q3, 3);
+      this.scrollQ3('drehyaiced', 20131);
+      return true;
+    }
+    if (this.done(A5Q3)) return true;
+    x.potions = Math.max(0, x.potions - 1);
+    this.h.deleteItem('ice');
+    d.state = 5;
+    x.anya = 1;
+    this.set(A5Q3, QFLAG.PRIMARYGOALDONE);
+    this.set(A5Q3, QFLAG.REWARDPENDING);
+    this.iterate(A5Q3, 5);
+    this.h.emit({ type: 'questFx', fx: 16 });
+    this.h.emit({ type: 'questCompleted', quest: A5Q3, act: this.act });
+    if (x.timerActive) return true;
+    x.timerActive = true;
+    x.anyaAt = { x: o.x, y: o.y };
+    const level = this.h.levelNo();
+    this.timer(1, () => {
+      if (x.timerStep === 0) {
+        this.h.setObjectMode(o, OBJMODE.OPENED);
+        x.timerStep = 1;
+        return false;
+      }
+      x.timerStep = 2;
+      const id = this.h.spawnMonster(level, 'drehyaiced', x.anyaAt.x, x.anyaAt.y, { npc: true });
+      if (id === null) return false;
+      this.h.removeUnit?.(level, o.id);
+      x.icedId = id;
+      x.icedLevel = level;
+      this.seq(A5Q3);
+      x.timerActive = false;
+      this.icedLeaves();
+      return true;
+    });
+    return true;
   }
 
   /**
@@ -396,13 +787,43 @@ export class Act5Quests extends ActQuestBase {
     return Math.max(0, x.spawned - x.freed - x.killed + unseen);
   }
 
-  operate(_o: ObjectUnit): boolean {
+  operate(o: ObjectUnit): boolean {
+    if (o.type.id === OBJ_FROZEN_ANYA) return this.operateFrozenAnya(o);
     return false;
+  }
+
+  /**
+   * 저항 두루마리 (tr2). 출처: ItemMode.cpp (' 2rt') — CUSTOM4 이고 아직 안 읽었으면 CUSTOM3, ACT5Q3_ApplyResistanceReward (+10 저항,
+   *   Game.questResist 가 기록에서 다시 계산), 로그 갱신, 두루마리 없앰. 아니면 쓰지 못함 (소리 19)
+   */
+  override useItem(code: string): boolean {
+    if (code !== 'tr2' || !this.has(A5Q3, QFLAG.CUSTOM4) || this.has(A5Q3, QFLAG.CUSTOM3)) return false;
+    this.set(A5Q3, QFLAG.CUSTOM3);
+    this.h.emit({ type: 'questUpdate', quest: A5Q3, act: this.act, status: this.status(A5Q3) });
+    this.h.emit({ type: 'questReward', quest: A5Q3, act: this.act, reward: 'resist', amount: 10 });
+    return true;
   }
 
   itemPickedUp(_code: string): void {}
 
   // ------------------------------------------------------------ 퀘스트 로그
+
+  /**
+   * 출처: ACT5Q3_StatusFilterCallback — 보상 받음 0, 보상 대기·PGD: 두루마리만 받음 6 / 둘 다 아직 5 / 그 밖 13,
+   *   물약을 가짐 4, COMPLETEDNOW 12, 진행 중이면 fLastState
+   */
+  private statusQ3(): number {
+    const d = this.Q(A5Q3);
+    if (this.has(A5Q3, QFLAG.REWARDGRANTED)) return 0;
+    if (this.has(A5Q3, QFLAG.REWARDPENDING) || this.has(A5Q3, QFLAG.PRIMARYGOALDONE)) {
+      if (this.has(A5Q3, QFLAG.CUSTOM4) && !this.has(A5Q3, QFLAG.CUSTOM5)) return 6;
+      return this.has(A5Q3, QFLAG.CUSTOM4) ? 13 : 5;
+    }
+    if (!d.notIntro) return 0;
+    if (this.item('ice')) return 4;
+    if (this.has(A5Q3, QFLAG.COMPLETEDNOW)) return 12;
+    return d.state < 5 ? d.lastState : 0;
+  }
 
   protected override logCount(w: number): number {
     return w === A5Q2 ? this.barbsToRescue() : 0;
@@ -410,6 +831,7 @@ export class Act5Quests extends ActQuestBase {
 
   /** 출처: ACT5Q1_StatusFilterCallback — 보상 대기·PGD 면 3 (소켓 뚫으면 4), 진행 중이면 fLastState (COMPLETEDNOW 면 12) */
   protected override statusFilter(w: number): number | undefined {
+    if (w === A5Q3) return this.statusQ3();
     if (w !== A5Q1) return undefined;
     const d = this.Q(w);
     if (this.has(A5Q1, QFLAG.REWARDPENDING) || this.has(A5Q1, QFLAG.PRIMARYGOALDONE)) return this.has(A5Q1, QFLAG.CUSTOM1) ? 4 : 3;

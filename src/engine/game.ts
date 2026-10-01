@@ -164,6 +164,8 @@ export interface GameInit {
   quests?: string[];
   /** 퀘스트 기록 워드 (원작 D2QuestRecord, 퀘스트마다 16비트) */
   questFlags?: number[];
+  /** A5Q3 저항 두루마리를 읽은 다른 난이도 수 (저장 questFlagsByDiff 의 A5Q3 CUSTOM3 — questResistDiffs) */
+  questResistOther?: number;
   /** Phase 7: 저장의 열린 가장 높은 난이도 (디아블로를 죽이면 다음 난이도) */
   difficultyUnlocked?: 0 | 1 | 2;
   /** Phase 7: 저장의 진행 값 (원작 .d2s nProgression — 칭호) */
@@ -183,6 +185,9 @@ export interface LevelExit {
    */
   warp?: { x: number; y: number; selectX: number; selectY: number; selectDX: number; selectDY: number };
 }
+
+/** 출처: DRLGPRESET_ParseDS1File ACT_V — 몬스터 프리셋 → 오브젝트 (objects.txt 번호) */
+const ACT5_PRESET_OBJECTS: Readonly<Record<string, number>> = { nihlathak: 461, ancientstatue1: 476, ancientstatue2: 475, ancientstatue3: 474 };
 
 export interface LevelDef {
   id: string;
@@ -527,6 +532,8 @@ export class Game {
   private talk: { levelId: string; npcId: number; mode: InteractionSnapshot['mode']; speeches: QuestSpeech[] } | null = null;
   /** 플레이어 퀘스트 기록 (원작 pPlayerData->pQuestData[난이도], 저장된다) */
   readonly questRecord: QuestRecord;
+  /** A5Q3 저항 두루마리를 읽은 다른 난이도 수 */
+  private readonly questResistOther: number;
   /** 게임 전역 퀘스트 기록 (원작 pQuestControl->pQuestFlags, 게임마다 새로) */
   readonly questGlobal = new QuestRecord();
   /** Act 1 퀘스트 상태 기계 (questControl 의 Act 1 모듈) */
@@ -599,6 +606,7 @@ export class Game {
     this.npcRng = new Rng((init.seed ^ 0x6e7063) >>> 0 || 1);
     // 출처: QUESTRECORD_CopyBufferToRecord(bResetStates) — 게임에 들어올 때
     this.questRecord = QuestRecord.load(init.questFlags, true);
+    this.questResistOther = init.questResistOther ?? 0;
     // 예전 저장(Phase 10 Step 1: 퀘스트 이름 목록) 호환. 근사: 'cain' = A1Q4 보상 받음으로 본다
     if (!init.questFlags) for (const f of init.quests ?? []) this.legacyQuest(f);
     // 원작 퀘스트 전역 시드 (QUESTS_QuestInit: SEED_InitLowSeed(ITEMS_RollRandomNumber(pGameSeed))). 근사: 게임 시드에서 고정 변환
@@ -1378,6 +1386,13 @@ export class Game {
     // 마을에는 monsterInfo 가 없다 → 현재 막의 MonPreset (출처: DRLGPRESET_ParseDS1File — MonPreset[레벨의 막][id])
     // 벽 타일이 만든 몬스터 (Act 5 감옥 문·바리케이드 — monstats Id 그대로)
     const k = p.mon ? ({ kind: 'monster', id: p.mon } as const) : data.uniques.preset(info?.act ?? this.act + 1, p.id);
+    // 출처: DRLGPRESET_ParseDS1File (ACT_V) — 마을 Nihlathak·고대인 석상 프리셋은 몬스터 대신 오브젝트 (OBJECT_NIHLATHAK_START_IN_TOWN 461,
+    //   ANCIENTSTATUE1 → 오브젝트 476, ANCIENTSTATUE2 → 475, ANCIENTSTATUE3 → 474 — 원작 표 그대로 1·2 가 엇갈린다)
+    const act5Obj = k.kind === 'monster' && (info?.act ?? this.act + 1) === 5 ? ACT5_PRESET_OBJECTS[k.id] : undefined;
+    if (act5Obj !== undefined) {
+      this.createObject(this.level, { classId: act5Obj, x: p.x, y: p.y });
+      return;
+    }
     if (k.kind === 'super') {
       this.spawnSuperUnique(k.idx, p.x, p.y, p.path);
       return;
@@ -2035,6 +2050,14 @@ export class Game {
     return this.derived()?.stat('item_lightradius') ?? 0;
   }
 
+  /**
+   * A5Q3 저항 두루마리: 난이도마다 CUSTOM3 이면 +10 (불·번개·냉기·독). 출처: ACT5Q3_ApplyResistanceReward (게임 입장 — Clients.cpp,
+   *   두루마리 읽기 — ItemMode.cpp), ACT5Q3_UpdateResistances. 다른 난이도 기록은 GameInit.questResistOther (지금 난이도는 지금 기록)
+   */
+  questResist(): number {
+    return 10 * (this.questResistOther + (this.questRecord.get(QW.A5Q3, QFLAG.CUSTOM3) ? 1 : 0));
+  }
+
   derived(): Derived | null {
     const c = this.character, cs = this.classStats, data = this.data;
     if (!c || !cs || !data) return null;
@@ -2043,9 +2066,11 @@ export class Game {
     // 시간대 속성(op 6)은 15도 단위로 바뀐다 (출처: ITEMMODS_GetByTimeAdjustment 반올림)
     const env = this.envs[this.act];
     const baseTime = env && env.rate ? Math.trunc(env.ticks / env.rate) : 0;
-    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}:${charms.map((x) => x.id).join(',')}:${Math.trunc(baseTime / 15)}`;
+    const qres = this.questResist();
+    const key = `${c.level}:${c.str}:${c.dex}:${c.vit}:${c.ene}:${c.maxLife}:${c.maxMana}:${charms.map((x) => x.id).join(',')}:${Math.trunc(baseTime / 15)}:${qres}`;
     if (this.statsDirty || !this.derivedCache || key !== this.derivedKey) {
-      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty, charms, baseTime);
+      const extra: Record<string, number> = qres ? { fireresist: qres, lightresist: qres, coldresist: qres, poisonresist: qres } : {};
+      this.derivedCache = computeDerived(c, cs, this.equipment, data.items, data.treasure.gen, this.rules.playerResistPenalty, charms, baseTime, extra);
       this.itemSkillCache = itemSkillBonus(this.equipment, data.items, data.treasure.gen, charms);
       this.itemSkillVersion++;
       this.derivedKey = key;
@@ -9763,7 +9788,10 @@ export class Game {
           const i = list.findIndex((u) => u.id === id);
           if (i >= 0) list.splice(i, 1);
         }
+        // 오브젝트 (DUNGEON_AllocDrlgDelete + UNITROOM_RemoveUnitFromRoom — 얼음 Anya 558)
+        if (lv.objects.some((o) => o.id === id)) g.removeObject(lv.def.id, id);
       },
+      playerClass: () => g.classStats?.cls,
       npcPos: (typeId) => {
         const n = g.level.npcs.find((x) => x.type.id === typeId);
         return n ? { x: Math.floor(n.x), y: Math.floor(n.y) } : null;

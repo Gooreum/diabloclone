@@ -19,6 +19,7 @@ import { Rng } from './engine/rng';
 import { FEMALE, makeSave, mergeDifficulty, parseSave, startActFor, summarize, type CharacterSave } from './engine/save';
 import { heroTitle, type Difficulty } from './engine/difficulty';
 import { questNameKey } from './engine/quests/messages-acts';
+import { questResistDiffs } from './engine/quests/act5';
 import { characterOwner } from './engine/skills/rules';
 import { WorldRenderer } from './render/world';
 import { Canvas2dSink, type SpriteSink } from './render/sink';
@@ -467,11 +468,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   }
   // 난이도별 기록: 고른 난이도의 웨이포인트·퀘스트 기록 (원작 .d2s 난이도별 블록)
   const questFlags = save?.questFlagsByDiff[difficulty] ?? null;
+  const questResistOther = questResistDiffs(save?.questFlagsByDiff ?? [], difficulty);
   const game = new Game({
     map: world.byKey.get(world.townId)!.def.map, levels: world.levels.map((l) => l.def), act: startAct, difficulty,
     player: { x: world.start.x, y: world.start.y, walkVelocity: cs.walkVelocity, runVelocity: cs.runVelocity },
     seed, data, character: save?.character ?? createCharacter(cs), classStats: cs, expTable: table, equipment, inventory, inventoryGrid, stash, cube: save?.cube ?? [], belt, gold: save?.gold ?? 0,
-    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}),
+    stashGold: save?.stashGold ?? 0, corpse: save?.corpse, waypoints: save?.waypointsByDiff[difficulty], merc: save?.merc ?? null, quests: difficulty === 0 ? save?.quests : [], ...(questFlags ? { questFlags } : {}), questResistOther,
     ...(save?.altWeapons ? { altWeapons: save.altWeapons } : {}), ...(save?.weaponSet ? { weaponSet: save.weaponSet } : {}), ...(save?.altSkills ? { altSkills: save.altSkills } : {}),
   });
   // ---- 사운드 (Phase 11): 원작 효과음·음악·대사 — 게임 사건을 엿들어 재생, 나갈 때 떼어낸다 (src/audio/sound.ts)

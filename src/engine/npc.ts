@@ -114,6 +114,8 @@ export const NPC_DEFS: Record<string, NpcDef> = {
   // 근사(원작 미확인): 마을 Nihlathak 의 상점 칸 — 원작 서버는 도박(2)만 받는다. 도박 가격 배수는 npc.txt nihlathak 행
   nihlathak: { menu: ['talk', 'gamble', 'cancel'], act: 4, price: 'nihlathak', gamble: true, gossip: 'Nihlathak' },
   cain6: { menu: ['talk', 'identify', 'cancel'], act: 4, identify: true, gossip: 'CainAct5' },
+  // A5Q3 얼음 동굴의 Anya (MONSTER_DREHYAICED — monstats AI NpcOutOfTown)
+  drehyaiced: { menu: ['talk', 'cancel'], act: 4, gossip: 'Anya' },
   tyrael3: { menu: ['talk', 'cancel'], act: 4, gossip: 'TyraelAct5' },
 };
 

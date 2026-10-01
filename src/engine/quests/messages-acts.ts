@@ -234,6 +234,8 @@ const LOG_KEYS: Record<number, Record<number, string>> = {
   // 확장팩 Act 5 (A5Q1 설명 키는 원작 철자 qsta5q1x — "s" 없음)
   [QW.A5Q1]: { 1: 'qsta5q11', 2: 'qsta5q12', 3: 'qsta5q13', 4: 'qsta5q14' },
   [QW.A5Q2]: { 1: 'qstsa5q21', 2: 'qstsa5q22', 3: 'qstsa5q23', 4: 'qstsa5q24', 5: 'qstsa5q21a' },
+  // A5Q3: 1 Malah 시작 (찾아라), 2 얼음 Anya 를 봄, 3 물약 없이 건드림 (Malah 에게), 4 물약 가짐, 5 녹임 (Malah 보상), 6 두루마리 받음 (Anya 에게)
+  [QW.A5Q3]: { 1: 'qstsa5q31', 2: 'qstsa5q31a', 3: 'qstsa5q32', 4: 'qstsa5q33', 5: 'qstsa5q34', 6: 'qstsa5q35' },
 };
 
 /** 퀘스트 로그 설명 키 (기록 워드·상태 바이트). 없으면 '' */

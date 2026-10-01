@@ -184,10 +184,12 @@ export function usableCharms(inventory: readonly ItemInstance[], items: ItemDb, 
 /**
  * @param charms 효과가 있는 참 (usableCharms)
  * @param baseTime 지금 막 환경 각도 (시간대 속성 op 6) — 없으면 시간대 속성은 0
+ * @param questStats 퀘스트가 붙이는 기본 스탯 (A5Q3 저항 두루마리 — 원작 별도 스탯 목록, 게임 입장 때마다 다시 붙인다)
  */
-export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0, charms: readonly ItemInstance[] = [], baseTime?: number): Derived {
+export function computeDerived(ch: Character, cs: ClassStats, equipment: Record<string, ItemInstance>, items: ItemDb, gen: ItemGen | null, resistPenalty = 0, charms: readonly ItemInstance[] = [], baseTime?: number, questStats: Readonly<Record<string, number>> = {}): Derived {
   const sums = new Map<string, number>();
   const add = (s: string, v: number) => sums.set(s, (sums.get(s) ?? 0) + v);
+  for (const [k, v] of Object.entries(questStats)) add(k, v);
   const equipped = Object.values(equipment);
   const ops = gen?.statOps ?? new Map<string, StatOp>();
   /** param 이 있는 스탯 원본 (스킬 발동·충전·오라·다른 직업 스킬·reanimate) */

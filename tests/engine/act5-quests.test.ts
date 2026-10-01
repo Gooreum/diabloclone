@@ -19,7 +19,7 @@ import { NPC_MESSAGES_ACT5 } from '../../src/engine/quests/messages-act5';
 import { Rng } from '../../src/engine/rng';
 import { QUALITY, type ItemInstance } from '../../src/engine/treasure';
 import type { MonsterUnit } from '../../src/engine/ai';
-import type { Act5Quests } from '../../src/engine/quests/act5';
+import { questResistDiffs, type Act5Quests } from '../../src/engine/quests/act5';
 
 const LOD = resolve(GAME_DATA, 'lod');
 const path = (n: string) => [resolve(LOD, n), resolve(GAME_DATA, n)].find((p) => existsSync(p));
@@ -218,6 +218,108 @@ describe.skipIf(!hasLod)('Act 5 퀘스트 (확장팩 원작 데이터)', () => {
         const runes = g.store.allItems().filter((it) => /^r0[789]$/.test(it.code)).map((it) => it.code);
         expect(runes).toEqual(['r07', 'r08', 'r09'].slice(0, n));
       }
+    }, T);
+  });
+  describe('A5Q3', () => {
+    type Obj = { id: number; type: { id: number }; x: number; y: number; mode: number };
+    const objs = (g: Game) => (inner(g) as unknown as { level: { objects: Obj[] } }).level.objects;
+    const prep = () => {
+      const r = new QuestRecord();
+      r.set(QW.A5Q1, QFLAG.REWARDGRANTED);
+      r.set(QW.A5Q2, QFLAG.REWARDGRANTED);
+      return r;
+    };
+    /** 얼음 강 (114) 에서 얼음 Anya 오브젝트 (558) — InitFn 67 자리에 25 프레임 뒤 */
+    const frozenAnya = (g: Game): Obj => {
+      goTo(g, 'frozenriver');
+      for (let i = 0; i < 40 && !objs(g).some((o) => o.type.id === 558); i++) g.tick();
+      const o = objs(g).find((x) => x.type.id === 558);
+      expect(o, 'frozen anya').toBeTruthy();
+      return o!;
+    };
+
+    it('Prison of Ice: Malah 20116 → 물약 없이 Anya (20131, Nihlathak 떠남) → Malah 물약 → 녹임 → 마을 Anya → 두루마리 저항 +10 → Anya 레어', () => {
+      const g = makeGame(4, prep().toJSON());
+      const W = QW.A5Q3;
+      expect(a5(g).stateOf(W).state).toBe(1);
+      expect(g.npcs.some((n) => n.type.id === 'nihlathak')).toBe(true);
+      expect(g.npcs.some((n) => n.type.id === 'drehya')).toBe(false);
+      expect(g.questControl.npcHasQuest('malah')).toBe(true);
+      expect(speechKeys(talkTo(g, 'malah'))).toContain('A5Q3InitMalah');
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.STARTED)).toBe(true);
+      expect(a5(g).stateOf(W).lastState).toBe(1);
+      // 물약 없이: 대사 20131, fState 4, 로그 3, Nihlathak 이 마을을 떠난다
+      let anya = frozenAnya(g);
+      expect(a5(g).stateOf(W).lastState).toBe(2);
+      g.operateObject(anya as never);
+      const evs = g.tick();
+      expect(a5(g).stateOf(W).state).toBe(4);
+      expect(a5(g).stateOf(W).lastState).toBe(3);
+      expect(rec(g, W, QFLAG.PRIMARYGOALDONE)).toBe(false);
+      expect(a5(g).nihlathakLeft()).toBe(true);
+      void evs;
+      goTo(g, 'harrogath');
+      expect(g.npcs.some((n) => n.type.id === 'nihlathak')).toBe(false);
+      // Malah: 해동 물약
+      expect(g.questControl.npcHasQuest('malah')).toBe(true);
+      expect(speechKeys(talkTo(g, 'malah'))).toContain('A5Q3FoundAnyaMalah');
+      closeTalk(g);
+      expect(g.store.allItems().some((it) => it.code === 'ice')).toBe(true);
+      expect(g.questLog(4).find((e) => e.quest === 3)?.status).toBe(4);
+      // 녹이기
+      anya = frozenAnya(g);
+      g.operateObject(anya as never);
+      g.tick();
+      expect(g.store.allItems().some((it) => it.code === 'ice')).toBe(false);
+      expect(rec(g, W, QFLAG.PRIMARYGOALDONE) && rec(g, W, QFLAG.REWARDPENDING)).toBe(true);
+      for (let i = 0; i < 10 && !g.npcs.some((n) => n.type.id === 'drehyaiced'); i++) g.tick();
+      expect(g.npcs.some((n) => n.type.id === 'drehyaiced')).toBe(true);
+      expect(objs(g).some((o) => o.type.id === 558)).toBe(false);
+      for (let i = 0; i < 120; i++) g.tick();
+      expect(g.npcs.some((n) => n.type.id === 'drehyaiced')).toBe(false);
+      expect(objs(g).some((o) => o.type.id === 189)).toBe(true);
+      // 마을: Anya 와 붉은 포털
+      goTo(g, 'harrogath');
+      expect(g.npcs.some((n) => n.type.id === 'drehya')).toBe(true);
+      expect(objs(g).some((o) => o.type.id === 189)).toBe(true);
+      // Malah 20132 → 저항 두루마리 (CUSTOM4)
+      expect(speechKeys(talkTo(g, 'malah'))).toContain('A5Q3SuccessfulMalah');
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.CUSTOM4)).toBe(true);
+      expect(g.questLog(4).find((e) => e.quest === 3)?.status).toBe(6);
+      const before = g.playerResist('fireresist'), beforeCold = g.playerResist('coldresist');
+      const scroll = g.store.allItems().find((it) => it.code === 'tr2')!;
+      expect(scroll).toBeTruthy();
+      g.enqueue({ type: 'useItem', itemId: scroll.id });
+      g.tick();
+      expect(rec(g, W, QFLAG.CUSTOM3)).toBe(true);
+      expect(g.store.allItems().some((it) => it.code === 'tr2')).toBe(false);
+      expect(g.playerResist('fireresist')).toBe(before + 10);
+      expect(g.playerResist('coldresist')).toBe(beforeCold + 10);
+      // Anya 20136 → 직업 레어 (바바리안 보통: ba1~ba5)
+      expect(g.questControl.npcHasQuest('drehya')).toBe(true);
+      expect(speechKeys(talkTo(g, 'drehya'))).toContain('A5Q3SuccessfulAnya');
+      closeTalk(g);
+      const rare = g.store.allItems().find((it) => /^ba[1-5]$/.test(it.code));
+      expect(rare?.quality).toBe(QUALITY.RARE);
+      expect(rec(g, W, QFLAG.REWARDGRANTED)).toBe(true);
+      expect(rec(g, W, QFLAG.REWARDPENDING)).toBe(false);
+      // 다시 불러와도 저항 +10 (기록에서 다시 계산), 다른 난이도 기록도 더한다
+      const g2 = makeGame(4, g.questRecord.toJSON());
+      const base = makeGame(4, prep().toJSON()).playerResist('fireresist');
+      expect(g2.playerResist('fireresist')).toBe(base + 10);
+      expect(g2.npcs.some((n) => n.type.id === 'drehya')).toBe(true);
+      expect(g2.npcs.some((n) => n.type.id === 'nihlathak')).toBe(false);
+    }, T);
+
+    it('저항 두루마리: 난이도별 기록 합산 (questResistDiffs), 안 받은 두루마리는 못 읽음', () => {
+      const w = new QuestRecord();
+      w.set(QW.A5Q3, QFLAG.CUSTOM3);
+      expect(questResistDiffs([w.toJSON(), w.toJSON(), null], 0)).toBe(1);
+      expect(questResistDiffs([w.toJSON(), w.toJSON(), null], 2)).toBe(2);
+      // CUSTOM4 없이 두루마리 사용 → 쓰지 못함
+      expect(a5(makeGame(4, prep().toJSON())).useItem('tr2')).toBe(false);
     }, T);
   });
 });

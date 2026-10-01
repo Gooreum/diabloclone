@@ -146,7 +146,7 @@ export interface MonsterUnit {
   /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */
   summonLvl?: number;
   /** 돌진 스킬 (Leap·Charge·SerpentCharge·DiabRun) 진행: 목표 지점, 맞힐 대상, 판정 여부 */
-  dash?: { x: number; y: number; targetId?: number; hit: boolean; speed: number };
+  dash?: { x: number; y: number; targetId?: number; hit: boolean; speed: number; /** Whirlwind: 멈추지 않고 지나가며 친다 (다음 타격 프레임) */ spin?: number };
   /** 연속 분사 스킬 (Inferno·DiabLight): 끝 프레임, 다음 미사일 프레임, 간격 */
   stream?: { until: number; next: number; every: number };
   /** 오라 스킬 (Duriel Holy Freeze) 다음 효과 프레임 */
@@ -265,6 +265,8 @@ export interface AiWorld {
   levelPool?(): string[];
   /** monstats genericSpawn */
   isGenericSpawn?(typeId: string): boolean;
+  /** 고대인이 싸울 수 있다 (원작 ACT5Q5_IsActivatable — 제단을 눌렀고 포털이 없다) */
+  ancientsActive?(): boolean;
   /** 대상 유닛 정보 (Succubus: 상태 목록이 있는지·플레이어인지·최대 생명 > 최대 마나) */
   targetUnit?(): { cursed: boolean; player: boolean; lifeOverMana: boolean; neutral: boolean };
 }

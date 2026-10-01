@@ -387,4 +387,87 @@ describe.skipIf(!hasLod)('Act 5 퀘스트 (확장팩 원작 데이터)', () => {
       expect(isPersonalizable(data.items, newItem('cap', QUALITY.NORMAL))).toBe(true);
     }, T);
   });
+  describe('A5Q5', () => {
+    type Obj = { id: number; type: { id: number }; mode: number; x: number; y: number };
+    const objs = (g: Game) => (inner(g) as unknown as { level: { objects: Obj[] } }).level.objects;
+    const prep = () => {
+      const r = new QuestRecord();
+      for (const w of [QW.A5Q1, QW.A5Q2, QW.A5Q3, QW.A5Q4]) r.set(w, QFLAG.REWARDGRANTED);
+      return r;
+    };
+    const ancients = (g: Game) => inner(g).level.monsters.filter((m) => /^ancientbarb[123]$/.test(m.type.id) && m.mode !== 'DD' && m.mode !== 'DT');
+    /** Summit 으로 (몬스터는 남긴다 — 석상·고대인) */
+    const enterSummit = (g: Game) => {
+      const def = g.levelDef('arreatsummit')!;
+      const p = nearestWalkable(def.map, def.portalSpot ?? { x: def.map.width / 2, y: def.map.height / 2 }, 400)!;
+      g.changeLevel('arreatsummit', p.x + 0.5, p.y + 0.5);
+      (g as unknown as { exitHold: boolean }).exitHold = true;
+      g.tick();
+    };
+    const altarOn = (g: Game) => {
+      const altar = objs(g).find((o) => o.type.id === 546)!;
+      expect(altar, 'altar').toBeTruthy();
+      g.operateObject(altar as never);
+      for (let i = 0; i < 30 && ancients(g).length < 3; i++) g.tick();
+    };
+
+    it('Rite of Passage: Qual-Kehk 20153 → Summit (문이 닫힘) → 제단 20002 → 석상에서 고대인 3 명 → 모두 처치 → 경험치 (한 레벨 폭)·문 열림', () => {
+      const g = makeGame(4, prep().toJSON(), 40);
+      const W = QW.A5Q5;
+      expect(a5(g).stateOf(W).state).toBe(1);
+      expect(g.questControl.npcHasQuest('qual-kehk')).toBe(true);
+      expect(speechKeys(talkTo(g, 'qual-kehk'))).toContain('A5Q5InitQualKehk');
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.STARTED)).toBe(true);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q51');
+      enterSummit(g);
+      expect(a5(g).stateOf(W).lastState).toBe(2);
+      expect(g.questControl.exitBlocked(120, 118)).toBe(true);
+      expect(g.questControl.exitBlocked(120, 128)).toBe(true);
+      expect(objs(g).filter((o) => [474, 475, 476].includes(o.type.id))).toHaveLength(3);
+      // 제단
+      altarOn(g);
+      expect(a5(g).stateOf(W).lastState).toBe(3);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsa5q53');
+      const three = ancients(g);
+      expect(three.map((m) => m.type.id).sort()).toEqual(['ancientbarb1', 'ancientbarb2', 'ancientbarb3']);
+      expect(a5(g).ancientsActivatable()).toBe(true);
+      const exp0 = g.character!.experience, lvl0 = g.character!.level;
+      const span = (g as unknown as { expTable: { threshold(l: number): number } }).expTable;
+      for (const m of three) inner(g).killMonster(m, 'player');
+      expect(rec(g, W, QFLAG.REWARDGRANTED) && rec(g, W, QFLAG.PRIMARYGOALDONE)).toBe(true);
+      expect(g.character!.experience - exp0).toBe(Math.min(1_400_000, span.threshold(lvl0 + 1) - span.threshold(lvl0)));
+      expect(g.questControl.exitBlocked(120, 128)).toBe(false);
+      expect(g.questControl.exitBlocked(120, 118)).toBe(false);
+      expect(objs(g).some((o) => o.type.id === 561)).toBe(true);
+      expect(questLogKeyActs(W, a5(g).status(W))).toBe('qstsComplete');
+      // 마을 사람 끝 대사 (CUSTOM1)
+      expect(speechKeys(talkTo(g, 'larzuk'))).toContain('A5Q5SuccessfulLarzuk');
+      expect(rec(g, W, QFLAG.CUSTOM1)).toBe(true);
+    }, T);
+
+    it('Summit 에 마을 포털을 열면 고대인이 사라지고 다시 제단부터, 레벨 20 미만이면 보상 없이 끝남 (COMPLETEDNOW)', () => {
+      const g = makeGame(4, prep().toJSON(), 15);
+      enterSummit(g);
+      altarOn(g);
+      expect(ancients(g)).toHaveLength(3);
+      // 마을 포털 (원작: 두루마리·스킬 명령 — 틱 안의 사건이 퀘스트로 간다). 여기서는 직접 열고 그 틱의 사건을 넘긴다
+      const fire = (fn: () => void) => {
+        inner(g).events = [];
+        fn();
+        g.questControl.gameEvents(inner(g).events);
+      };
+      fire(() => g.castTownPortal());
+      expect(ancients(g)).toHaveLength(0);
+      expect(a5(g).ancientsActivatable()).toBe(false);
+      expect(objs(g).find((o) => o.type.id === 546)?.mode).toBe(0);
+      // 포털을 닫고 (새 포털이 아니라 닫기만 — 근사: 마을에서 돌아와 포털을 쓰면 닫힘) 다시 제단
+      fire(() => (g as unknown as { closeTownPortal(): void }).closeTownPortal());
+      altarOn(g);
+      expect(ancients(g)).toHaveLength(3);
+      for (const m of ancients(g)) inner(g).killMonster(m, 'player');
+      expect(rec(g, QW.A5Q5, QFLAG.REWARDGRANTED)).toBe(false);
+      expect(rec(g, QW.A5Q5, QFLAG.COMPLETEDNOW)).toBe(true);
+    }, T);
+  });
 });

@@ -16,12 +16,28 @@ import { NPC_MESSAGES_ACT5 } from './messages-act5';
 /** Act 5 levels.txt 번호 (출처: LevelsIds.h) */
 export const L5 = {
   HARROGATH: 109, BLOODYFOOTHILLS: 110, FRIGIDHIGHLANDS: 111, ARREATPLATEAU: 112, CRYSTALLINEPASSAGE: 113, FROZENRIVER: 114,
-  ICYCELLAR: 119, NIHLATHAKSTEMPLE: 121, HALLSOFANGUISH: 122, HALLSOFPAIN: 123, HALLSOFVAUGHT: 124, ARREATSUMMIT: 120, WORLDSTONEKEEP1: 128,
+  ANCIENTSWAY: 118, ICYCELLAR: 119, NIHLATHAKSTEMPLE: 121, HALLSOFANGUISH: 122, HALLSOFPAIN: 123, HALLSOFVAUGHT: 124, ARREATSUMMIT: 120, WORLDSTONEKEEP1: 128,
   THRONEOFDESTRUCTION: 131, WORLDSTONECHAMBER: 132,
 } as const;
 
-/** objects.txt InitFn — 71 LarzukStandard, 62 CagedWussie, 66 DrehyaStartInTown, 67 DrehyaStartOutsideTown, 68 NihlathakStartInTown, 69 NihlathakStartOutsideTown, 74 FrozenAnya */
-export const ACT5_INIT_FNS = [71, 62, 66, 67, 68, 69, 74] as const;
+/**
+ * objects.txt InitFn — 71 LarzukStandard, 62 CagedWussie, 66 DrehyaStartInTown, 67 DrehyaStartOutsideTown, 68 NihlathakStartInTown, 69 NihlathakStartOutsideTown,
+ * 74 FrozenAnya, 63/64/65 AncientStatue3/1/2, 72 AncientsAltar, 73 AncientsDoor, 76 SummitDoor
+ */
+export const ACT5_INIT_FNS = [71, 62, 66, 67, 68, 69, 74, 63, 64, 65, 72, 73, 76] as const;
+
+/** A5Q5 오브젝트 (objects.txt): 석상 474 (Statue 3) · 475 (Statue 1) · 476 (Statue 2), 제단 546, Worldstone Keep 문 547, 고대인 자리 561, Summit 문 564 */
+const OBJ5 = { STATUE3: 474, STATUE1: 475, STATUE2: 476, ALTAR: 546, WSK_DOOR: 547, INVISIBLE_ANCIENT: 561, SUMMIT_DOOR: 564 } as const;
+/** 출처: ACT5Q5_SpawnAncientMonsters — 석상 → (모드 칸, 슈퍼유니크) */
+const STATUE_ANCIENT: Record<number, [number, string]> = { [OBJ5.STATUE3]: [1, 'Ancient Barbarian 3'], [OBJ5.STATUE1]: [0, 'Ancient Barbarian 1'], [OBJ5.STATUE2]: [2, 'Ancient Barbarian 2'] };
+/** 출처: ACT5Q5_Callback08_MonsterKilled — 고대인 → 석상 GUID 칸 (barb1 → 2, barb2 → 0, barb3 → 1) */
+const ANCIENT_STATUE: Record<string, number> = { ancientbarb1: 2, ancientbarb2: 0, ancientbarb3: 1 };
+/** 출처: ACT5Q5_RewardPlayer — 보통 · 악몽 · 지옥 */
+export const A5Q5_EXP = [1_400_000, 20_000_000, 40_000_000] as const;
+/** 출처: ACT5Q5_Callback11_ScrollMessage / NpcActivate — 끝낸 뒤 마을 사람마다 한 번 듣는 대사의 기록 칸 */
+const A5Q5_NPC_FLAG: Record<string, [number, number]> = {
+  larzuk: [QFLAG.CUSTOM1, 20167], cain6: [QFLAG.CUSTOM2, 20165], drehya: [QFLAG.CUSTOM3, 20166], malah: [QFLAG.CUSTOM4, 20168], 'qual-kehk': [QFLAG.CUSTOM5, 20164],
+};
 
 /** 출처: gdwAct5Q2RuneCodes — Tal · Ral · Ort (구출 15 명 3 개, 14 명 2 개, 그 밖 1 개) */
 export const A5Q2_RUNES = ['r07', 'r08', 'r09'] as const;
@@ -61,7 +77,7 @@ export function questResistDiffs(byDiff: readonly (readonly number[] | null)[], 
   return n;
 }
 
-const { A5Q1, A5Q2, A5Q3, A5Q4 } = QW;
+const { A5Q1, A5Q2, A5Q3, A5Q4, A5Q5 } = QW;
 const TOWN = L5.HARROGATH;
 
 /**
@@ -89,9 +105,17 @@ export class Act5Quests extends ActQuestBase {
   // A5Q4 (D2Act5Quest4Strc)
   private q4 = { drehyaActivated: false, needsPortal: false, portalCreated: false, wpNotActivated: false, timerActive: false };
 
+  // A5Q5 (D2Act5Quest5Strc): 석상 GUID 칸 0 = 476, 1 = 474, 2 = 475 (InitFn 65/63/64), 모드 칸 0 = 475, 1 = 474, 2 = 476 (원작 그대로 두 순서가 다르다)
+  private q5 = {
+    qualKehk: false, completedBefore: false, statueIds: [-1, -1, -1], statueModes: [0, 0, 0], respawn: [false, false, false],
+    altarId: -1, altarMode: 0, spawned: 0, alive: 0, ancientIds: [-1, -1, -1], activated: false, activatable: false, armed: false,
+    portals: 0, defeated: false, timerActive: false, summitDoorId: -1, summitDoorMode: 0, summitDoorInit: false, wskDoorId: -1,
+  };
+
   constructor(h: ActsQuestHost) {
     super(h);
     this.q[A5Q4] = new QuestData(A5Q4, 4);
+    this.q[A5Q5] = new QuestData(A5Q5, 4);
     this.q[A5Q1] = new QuestData(A5Q1, 4);
     this.q[A5Q2] = new QuestData(A5Q2, 4);
     this.q[A5Q3] = new QuestData(A5Q3, 5);
@@ -123,6 +147,13 @@ export class Act5Quests extends ActQuestBase {
           if (!d.state) d.state = 1;
           return true;
         }
+        return this.seq(A5Q5);
+      case A5Q5:
+        // 출처: ACT5Q5_SeqCallback (→ 36 A5Q6)
+        if (d.state !== 5 && d.notIntro) {
+          if (!d.state) d.state = 1;
+          return true;
+        }
         return true;
     }
     return true;
@@ -137,12 +168,21 @@ export class Act5Quests extends ActQuestBase {
 
   startGame(): void {
     this.startCommon();
+    this.startedQ5();
     this.startedQ4();
     this.startedQ3();
     this.startedQ2();
     this.startedQ1();
     // 출처: QUESTS_SequenceCycler — 퀘스트 31 (A5Q1) 의 SeqCallback
     this.seq(A5Q1);
+  }
+
+  /** 출처: ACT5Q5_Callback13_PlayerStartedGame */
+  private startedQ5(): void {
+    const d = this.Q(A5Q5);
+    if (this.has(A5Q5, QFLAG.REWARDGRANTED) || this.has(A5Q5, QFLAG.COMPLETEDBEFORE)) this.q5.completedBefore = true;
+    else if (this.has(A5Q5, QFLAG.LEAVETOWN)) [d.lastState, d.state] = [1, 3];
+    else if (this.has(A5Q5, QFLAG.STARTED)) [d.lastState, d.state] = [1, 2];
   }
 
   /** 출처: ACT5Q4_Callback13_PlayerStartedGame — 끝낸 퀘스트면 fState 5, Halls of Death's Calling (123) 웨이포인트가 꺼져 있으면 Anya 가 포털을 다시 연다 */
@@ -205,6 +245,13 @@ export class Act5Quests extends ActQuestBase {
   /** 출처: ACT5Q1_UnitIterate_UpdateQuestStateFlags */
   private updateFlags(w: number): void {
     const d = this.Q(w);
+    if (w === A5Q5) {
+      // 출처: ACT5Q5_UnitIterate_UpdateQuestStateFlags — 보상 받음이거나 레벨 < 20 × (난이도 + 1) 이면 그대로
+      if (this.has(A5Q5, QFLAG.REWARDGRANTED) || this.h.playerLevel() < 20 * (this.h.difficulty() + 1)) return;
+      if (d.state === 2) this.set(A5Q5, QFLAG.STARTED);
+      else if (d.state === 3) this.set(A5Q5, QFLAG.LEAVETOWN);
+      return;
+    }
     if (w === A5Q4) {
       // 출처: ACT5Q4_UnitIterate_UpdateQuestStateFlags — A5Q3 을 끝낸 플레이어만
       if (!this.done(A5Q3) || this.done(A5Q4)) return;
@@ -256,6 +303,8 @@ export class Act5Quests extends ActQuestBase {
         if (this.done(A5Q3) && !this.has(A5Q4, QFLAG.REWARDGRANTED) && !this.has(A5Q4, QFLAG.REWARDPENDING)) return true;
       } else if (this.has(A5Q4, QFLAG.PRIMARYGOALDONE) && !this.has(A5Q4, QFLAG.ENTERAREA)) return true;
     }
+    // 출처: ACT5Q5_ActiveFilterCallback
+    if (npc === 'qual-kehk' && this.Q(A5Q5).state === 1 && !this.has(A5Q5, QFLAG.REWARDGRANTED)) return true;
     // 출처: ACT5Q2_ActiveFilterCallback
     if (npc === 'qual-kehk') {
       const d2 = this.Q(A5Q2);
@@ -271,7 +320,23 @@ export class Act5Quests extends ActQuestBase {
     this.activateQ2(npc, out);
     this.activateQ3(npc, out);
     this.activateQ4(npc, out);
+    this.activateQ5(npc, out);
     return out;
+  }
+
+  /** 출처: ACT5Q5_Callback00_NpcActivate — 끝낸 뒤에는 마을 사람마다 끝 대사 (표 5) 를 한 번, 그 뒤 (PGD 면) 표 3 */
+  private activateQ5(npc: string, out: QuestSpeech[]): void {
+    const d = this.Q(A5Q5);
+    if (!d.notIntro) return;
+    if (this.has(A5Q5, QFLAG.REWARDGRANTED)) {
+      const f = A5Q5_NPC_FLAG[npc];
+      if (!f) return;
+      if (!this.has(A5Q5, f[0])) this.chain(A5Q5, 5, npc, out);
+      else if (this.has(A5Q5, QFLAG.PRIMARYGOALDONE)) this.chain(A5Q5, 3, npc, out);
+      return;
+    }
+    const i = [-1, 0, 1, 2, 3, 4, 0][d.state] ?? -1;
+    if (i !== -1) this.chain(A5Q5, i, npc, out);
   }
 
   /** 출처: ACT5Q4_Callback00_NpcActivate */
@@ -349,6 +414,7 @@ export class Act5Quests extends ActQuestBase {
   scrollMessage(npc: string, index: number): void {
     this.scrollQ3(npc, index);
     this.scrollQ4(npc, index);
+    this.scrollQ5(npc, index);
     // 출처: ACT5Q1_Callback11_ScrollMessage — 20077: Larzuk 이 시작, 20090: 보상 (Larzuk 에게 아이템을 주면 소켓 — CUSTOM1)
     if (npc === 'larzuk' && index === 20077) {
       this.q1.larzukStart = true;
@@ -456,6 +522,95 @@ export class Act5Quests extends ActQuestBase {
     this.h.emit({ type: 'questReward', quest: A5Q3, act: this.act, reward: 'rare', code });
   }
 
+  /**
+   * 출처: ACT5Q5_Callback11_ScrollMessage — Qual-Kehk 20153: fState 2, 20002 (제단): 로그 3, 포털이 없고 세 석상이 모두 NEUTRAL 이면
+   *   석상을 SPECIAL1 (20 프레임 뒤 고대인), 20169 (고대인 자리): ENTERAREA, 마을 사람 끝 대사: CUSTOM1~5
+   */
+  private scrollQ5(npc: string, index: number): void {
+    const d = this.Q(A5Q5), x = this.q5;
+    if (index === 20153) {
+      if (npc !== 'qual-kehk' || !d.notIntro || d.state !== 1) return;
+      d.state = 2;
+      if (d.lastState !== 1) this.iterate(A5Q5, 1);
+      this.updateFlags(A5Q5);
+      x.qualKehk = true;
+      return;
+    }
+    if (index === 20002) {
+      if (d.notIntro && d.state < 4 && d.lastState !== 3) this.iterate(A5Q5, 3);
+      if (x.portals > 0 || x.statueModes.some((m) => m !== OBJMODE.NEUTRAL)) return;
+      const statues = x.statueIds.map((id) => (id >= 0 ? this.h.findObjectById?.(L5.ARREATSUMMIT, id) : undefined));
+      if (statues.some((o) => !o)) return;
+      statues.forEach((o, k) => {
+        this.h.setObjectMode(o as ObjectUnit, OBJMODE.SPECIAL1);
+        x.statueModes[k] = OBJMODE.SPECIAL1;
+        this.timer(20, () => this.spawnAncient(o as ObjectUnit));
+      });
+      x.spawned = 0;
+      x.alive = 0;
+      x.armed = true;
+      x.activatable = true;
+      return;
+    }
+    if (index === 20169) {
+      this.set(A5Q5, QFLAG.ENTERAREA);
+      return;
+    }
+    const f = A5Q5_NPC_FLAG[npc];
+    if (f && index === f[1]) this.set(A5Q5, f[0]);
+  }
+
+  /**
+   * 출처: ACT5Q5_SpawnAncientMonsters (석상 QUESTFN) — 석상 자리에 고대인 슈퍼유니크, 석상 SPECIAL2. 포털이 열려 있으면 모두 되돌림.
+   * 근사(원작 미확인): 플레이어가 Summit 밖이면 (원작은 같은 막 방이 살아 있어 만든다) 10 프레임 뒤 다시
+   */
+  private spawnAncient(o: ObjectUnit): boolean {
+    const x = this.q5;
+    const k = STATUE_ANCIENT[o.type.id];
+    if (!k || o.mode === OBJMODE.SPECIAL2 || x.spawned >= 3) return true;
+    if (x.portals > 0) {
+      this.deactivateAncients();
+      return true;
+    }
+    if (this.h.levelNo() !== L5.ARREATSUMMIT) return false;
+    const id = this.h.spawnSuperUnique?.(k[1], Math.floor(o.x), Math.floor(o.y)) ?? null;
+    if (id === null) return false;
+    this.h.setObjectMode(o, OBJMODE.SPECIAL2);
+    x.statueModes[k[0]] = OBJMODE.SPECIAL2;
+    x.ancientIds[x.spawned] = id;
+    x.spawned++;
+    x.alive++;
+    x.activated = true;
+    return true;
+  }
+
+  /** 출처: ACT5Q5_DeactivateAncientMonsters — 고대인을 없애고 석상·제단을 처음으로 */
+  private deactivateAncients(): void {
+    const x = this.q5;
+    x.ancientIds.forEach((id, i) => {
+      if (id < 0) return;
+      this.h.removeUnit?.(L5.ARREATSUMMIT, id);
+      x.ancientIds[i] = -1;
+    });
+    x.spawned = 0;
+    x.alive = 0;
+    x.activated = false;
+    for (let i = 0; i < 3; i++) {
+      x.respawn[i] = false;
+      const o = x.statueIds[i] as number >= 0 ? this.h.findObjectById?.(L5.ARREATSUMMIT, x.statueIds[i] as number) : undefined;
+      if (o) this.h.setObjectMode(o, OBJMODE.NEUTRAL);
+      x.statueModes[i] = OBJMODE.NEUTRAL;
+    }
+    x.altarMode = OBJMODE.NEUTRAL;
+    const altar = x.altarId >= 0 ? this.h.findObjectById?.(L5.ARREATSUMMIT, x.altarId) : undefined;
+    if (altar) this.h.setObjectMode(altar, OBJMODE.NEUTRAL);
+  }
+
+  /** 고대인이 싸울 수 있다 (ACT5Q5_IsActivatable) — Ancient AI */
+  ancientsActivatable(): boolean {
+    return this.q5.activatable;
+  }
+
   /** 출처: ACT5Q4_Callback11_ScrollMessage — Anya 20137: fState 2, 포털을 열 것, 20148: 로그 다시 + ENTERAREA (이름 새기기 안내), PGD 면 fState 5 */
   private scrollQ4(npc: string, index: number): void {
     if (npc !== 'drehya') return;
@@ -492,6 +647,11 @@ export class Act5Quests extends ActQuestBase {
 
   npcDeactivate(npc: string): void {
     if (npc === 'drehya') this.deactivateQ4();
+    // 출처: ACT5Q5_Callback02_NpcDeactivate
+    if (npc === 'qual-kehk' && this.q5.qualKehk) {
+      this.iterate(A5Q5, 1);
+      this.q5.qualKehk = false;
+    }
     // 출처: ACT5Q3_Callback02_NpcDeactivate
     if (npc === 'malah') {
       const d3 = this.Q(A5Q3);
@@ -527,6 +687,27 @@ export class Act5Quests extends ActQuestBase {
       const d = this.Q(A5Q1);
       if (!d.state && d.notIntro) d.state = 1;
     }
+    // 출처: ACT5Q5_OnPortalOpened / OnPortalClosed (Summit 의 마을 포털), ACT5Q5_OnPlayerDied
+    if (ev.type === 'portalOpened' && ev.fieldLevelNo === L5.ARREATSUMMIT && ev.owned !== false && !this.q5.defeated) {
+      const x = this.q5;
+      x.portals++;
+      x.activatable = false;
+      x.armed = false;
+      this.deactivateAncients();
+    }
+    if (ev.type === 'portalClosed' && ev.fieldLevelNo === L5.ARREATSUMMIT && this.q5.portals > 0) {
+      const x = this.q5;
+      x.portals--;
+      if (!x.portals && x.armed) x.activatable = true;
+    }
+    if (ev.type === 'playerDied' && ev.levelNo === L5.ARREATSUMMIT && this.Q(A5Q5).notIntro) {
+      const x = this.q5;
+      if (!x.portals && !x.defeated && x.activatable) {
+        x.activatable = false;
+        x.armed = false;
+        this.deactivateAncients();
+      }
+    }
     // 출처: ACT5Q4_OnNihlathakActivated (Nihlathak AI) — 로그 3
     if (ev.type === 'bossActivated' && ev.typeId === 'nihlathakboss') {
       const d = this.Q(A5Q4);
@@ -546,6 +727,7 @@ export class Act5Quests extends ActQuestBase {
   // ------------------------------------------------------------ 레벨 이동
 
   changeLevel(oldNo: number, newNo: number): void {
+    this.changeLevelQ5(oldNo, newNo);
     // 출처: ACT5Q4_Callback03_ChangedLevel
     const d4 = this.Q(A5Q4);
     if (oldNo === TOWN && d4.state === 2) {
@@ -586,6 +768,38 @@ export class Act5Quests extends ActQuestBase {
       if (d2.lastState || !d2.notIntro || this.q2.killed >= 5) return;
       this.iterate(A5Q2, 1);
     }
+  }
+
+  /** 출처: ACT5Q5_Callback03_ChangedLevel — 마을을 나서면 fState 3, Summit 에 들어오면 로그 2 · Summit 문을 닫는다 (고대인을 이기기 전) */
+  private changeLevelQ5(oldNo: number, newNo: number): void {
+    const d = this.Q(A5Q5);
+    if (oldNo === TOWN) {
+      d.guid = false;
+      if (!d.notIntro) return;
+      if (d.state === 2) {
+        if (this.has(A5Q5, QFLAG.REWARDGRANTED)) return;
+        d.state = 3;
+        if (d.lastState !== 1) this.iterate(A5Q5, 1);
+        this.updateFlags(A5Q5);
+      }
+    }
+    if (newNo !== L5.ARREATSUMMIT) return;
+    if (d.lastState < 2 && d.state > 2) this.iterate(A5Q5, 2);
+    if (d.state >= 3) {
+      if (d.lastState >= 2 || d.state <= 2) return this.closeSummitDoor();
+    } else d.state = 3;
+    this.updateFlags(A5Q5);
+    this.closeSummitDoor();
+  }
+
+  /** Summit 문 (564) 을 닫는다 (OPERATING → 닫힌 모드 OPENED) */
+  private closeSummitDoor(): void {
+    const x = this.q5;
+    if (x.defeated || !x.summitDoorInit || x.summitDoorMode !== OBJMODE.NEUTRAL) return;
+    const door = this.h.findObjectById?.(L5.ARREATSUMMIT, x.summitDoorId);
+    if (!door) return;
+    x.summitDoorMode = OBJMODE.OPENED;
+    this.h.setObjectMode(door, OBJMODE.OPERATING, true);
   }
 
   /** 출처: ACT5Q3_Callback03_ChangedLevel */
@@ -697,6 +911,7 @@ export class Act5Quests extends ActQuestBase {
     if (k.superUnique === 'Siege Boss') this.killedShenk(k);
     if (k.typeId === 'prisondoor') this.killedPrisonDoor(k);
     if (k.superUnique === 'Nihlathak Boss') this.killedNihlathak(k);
+    if (ANCIENT_STATUE[k.typeId] !== undefined) this.killedAncient(k);
   }
 
   /**
@@ -771,6 +986,77 @@ export class Act5Quests extends ActQuestBase {
     });
   }
 
+  /**
+   * 출처: ACT5Q5_Callback08_MonsterKilled — 제단을 누른 뒤에만: 2 틱 뒤 석상을 다시 세움 (OPERATING → OPENED), FX 18.
+   *   셋 다 죽으면: 레벨 ≥ 20 × (난이도 + 1) 이면 REWARDGRANTED + PGD + 경험치 (ACT5Q5_RewardPlayer), 아니면 COMPLETEDNOW,
+   *   fState 5, 그 자리에 고대인 자리 오브젝트 561, 차례, 로그 13
+   * 근사(원작 미확인): 고대인 → 석상 미사일 (ancient death center) 은 그리지 않는다
+   */
+  private killedAncient(k: ActsKill): void {
+    const d = this.Q(A5Q5), x = this.q5;
+    if (!x.activatable || !x.armed || x.portals) return;
+    if (!x.timerActive) {
+      x.timerActive = true;
+      this.timer(2, () => this.respawnStatues());
+    }
+    x.respawn[ANCIENT_STATUE[k.typeId] ?? 0] = true;
+    this.h.emit({ type: 'questFx', fx: 18 });
+    x.alive--;
+    if (x.alive) return;
+    x.defeated = true;
+    if (!d.notIntro) return this.ancientsDone(k);
+    if (!this.has(A5Q5, QFLAG.REWARDGRANTED) && this.h.playerLevel() >= 20 * (this.h.difficulty() + 1)) {
+      this.set(A5Q5, QFLAG.REWARDGRANTED);
+      this.set(A5Q5, QFLAG.PRIMARYGOALDONE);
+      const exp = this.h.giveQuestExperience?.(A5Q5_EXP[this.h.difficulty()] ?? A5Q5_EXP[0]) ?? 0;
+      this.h.emit({ type: 'questReward', quest: A5Q5, act: this.act, reward: 'experience', amount: exp });
+    }
+    if (!this.has(A5Q5, QFLAG.REWARDGRANTED) && !this.has(A5Q5, QFLAG.PRIMARYGOALDONE)) {
+      this.set(A5Q5, QFLAG.COMPLETEDNOW);
+      this.h.emit({ type: 'questUpdate', quest: A5Q5, act: this.act, status: this.status(A5Q5) });
+    }
+    d.state = 5;
+    this.ancientsDone(k);
+    this.seq(A5Q5);
+    if (d.lastState !== 13) this.iterate(A5Q5, 13);
+    this.h.emit({ type: 'questCompleted', quest: A5Q5, act: this.act });
+  }
+
+  /** 고대인 자리 오브젝트 561 (원작 MonsterKilled) · 문을 연다 (근사(원작 미확인): 원작은 문을 눌러 연다 — 여기서는 걸어서 넘어가는 출구라 바로 연 모습으로) */
+  private ancientsDone(k: ActsKill): void {
+    const x = this.q5;
+    this.h.createObject(L5.ARREATSUMMIT, OBJ5.INVISIBLE_ANCIENT, Math.floor(k.x), Math.floor(k.y), 0);
+    const wsk = x.wskDoorId >= 0 ? this.h.findObjectById?.(L5.ARREATSUMMIT, x.wskDoorId) : undefined;
+    if (wsk && wsk.mode === OBJMODE.NEUTRAL) this.h.setObjectMode(wsk, OBJMODE.OPERATING, true);
+    const sd = x.summitDoorId >= 0 ? this.h.findObjectById?.(L5.ARREATSUMMIT, x.summitDoorId) : undefined;
+    x.summitDoorMode = OBJMODE.NEUTRAL;
+    if (sd) this.h.setObjectMode(sd, OBJMODE.NEUTRAL);
+  }
+
+  /** 출처: ACT5Q5_Timer_RespawnAncientStatueObjects — 죽은 고대인의 석상: OPERATING (끝나면 OPENED) */
+  private respawnStatues(): boolean {
+    const x = this.q5;
+    if (x.portals || !x.activatable) {
+      x.timerActive = false;
+      return true;
+    }
+    let missing = false;
+    for (let i = 0; i < 3; i++) {
+      if (!x.respawn[i]) continue;
+      const o = this.h.findObjectById?.(L5.ARREATSUMMIT, x.statueIds[i] as number);
+      if (!o) {
+        missing = true;
+        continue;
+      }
+      this.h.setObjectMode(o, OBJMODE.OPERATING, true);
+      x.respawn[i] = false;
+      x.statueModes[i] = OBJMODE.OPENED;
+    }
+    if (missing) return false;
+    x.timerActive = false;
+    return true;
+  }
+
   /** Anya 가 이름을 새겨 줄 수 있다 (SUnitNpc.cpp MONSTER_DREHYA: A5Q4 REWARDPENDING) */
   canPersonalize(): boolean {
     return this.has(A5Q4, QFLAG.REWARDPENDING);
@@ -824,6 +1110,10 @@ export class Act5Quests extends ActQuestBase {
     if (o.type.initFn === 67) return this.initDrehyaOutside(o);
     if (o.type.initFn === 68) return this.initNihlathakTown(o);
     if (o.type.initFn === 69) return this.initNihlathakTemple(o);
+    if (o.type.initFn === 63 || o.type.initFn === 64 || o.type.initFn === 65) return this.initStatue(o);
+    if (o.type.initFn === 72) return this.initAltar(o);
+    if (o.type.initFn === 73) return this.initWskDoor(o);
+    if (o.type.initFn === 76) return this.initSummitDoor(o);
     if (o.type.initFn === 74) return this.initFrozenAnya(o);
     if (o.type.initFn !== 71 || this.q1.larzukSpawned) return;
     if (this.h.spawnMonster(TOWN, 'larzuk', o.x, o.y, { npc: true }) !== null) this.q1.larzukSpawned = true;
@@ -881,6 +1171,71 @@ export class Act5Quests extends ActQuestBase {
     const x = this.q3;
     if (!x.nihLeft || x.nihTempleSpawned) return;
     if (this.h.spawnSuperUnique?.('Nihlathak Boss', Math.floor(o.x), Math.floor(o.y)) != null) x.nihTempleSpawned = true;
+  }
+
+  /** 출처: OBJECTS_InitFunction63/64/65_AncientStatue — GUID 칸 (65 → 0, 63 → 1, 64 → 2), 모드는 석상 종류의 모드 칸 */
+  private initStatue(o: ObjectUnit): void {
+    const x = this.q5;
+    x.statueIds[o.type.initFn === 65 ? 0 : o.type.initFn === 63 ? 1 : 2] = o.id;
+    const k = STATUE_ANCIENT[o.type.id];
+    if (k) this.h.setObjectMode(o, x.statueModes[k[0]] as number);
+  }
+
+  /** 출처: OBJECTS_InitFunction72_AncientsAltar */
+  private initAltar(o: ObjectUnit): void {
+    this.q5.altarId = o.id;
+    this.h.setObjectMode(o, this.q5.altarMode);
+  }
+
+  /** 출처: OBJECTS_InitFunction73_AncientsDoor — 예전에 끝냈으면 열림 */
+  private initWskDoor(o: ObjectUnit): void {
+    this.q5.wskDoorId = o.id;
+    this.h.setObjectMode(o, this.q5.completedBefore ? OBJMODE.OPENED : OBJMODE.NEUTRAL);
+  }
+
+  /** 출처: OBJECTS_InitFunction76_SummitDoor — 저장한 모드, 고대인을 이기기 전이면 닫는다 */
+  private initSummitDoor(o: ObjectUnit): void {
+    const x = this.q5;
+    x.summitDoorInit = true;
+    x.summitDoorId = o.id;
+    this.h.setObjectMode(o, x.summitDoorMode);
+    if (!x.defeated && x.summitDoorMode !== OBJMODE.OPENED) {
+      x.summitDoorMode = OBJMODE.OPENED;
+      this.h.setObjectMode(o, OBJMODE.OPERATING, true);
+    }
+  }
+
+  /**
+   * 출처: OBJECTS_OperateFunction65_AncientsAltar — NEUTRAL 일 때만: Summit 의 마을 포털을 닫고 대사 20002 (ScrollMessage),
+   *   fState < 2 면 2, 로그 3, 제단 OPERATING
+   */
+  private operateAltar(o: ObjectUnit): boolean {
+    const d = this.Q(A5Q5), x = this.q5;
+    if (o.mode !== OBJMODE.NEUTRAL) return true;
+    if (d.notIntro && d.state >= 4) {
+      this.h.setObjectMode(o, OBJMODE.OPERATING, true);
+      x.altarMode = OBJMODE.OPENED;
+      return true;
+    }
+    if (x.portals > 0) this.h.closeTownPortalIn?.(L5.ARREATSUMMIT);
+    this.h.emit({ type: 'questSpeech', npcId: o.id, typeId: 'ancientstatue1', quest: A5Q5, index: 20002, key: 'AncientsAct5IntroGossip1' });
+    if (d.notIntro) {
+      if (d.state < 2) d.state = 2;
+      if (d.lastState !== 3) this.iterate(A5Q5, 3);
+    }
+    this.h.setObjectMode(o, OBJMODE.OPERATING, true);
+    x.altarMode = OBJMODE.OPENED;
+    this.scrollQ5('ancientstatue1', 20002);
+    return true;
+  }
+
+  /** 출처: OBJECTS_OperateFunction69_InvisibleAncient — 끝냈고 아직이면 대사 20169 (A5Q6InitAncients) */
+  private operateInvisibleAncient(o: ObjectUnit): boolean {
+    if (this.has(A5Q5, QFLAG.REWARDGRANTED) && !this.has(A5Q5, QFLAG.ENTERAREA)) {
+      this.h.emit({ type: 'questSpeech', npcId: o.id, typeId: 'ancientstatue1', quest: A5Q5, index: 20169, key: 'A5Q6InitAncients' });
+      this.scrollQ5('ancientstatue1', 20169);
+    }
+    return true;
   }
 
   /** 출처: OBJECTS_InitFunction74_FrozenAnya — fLastState < 2 면 로그 2 ("Rescue Anya") */
@@ -965,6 +1320,10 @@ export class Act5Quests extends ActQuestBase {
 
   operate(o: ObjectUnit): boolean {
     if (o.type.id === OBJ_FROZEN_ANYA) return this.operateFrozenAnya(o);
+    if (o.type.id === OBJ5.ALTAR) return this.operateAltar(o);
+    if (o.type.id === OBJ5.INVISIBLE_ANCIENT) return this.operateInvisibleAncient(o);
+    // 석상 (OperateFn 62~64): 아무 일 없음 (소리 19). 문 547·564 는 걸어서 넘어가는 출구 (exitBlocked)
+    if (o.type.id === OBJ5.STATUE1 || o.type.id === OBJ5.STATUE2 || o.type.id === OBJ5.STATUE3) return true;
     return false;
   }
 
@@ -981,6 +1340,18 @@ export class Act5Quests extends ActQuestBase {
   }
 
   itemPickedUp(_code: string): void {}
+
+  /**
+   * 출처: QUESTS_LevelWarpCheck → ACT5Q5_IsArreatSummitClosed (진행 중이면 고대인을 이기기 전 Summit → Worldstone Keep 1 을 막음),
+   *   OBJECTS_OperateFunction66_AncientsDoor (예전 게임: 보상 받음·대기가 아니면 못 엶), OperateFunction71_SummitDoor (닫힌 Summit 문 — 이기기 전 못 내려감)
+   */
+  override exitBlocked(from: number, to: number): boolean {
+    if (from !== L5.ARREATSUMMIT) return false;
+    const x = this.q5;
+    if (to === L5.WORLDSTONEKEEP1) return this.Q(A5Q5).notIntro ? !x.defeated : !this.done(A5Q5);
+    if (to === L5.ANCIENTSWAY) return x.summitDoorMode === OBJMODE.OPENED && !x.defeated;
+    return false;
+  }
 
   // ------------------------------------------------------------ 퀘스트 로그
 

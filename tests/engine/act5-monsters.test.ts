@@ -21,7 +21,7 @@ const hasLod = existsSync(resolve(LOD, 'patch_d2.mpq')) && mpqOrder('lod').every
 /** NPC·장식 AI (NPC 단계 담당) — 이 테스트의 대상이 아니다 */
 const NPC_AI = new Set(['Idle', 'Npc', 'Towner', 'Vendor', 'NpcStationary', 'Hireable', 'Buffy', 'NpcOutOfTown', 'Navi', 'TownRogue', 'JarJar', 'GoodNpcRanged', 'Hireable']);
 /** 퀘스트 단계(5~7) 에서 만드는 AI */
-const QUEST_AI = new Set(['Wussie', 'AncientStatue', 'Ancient', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
+const QUEST_AI = new Set(['Wussie', 'AncientStatue', 'BaalThrone', 'BaalToStairs', 'BaalCrab', 'BaalCrabClone', 'BaalTentacle', 'BaalMinion']);
 
 type Inner = {
   monsterUseSkill(m: MonsterUnit, slot: number, t: SkillTarget | null): boolean; killMonster(m: MonsterUnit, s: string): void;
@@ -188,6 +188,26 @@ describe.skipIf(!hasLod)('Act 5 몬스터 (확장팩 원작 데이터)', () => {
       expect(ev.some((x) => x.type === 'corpseExploded' && x.targetId === corpse.id)).toBe(true);
       expect(corpse.corpseUsed).toBe(true);
       expect(game.character!.life).toBeLessThan(before);
+    });
+
+    it('고대인: Madawc Shout 는 자신·곁의 같은 편에 shout (방어 +%), Korlic Leap Attack · Talic Whirlwind 는 다가가 친다', () => {
+      const game = newGame(29);
+      const madawc = game.spawnMonster('ancientbarb2', 27.5, 26.5);
+      const korlic = game.spawnMonster('ancientbarb3', 28.5, 22.5);
+      expect(inner(game).monsterUseSkill(madawc, 0, null)).toBe(true);
+      run(game, 60, () => madawc.states.has('shout'));
+      expect(madawc.states.has('shout')).toBe(true);
+      expect(korlic.states.has('shout')).toBe(true);
+      const leap = run(game, 1, () => false);
+      void leap;
+      const k0 = Math.hypot(korlic.x - 20.5, korlic.y - 20.5);
+      expect(inner(game).monsterUseSkill(korlic, 0, { x: 20.5, y: 20.5 })).toBe(true);
+      const ev = run(game, 120, (e) => e.some((x) => x.type === 'playerHit'));
+      expect(ev.some((x) => x.type === 'playerHit')).toBe(true);
+      const talic = game.spawnMonster('ancientbarb1', 30.5, 26.5);
+      expect(inner(game).monsterUseSkill(talic, 0, { x: 18.5, y: 18.5, fixed: true })).toBe(true);
+      const ww = run(game, 120, (e) => e.some((x) => x.type === 'playerHit'));
+      expect(ww.some((x) => x.type === 'playerHit')).toBe(true);
     });
 
     it('Succubus Witch: Amplify Damage (Skill1) 로 플레이어에게 저주', () => {

@@ -32,6 +32,8 @@ export interface ActsQuestHost extends QuestHost {
   weaponCode(): string | undefined;
   /** 레벨의 오브젝트 (objects.txt 번호). 레벨이 아직 없으면 undefined */
   findObject(levelNo: number, classId: number): ObjectUnit | undefined;
+  /** 유닛 번호로 오브젝트 (SUNIT_GetServerUnit(UNIT_OBJECT)) — 그 레벨이 없으면 undefined */
+  findObjectById?(levelNo: number, id: number): ObjectUnit | undefined;
   /** 오브젝트 만들기 (SUNIT_AllocUnitData(UNIT_OBJECT)) — 레벨 서브타일 */
   createObject(levelNo: number, classId: number, x: number, y: number, mode: number): ObjectUnit | null;
   /** 몬스터 만들기 (boss = 유니크 굴림, npc = 말을 걸 수 있는 NPC). 만든 유닛 번호 */
@@ -66,6 +68,10 @@ export interface ActsQuestHost extends QuestHost {
   removeUnit?(levelNo: number, id: number): void;
   /** 플레이어 직업 (charstats class — 'Amazon' …) */
   playerClass?(): string | undefined;
+  /** 퀘스트 경험치 (한 레벨 폭까지 — ACT5Q5_RewardPlayer). 실제로 준 양 */
+  giveQuestExperience?(amount: number): number;
+  /** 그 레벨에 있는 플레이어 마을 포털을 닫는다 */
+  closeTownPortalIn?(levelNo: number): void;
   /** 그 레벨 웨이포인트를 켰다 (WAYPOINTS_IsActivated — 웨이포인트가 없는 레벨이면 true) */
   waypointActive?(levelNo: number): boolean;
 }

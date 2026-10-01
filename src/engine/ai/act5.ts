@@ -759,8 +759,65 @@ const nihlathak: AiFn = (w, m, dist, combat) => {
   idle(w, m, 5);
 };
 
+/**
+ * 출처: AITHINK_Fn133_Ancient — 세 고대인 (AncientBarb1~3SkillHandler). 제단을 누르기 전·포털이 열려 있으면 (ACT5Q5_IsNotActivatable) 대기 25.
+ *   Talic (ancientbarb1): 거리 < aip1 이고 aip2% 면 Whirlwind — 대상 너머 aip4 지점까지. 근접이면 aip3% A1/A2 (반반), 아니면 다가감.
+ *   Madawc (ancientbarb2): 근접이면 aip4% 로 aip5 까지 물러남. Shout 상태가 없으면 aip3% Shout. 거리 < aip1 이면 aip2% A1 (던지기), 아니면 다가감.
+ *   Korlic (ancientbarb3): 거리 < aip1 이고 aip2% 면 Leap Attack. 근접이 아니면 다가감, 근접이면 aip3% A1/A2
+ */
+const ancient: AiFn = (w, m, dist, combat) => {
+  if (!(w.ancientsActive?.() ?? true) || w.noTarget) {
+    idle(w, m, 25);
+    return;
+  }
+  const t = w.target;
+  switch (base(m)) {
+    case 'ancientbarb1': {
+      if (hasSkill(m, 0) && dist < aiParam(m, 0) && rollChance(m, 1)) {
+        const scale = Math.max(1, Math.trunc(Math.hypot(t.x - m.x, t.y - m.y)));
+        const reach = aiParam(m, 3);
+        const x = Math.floor(t.x) + Math.trunc(((Math.floor(t.x) - Math.floor(m.x)) * reach) / scale);
+        const y = Math.floor(t.y) + Math.trunc(((Math.floor(t.y) - Math.floor(m.y)) * reach) / scale);
+        if (w.useSkill(m, 0, { x: x + 0.5, y: y + 0.5, fixed: true })) return;
+      }
+      if (!combat) {
+        walkTo(w, m);
+        return;
+      }
+      if (rollChance(m, 2)) w.startMode(m, m.rng.pick(2) ? 'A1' : 'A2');
+      else idle(w, m, 25);
+      return;
+    }
+    case 'ancientbarb2': {
+      if (combat && rollChance(m, 3) && escape(w, m, aiParam(m, 4), true)) return;
+      if (hasSkill(m, 0) && !m.states.has('shout') && rollChance(m, 2) && w.useSkill(m, 0, null)) return;
+      if (dist < aiParam(m, 0) && rollChance(m, 1)) {
+        w.startMode(m, 'A1');
+        return;
+      }
+      if (dist > aiParam(m, 0)) {
+        walkTo(w, m);
+        return;
+      }
+      idle(w, m, 10);
+      return;
+    }
+    case 'ancientbarb3': {
+      if (hasSkill(m, 0) && dist < aiParam(m, 0) && rollChance(m, 1) && w.useSkill(m, 0, tgt(w))) return;
+      if (!combat) {
+        walkTo(w, m);
+        return;
+      }
+      if (rollChance(m, 2)) w.startMode(m, m.rng.pick(2) ? 'A1' : 'A2');
+      else idle(w, m, 25);
+      return;
+    }
+  }
+  idle(w, m, 25);
+};
+
 export const ACT5_AI: Readonly<Record<string, AiFn>> = {
-  Nihlathak: nihlathak,
+  Nihlathak: nihlathak, Ancient: ancient,
   Whipped: whipped, ReanimatedHorde: reanimatedHorde, Succubus: succubus, SuccubusWitch: succubusWitch, FrozenHorror: frozenHorror, BloodLord: bloodLord,
   DeathMauler: deathMauler, PutridDefiler: putridDefiler, ClawViperEx: clawViperEx, GenericSpawner: genericSpawner, EvilHole: evilHole, BaalTaunt: baalTaunt,
   SiegeTower: siegeTower, SiegeBeast: siegeBeast, Imp: imp, Catapult: catapult, CatapultSpotter: catapultSpotter,

@@ -55,12 +55,12 @@ export const NPC_MESSAGES_ACT5: Record<number, NpcMessage[][]> = {
     t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['drehya', 20148, 0, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
     t([['larzuk', 20150, 2, 'A5Q4SuccessfulLarzuk'], ['cain6', 20149, 2, 'A5Q4SuccessfulCain'], ['drehya', 20148, 2, 'A5Q4SuccessfulAnya'], ['malah', 20151, 2, 'A5Q4SuccessfulMalah'], ['qual-kehk', 20152, 2, 'A5Q4SuccessfulQualKehk']]),
   ],
-  // 출처: A5Q5.cpp gpAct5Q5NpcMessages
+  // 출처: A5Q5.cpp gpAct5Q5NpcMessages (표 1~3 의 20156 · 20161 · 20166 도 A5Q4 와 같이 문자열 키가 Anya — drehya 로 적는다)
   [QW.A5Q5]: [
     t([['qual-kehk', 20153, 0, 'A5Q5InitQualKehk']]),
-    t([['larzuk', 20157, 2, 'A5Q5AfterInitLarzuk'], ['cain6', 20155, 2, 'A5Q5AfterInitCain'], ['malah', 20158, 2, 'A5Q5AfterInitMalah'], ['qual-kehk', 20154, 2, 'A5Q5AfterInitQualKehk'], ['nihlathak', 20156, 2, 'A5Q5AfterInitAnya']]),
-    t([['larzuk', 20162, 2, 'A5Q5EarlyReturnLarzuk'], ['cain6', 20160, 2, 'A5Q5EarlyReturnCain'], ['nihlathak', 20161, 2, 'A5Q5EarlyReturnAnya'], ['malah', 20163, 2, 'A5Q5EarlyReturnMalah'], ['qual-kehk', 20159, 2, 'A5Q5EarlyReturnQualKehk']]),
-    t([['larzuk', 20167, 2, 'A5Q5SuccessfulLarzuk'], ['cain6', 20165, 2, 'A5Q5SuccessfulCain'], ['nihlathak', 20166, 2, 'A5Q5SuccessfulAnya'], ['malah', 20168, 2, 'A5Q5SuccessfulMalah'], ['qual-kehk', 20164, 2, 'A5Q5SuccessfulQualKehk']]),
+    t([['larzuk', 20157, 2, 'A5Q5AfterInitLarzuk'], ['cain6', 20155, 2, 'A5Q5AfterInitCain'], ['malah', 20158, 2, 'A5Q5AfterInitMalah'], ['qual-kehk', 20154, 2, 'A5Q5AfterInitQualKehk'], ['drehya', 20156, 2, 'A5Q5AfterInitAnya']]),
+    t([['larzuk', 20162, 2, 'A5Q5EarlyReturnLarzuk'], ['cain6', 20160, 2, 'A5Q5EarlyReturnCain'], ['drehya', 20161, 2, 'A5Q5EarlyReturnAnya'], ['malah', 20163, 2, 'A5Q5EarlyReturnMalah'], ['qual-kehk', 20159, 2, 'A5Q5EarlyReturnQualKehk']]),
+    t([['larzuk', 20167, 2, 'A5Q5SuccessfulLarzuk'], ['cain6', 20165, 2, 'A5Q5SuccessfulCain'], ['drehya', 20166, 2, 'A5Q5SuccessfulAnya'], ['malah', 20168, 2, 'A5Q5SuccessfulMalah'], ['qual-kehk', 20164, 2, 'A5Q5SuccessfulQualKehk']]),
     t([['ancientstatue1', 20002, 0, 'AncientsAct5IntroGossip1'], ['ancientstatue2', 20002, 0, 'AncientsAct5IntroGossip1'], ['ancientstatue3', 20002, 0, 'AncientsAct5IntroGossip1']]),
     t([['larzuk', 20167, 0, 'A5Q5SuccessfulLarzuk'], ['cain6', 20165, 0, 'A5Q5SuccessfulCain'], ['drehya', 20166, 0, 'A5Q5SuccessfulAnya'], ['malah', 20168, 0, 'A5Q5SuccessfulMalah'], ['qual-kehk', 20164, 0, 'A5Q5SuccessfulQualKehk']]),
   ],

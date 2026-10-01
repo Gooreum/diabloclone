@@ -6455,6 +6455,7 @@ export class Game {
       skillParam: (skill, i) => this.data?.skills?.byNameOf(skill)?.params[i] ?? 0,
       levelPool: () => this.level.def.monsterInfo?.pool ?? [],
       isGenericSpawn: (id) => !!this.data?.monsters.types.get(id)?.genericSpawn,
+      ancientsActive: () => this.act5Quests()?.ancientsActivatable() ?? true,
       targetUnit: () => ({
         cursed: CURSE_STATES.some((c) => this.player.states.has(c)),
         player: true,
@@ -6698,6 +6699,8 @@ export class Game {
       case 'SerpentCharge':
       case 'DiabRun':
       case 'Leap':
+      case 'Leap Attack':
+      case 'Whirlwind':
         this.monStartDash(m, cast);
         break;
       case 'FetishInferno':
@@ -7328,10 +7331,26 @@ export class Game {
         }
         return true;
       }
+      case 'Whirlwind':
+        // 회전 이동 중 타격은 updateMonsterDash (spin)
+        return true;
+      case 'Shout': {
+        // SrvDo068 (몬스터 Madawc): 자신과 함성 범위 안 같은 편에 aurastate (skill_armor_percent), 지속 auralen
+        const def = data.missiles.get(rec.srvMissileA);
+        const radius = def ? missileStep(def.vel) * def.range : 6;
+        const len = Math.max(1, calc.eval(rec, rec.auraLenCalc, lvl, o));
+        const stats: Record<string, number> = {};
+        for (const a of rec.auraStats) stats[a.stat] = calc.eval(rec, a.calc, lvl, o);
+        for (const x of [m, ...this.monsters.filter((u) => u !== m && !u.pet && u.mode !== 'DT' && u.mode !== 'DD' && Math.hypot(u.x - m.x, u.y - m.y) <= radius)]) {
+          x.states.set(rec.auraState || 'shout', this.tickCount + len, stats);
+        }
+        return true;
+      }
       case 'Charge':
       case 'SerpentCharge':
       case 'DiabRun':
       case 'Leap':
+      case 'Leap Attack':
         // 돌진 중이면 도착 때 한 번 친다 (updateMonsterDash). 이미 도착했으면 지금
         if (m.dash) return true;
         if (!cast.dashHit) {
@@ -7841,6 +7860,8 @@ export class Game {
     const base = Math.max(m.type.run, m.type.velocity, 4);
     const speed = ((base * SUBTILES_PER_YARD) / ENGINE_FPS) * (pct + 100 + (m.bonus.velocitypercent ?? 0)) / 100;
     m.dash = { x, y, ...(tp.unit ? { targetId: tp.unit.id } : {}), hit: leap, speed: Math.min(speed, 3) };
+    // Whirlwind (Talic, AITHINK_AncientBarb1SkillHandler): AI 가 정한 지점 (대상 너머 aip4) 까지 곧게, 지나가며 친다
+    if (cast.skill === 'Whirlwind') m.dash = { x: cast.tx, y: cast.ty, hit: false, speed: Math.min(speed, 3), spin: this.tickCount };
     if (leap) {
       // 출처: SrvSt47_Jump — 뛰어오를 때 대상에게 한 번 (피해 +calc1 %)
       cast.dashHit = true;
@@ -7857,6 +7878,23 @@ export class Game {
     m.modeStart++;
     m.modeEnd++;
     const leap = cast?.skill === 'Leap';
+    if (dash.spin !== undefined) {
+      // 근사(원작 미확인): 원작은 monseq 이벤트 프레임마다 반경 안 대상 — 여기서는 6 프레임마다 근접 범위 + 2 안의 플레이어
+      if (cast && this.tickCount >= dash.spin && isInMeleeRange(m.x, m.y, m.type.sizeX, m.type.meleeRange + 2, this.player.x, this.player.y, PLAYER_SIZE)) {
+        dash.spin = this.tickCount + 6;
+        this.monMeleeSkill(m, cast, { mode: 'A1', enDmgPct: 0 });
+      }
+      const dw = Math.hypot(dash.x - m.x, dash.y - m.y);
+      const sx = m.x + ((dash.x - m.x) / Math.max(dw, 1e-6)) * dash.speed, sy = m.y + ((dash.y - m.y) / Math.max(dw, 1e-6)) * dash.speed;
+      if (dw <= dash.speed || this.tickCount - m.modeStart > 60 || !this.map.walkable(Math.floor(sx), Math.floor(sy))) {
+        m.dash = undefined;
+        return;
+      }
+      m.dir = dir64(dash.x - m.x, dash.y - m.y);
+      m.x = sx;
+      m.y = sy;
+      return;
+    }
     const t = !leap && dash.targetId === undefined ? this.player : undefined;
     const tx = t ? t.x : dash.x, ty = t ? t.y : dash.y;
     const tSize = PLAYER_SIZE;
@@ -9759,6 +9797,7 @@ export class Game {
       // 출처: INVENTORY_GetLeftHandWeapon — 손에 든 무기
       weaponCode: () => (g.store.equipment.rarm ?? g.store.equipment.larm)?.code,
       findObject: (levelNo, classId) => levelOf(levelNo)?.objects.find((o) => o.type.id === classId),
+      findObjectById: (levelNo, id) => levelOf(levelNo)?.objects.find((o) => o.id === id),
       createObject: (levelNo, classId, x, y, mode) => {
         const lv = levelOf(levelNo);
         if (!lv) return null;
@@ -9831,6 +9870,19 @@ export class Game {
         if (lv.objects.some((o) => o.id === id)) g.removeObject(lv.def.id, id);
       },
       playerClass: () => g.classStats?.cls,
+      giveQuestExperience: (amount) => {
+        // 출처: ACT5Q5_RewardPlayer — 최대 레벨이면 없음, 지금 레벨 다음 칸의 폭 (Threshold(lvl+1) − Threshold(lvl)) 까지
+        const c = g.character, t = g.expTable;
+        if (!c || !t || c.level >= t.maxLevel) return 0;
+        const n = Math.max(0, Math.min(amount, t.threshold(c.level + 1) - t.threshold(c.level)));
+        if (n > 0) g.gainExperience(n);
+        return n;
+      },
+      closeTownPortalIn: (levelNo) => {
+        // 출처: ACT5Q5_UnitIterate_ClosePortals — 플레이어 마을 포털이 그 레벨에 있으면 닫는다 (sub_6FC7C170)
+        const tp = g.townPortal;
+        if (tp && g.findLevel(tp.fieldLevel)?.level.def.levelNo === levelNo) g.closeTownPortal();
+      },
       waypointActive: (levelNo) => {
         const no = g.waypointNoOf(levelNo);
         return no === 255 || g.waypoints.has(no);
@@ -10653,7 +10705,7 @@ export class Game {
     p.cast = null;
     this.setPlayerMode('DT');
     this.applyDeathPenalty();
-    this.events.push({ type: 'playerDied' });
+    this.events.push({ type: 'playerDied', levelNo: this.level.def.levelNo ?? 0 });
   }
 
   /**
@@ -11941,7 +11993,7 @@ export class Game {
     this.removeObject(tp.fieldLevel, tp.fieldId);
     this.removeObject(tp.townLevel, tp.townId);
     this.townPortal = null;
-    this.events.push({ type: 'portalClosed' });
+    this.events.push({ type: 'portalClosed', fieldLevelNo: this.findLevel(tp.fieldLevel)?.level.def.levelNo ?? 0 });
   }
 
   private removeObject(levelId: string, id: number): void {
@@ -11972,7 +12024,7 @@ export class Game {
     field.portal = { toLevel: town, linkId: link.id, linkLevel: town, owner: owned };
     link.portal = { toLevel: here.def.id, linkId: field.id, linkLevel: here.def.id, owner: owned };
     if (owned) this.townPortal = { fieldLevel: here.def.id, fieldId: field.id, townLevel: town, townId: link.id };
-    this.events.push({ type: 'portalOpened', fieldLevel: here.def.id, fieldId: field.id, townId: link.id });
+    this.events.push({ type: 'portalOpened', fieldLevel: here.def.id, fieldLevelNo: here.def.levelNo ?? 0, fieldId: field.id, townId: link.id, owned });
     return true;
   }
 

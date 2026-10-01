@@ -237,6 +237,8 @@ const LOG_KEYS: Record<number, Record<number, string>> = {
   // A5Q3: 1 Malah 시작 (찾아라), 2 얼음 Anya 를 봄, 3 물약 없이 건드림 (Malah 에게), 4 물약 가짐, 5 녹임 (Malah 보상), 6 두루마리 받음 (Anya 에게)
   // A5Q4: 1 Anya 포털, 2 신전에 들어감, 3 Nihlathak 을 봄, 4 처치 (Anya 에게), 5 Anya 와 이야기함 (이름 새기기)
   [QW.A5Q4]: { 1: 'qstsa5q41', 2: 'qstsa5q42a', 3: 'qstsa5q42', 4: 'qstsa5q43', 5: 'qstsa5q43a' },
+  // A5Q5: 1 Qual-Kehk 시작 (Summit 으로), 2 Summit 에 들어옴 (제단을), 3 제단을 누름 (세 고대인을)
+  [QW.A5Q5]: { 1: 'qstsa5q51', 2: 'qstsa5q52', 3: 'qstsa5q53' },
   [QW.A5Q3]: { 1: 'qstsa5q31', 2: 'qstsa5q31a', 3: 'qstsa5q32', 4: 'qstsa5q33', 5: 'qstsa5q34', 6: 'qstsa5q35' },
 };
 

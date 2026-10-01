@@ -623,6 +623,10 @@ class GameListener {
         if (Number(ev.skill) === 0) this.swing();
         break;
       }
+      case 'chargeUp':
+        // 무술 차지 소리 (skills.txt prgsound)
+        if (typeof ev.sound === 'string' && ev.sound) void s.play(ev.sound);
+        break;
       case 'monsterHit': {
         const typeId = this.monsterType(ev.targetId);
         const ms = typeId ? t.mon.of(typeId) : undefined;

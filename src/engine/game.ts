@@ -29,7 +29,7 @@ import type { MissileDef } from './missiles';
 import { missileParam } from './missiles';
 import { CLASS_CODE, type SkillDb, type SkillRecord } from './skills/db';
 import { diminishing, levelDamageBonus, type SkillCalc, type SkillOwner } from './skills/formulas';
-import { cobraLeech, MAX_CHARGES, PROGRESSIVE_STATES, progressiveCalc, progressiveMissile } from './skills/assassin';
+import { cobraLeech, kickDamage, linearPct, MAX_CHARGES, PROGRESSIVE_STATES, progressiveCalc, progressiveMissile } from './skills/assassin';
 import { characterOwner, learnSkill, masteryBonus, passiveStat, passiveStats, type PassiveStat } from './skills/rules';
 import { addDamage, addElemental, applyMonsterResists, emptyDamage, totalDamage, type DamagePacket } from './skills/damage';
 import { rollCritical, rollWeaponDamage, weaponBaseRange } from './skills/player-damage';
@@ -107,6 +107,8 @@ export interface GameData {
   stateOverlays?: Map<string, StateOverlayDef[]>;
   /** states.txt group (같은 group 상태는 서로 지운다 — Fade·Burst of Speed, 아머 3종) */
   stateGroups?: Map<string, number>;
+  /** overlay.txt 이름(소문자) → 그림 (무술 차지 prgoverlay) */
+  overlays?: Map<string, StateOverlayDef>;
 }
 
 export interface PlayerInit { x: number; y: number; walkVelocity: number; runVelocity: number }
@@ -311,6 +313,10 @@ interface Cast {
   hitIds?: number[];
   /** Blade Fury: 다음 발사 가능 프레임 (원작 skill param1) */
   nextFire?: number;
+  /** Dragon Talon 남은 발 (원작 skill param1), 직전 발차기 명중·물리 (Dragon Tail) */
+  kicksLeft?: number;
+  lastHit?: boolean;
+  lastPhys?: number;
 }
 
 interface PlayerState {
@@ -1005,6 +1011,11 @@ export class Game {
     };
     const p = this.player;
     if (p.mode !== 'DD') add(p.id, p.x, p.y, p.states.names());
+    // 무술 차지: skills.txt prgoverlay 의 끝 숫자 = 차지 수 (tigerstrike1~3). 근사(원작 미확인): 속성 차지의 클라이언트 그림(cltprgfunc)은 그리지 않는다
+    if (p.mode !== 'DD') this.chargeStates().forEach((c, i) => {
+      const o = c.s.prgOverlay && c.n > 0 ? this.data?.overlays?.get(c.s.prgOverlay.toLowerCase().replace(/\d+$/, String(Math.min(c.n, MAX_CHARGES)))) : undefined;
+      if (o) out.push({ id: -(p.id * 64 + 40 + i + 1), name: `overlay:${c.s.prgOverlay}`, x: p.x, y: p.y, dir: 0, celFile: `overlays\\${o.file}`, frame: this.tickCount % o.frames, ...(o.trans ? { blend: o.trans } : {}) });
+    });
     for (const m of [...this.monsters, ...this.pets]) if (m.mode !== 'DD' && m.mode !== 'DT') add(m.id, m.x, m.y, m.states.names());
     return out;
   }
@@ -2697,7 +2708,8 @@ export class Game {
     // 무기 공격 속도: weapons.txt speed (WSM, 음수 = 빠름). 출처: Maxroll Attack Speed — AnimRate − WSM
     // 공격 속도: WSM + IAS / 시전 속도: FCR (EFCR = ⌊120 × FCR / (120 + FCR)⌋). 출처: Maxroll Attack Speed / Cast Rate
     const fcr = this.derived()?.stat('item_fastercastrate') ?? 0;
-    const speedPct = s.useAttackRate ? this.attackSpeedPct() : s.anim === 'SC' ? 100 + Math.trunc((120 * fcr) / (120 + fcr)) : 100;
+    // Dragon Tail(St27): 공격 속도 + par4 (출처: SKILLS_SrvSt27_DragonTail — sub_6FD15470)
+    const speedPct = (s.useAttackRate ? this.attackSpeedPct() : s.anim === 'SC' ? 100 + Math.trunc((120 * fcr) / (120 + fcr)) : 100) + (s.srvStFunc === 27 ? (s.params[3] ?? 0) : 0);
     const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0, targetItem };
     const seq = s.seqNum > 0 ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
     if (seq && seq.length) {
@@ -2732,6 +2744,15 @@ export class Game {
     if ((s.srvStFunc === 8 || s.srvStFunc === 9) && data.skillCalc) this.prepareMultiShot(cast);
     if (s.srvStFunc === 38) this.prepareWhirlwind(cast);
     if (s.srvStFunc === 31) this.prepareCharge(cast);
+    if (s.srvStFunc === 24) this.prepareDragonTalon(cast);
+    if (s.srvStFunc === 27) {
+      // Dragon Tail: 발차기는 시작할 때 (명중 % 없음, 차지 Tiger % 만)
+      const t = targetId !== undefined ? this.monsters.find((m) => m.id === targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
+      if (t) {
+        cast.lastHit = this.kick(s, lvl, t, 0, false);
+        cast.lastPhys = this.lastMeleePhys;
+      }
+    }
     if (s.srvStFunc === 28 && data.skillCalc) {
       // Blade Shield: 자신에게 aurastate (지속 auralencalc). 출처: SKILLS_SrvSt28_BladeShield
       p.states.set(s.auraState, this.tickCount + data.skillCalc.eval(s, s.auraLenCalc, lvl, this.owner()), {}, { id: s.id, lvl });
@@ -3595,6 +3616,10 @@ export class Game {
       case 33: return this.psychicHammer(s, lvl, live);
       case 34:
       case 35: return this.chargeUp(cast, live, index);
+      case 42: return this.dragonTalon(cast, live);
+      case 46: return this.dragonClaw(cast, live);
+      case 50: return this.dragonTail(cast, live);
+      case 52: return this.dragonFlight(cast, live, index);
       case 47: return this.cloakOfShadows(s, lvl);
       case 48: return this.bladeFury(cast);
       case 51: return this.mindBlast(s, lvl, cast.tx, cast.ty);
@@ -3668,6 +3693,132 @@ export class Game {
     const len = calc.elemLength(s, lvl, o);
     if (max <= 0 && len <= 0) return null;
     return { eType: s.eType, amount: min + this.rng.pick(Math.max(0, max - min)), len };
+  }
+
+  /** 마지막 근접 판정의 물리 피해 (저항 전, 1/256) — Dragon Tail 화염 폭발 */
+  private lastMeleePhys = 0;
+
+  /**
+   * 발차기 물리 (1/256): 스킬 물리 × (100 + ED)% + 발차기 × 256 × (100 + ED + 장화 Str/Dex 보너스 + damagepercent)%.
+   * 출처: SkillAss.cpp sub_6FCF7CE0, D2Skills.cpp SKILLS_CalculateKickDamage
+   */
+  private rollKick(spec: MeleeSpec): number {
+    const data = this.data, calc = data?.skillCalc, c = this.character;
+    if (!data || !calc || !c || !spec.kick) return 0;
+    const { s, lvl } = spec.kick, o = this.owner();
+    const smin = calc.minPhys256(s, lvl, o), smax = calc.maxPhys256(s, lvl, o);
+    const boots = this.equipment.feet ? data.items.base(this.equipment.feet.code) : undefined;
+    const k = kickDamage(boots, this.derived()?.stat('item_kickdamage') ?? 0, this.effStat('str'), this.effStat('dex'), spec.enDmgPct + this.playerStat('damagepercent') + (this.derived()?.offWeaponEdPct ?? 0));
+    const pct = (v: number, p: number) => Math.trunc((v * p) / 100);
+    const min = smin + pct(smin, spec.enDmgPct) + pct(k.min * 256, k.pct) + k.min * 256;
+    const max = smax + pct(smax, spec.enDmgPct) + pct(k.max * 256, k.pct) + k.max * 256;
+    return min + this.rng.pick(Math.max(0, max - min));
+  }
+
+  /** 발차기 한 번: 명중 = progressive_tohit + 스킬 명중, 스킬 원소 피해 (sub_6FCF7BC0) */
+  private kick(s: SkillRecord, lvl: number, t: MonsterUnit, enDmgPct: number, knockback: boolean): boolean {
+    const calc = this.data?.skillCalc;
+    if (!calc) return false;
+    return this.meleeHit(t, this.withCharges({ toHitPct: calc.toHit(s, lvl, this.owner()), enDmgPct, flat256: 0, elem: this.skillElemental(s, lvl), hitClass: 1, srcDam: s.srcDam || 128, kick: { s, lvl }, knockback }));
+  }
+
+  /** 넉백 확률: 플레이어·용병 calc4, 보스 calc3, 유니크 calc2, 그 밖 100 (SrvDo042 / SrvDo033 와 같은 표) */
+  private finisherKnockChance(s: SkillRecord, lvl: number, t: MonsterUnit): number {
+    const calc = this.data?.skillCalc;
+    if (!calc) return 0;
+    if (t.type.boss) return calc.calc(s, 3, lvl, this.owner());
+    if (t.flags & 8) return calc.calc(s, 2, lvl, this.owner());
+    return 100;
+  }
+
+  /**
+   * Dragon Talon: 시작할 때 첫 발 (St24), 남은 calc1 − 1 발은 판정마다 — 그때 차지를 풀고 다음 발, 마지막 발만 넉백 (확률표).
+   * 발이 남았는데 시퀀스 판정이 끝나면 시퀀스를 처음부터 되감는다 (sub_6FD15080(100)).
+   * 출처: SkillAss.cpp SKILLS_SrvSt24_DragonTalon / SrvDo042_DragonTalon
+   */
+  private dragonTalon(cast: Cast, t: MonsterUnit | undefined): void {
+    const s = cast.skill, lvl = cast.lvl;
+    if (!t || t.mode === 'DT' || t.mode === 'DD') return;
+    if (cast.lastHit) this.releaseCharges(t);
+    const left = (cast.kicksLeft ?? 0) - 1;
+    if (left < 0) return;
+    cast.kicksLeft = left;
+    const knock = left <= 0 && this.rng.pick(100) < this.finisherKnockChance(s, lvl, t);
+    cast.lastHit = this.kick(s, lvl, t, linearPct(s.params[0] ?? 0, s.params[1] ?? 0, lvl), knock);
+    if (left > 0 && cast.fired >= cast.hitTicks.length - 1) {
+      // 되감기: 첫 판정까지의 시간만큼 뒤에 다음 판정
+      const t0 = this.tickCount - cast.start, gap = Math.max(2, cast.hitTicks[0] ?? 4);
+      cast.hitTicks.push(t0 + gap);
+      cast.end = Math.max(cast.end, cast.start + t0 + gap + 4);
+    }
+  }
+
+  /** Dragon Talon 첫 발 (시작 함수). 대상이 근접 거리에 있어야 */
+  private prepareDragonTalon(cast: Cast): void {
+    const s = cast.skill, lvl = cast.lvl, calc = this.data?.skillCalc, p = this.player;
+    const t = cast.targetId !== undefined ? this.monsters.find((m) => m.id === cast.targetId && m.mode !== 'DT' && m.mode !== 'DD') : undefined;
+    if (!calc || !t || !isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, t.x, t.y, t.type.sizeX, 1)) {
+      cast.kicksLeft = 0;
+      return;
+    }
+    const n = calc.calc(s, 1, lvl, this.owner()) - 1;
+    cast.kicksLeft = n;
+    cast.lastHit = this.kick(s, lvl, t, linearPct(s.params[0] ?? 0, s.params[1] ?? 0, lvl), n === 0);
+  }
+
+  /**
+   * Dragon Claw: 판정마다(손톱 두 개면 두 번) 근접 — 명중 progressive_tohit + 스킬, 피해 + calc1 %, 원소면 calc4 % 변환, 명중하면 차지 풀기.
+   * 출처: SkillAss.cpp SKILLS_SrvDo046_DragonClaw / sub_6FCF8C70
+   * 근사(원작 미확인): 두 번째 판정도 오른손 손톱 피해 (원작은 시퀀스 프레임 홀짝으로 손을 바꾼다)
+   */
+  private dragonClaw(cast: Cast, t: MonsterUnit | undefined): void {
+    const s = cast.skill, lvl = cast.lvl, calc = this.data?.skillCalc;
+    if (!t || !calc) return;
+    const o = this.owner();
+    const spec: MeleeSpec = { toHitPct: calc.toHit(s, lvl, o), enDmgPct: calc.calc(s, 1, lvl, o), flat256: 0, elem: s.eType ? this.skillElemental(s, lvl) : null, hitClass: 0, srcDam: s.srcDam || 128 };
+    if (s.eType) {
+      spec.convPct = calc.calc(s, 4, lvl, o);
+      spec.convType = s.eType;
+    }
+    if (this.meleeHit(t, this.withCharges(spec))) this.releaseCharges(t);
+  }
+
+  /**
+   * Dragon Tail: 시작할 때 발차기 (St27, 공속 par4), 판정 프레임에 차지 풀기 + 대상 반경 aurarange 에 화염 = 발차기 물리 × (passive_fire_mastery + calc1) %.
+   * 출처: SkillAss.cpp SKILLS_SrvSt27_DragonTail / SrvDo050_DragonTail
+   */
+  private dragonTail(cast: Cast, t: MonsterUnit | undefined): void {
+    const s = cast.skill, lvl = cast.lvl, calc = this.data?.skillCalc;
+    if (!t || !calc || !cast.lastHit) return;
+    const phys = cast.lastPhys ?? 0;
+    this.releaseCharges(t);
+    if (this.isDead) return;
+    const pct = this.playerStat('passive_fire_mastery') + calc.calc(s, 1, lvl, this.owner());
+    const d = emptyDamage();
+    addElemental(d, 'fire', Math.trunc((phys * pct) / 100), 0);
+    for (const m of this.monstersNear(t.x, t.y, calc.eval(s, s.auraRangeCalc, lvl, this.owner()))) this.damageMonster(m, { ...d });
+    this.events.push({ type: 'dragonTail', x: t.x, y: t.y });
+  }
+
+  /**
+   * Dragon Flight: 첫 판정에 대상 곁으로 순간이동 (마을 불가), 다음 판정에 발차기 (피해 par1 + (lvl−1)·par2 %) 후 차지 풀기.
+   * 출처: SkillAss.cpp SKILLS_SrvDo052_DragonFlight (시퀀스 프레임 홀짝)
+   */
+  private dragonFlight(cast: Cast, t: MonsterUnit | undefined, index: number): void {
+    const s = cast.skill, lvl = cast.lvl, p = this.player;
+    if (!t || t.mode === 'DT' || t.mode === 'DD') return;
+    if (index % 2 === 0) {
+      if (this.inTown) return;
+      const spot = nearestWalkable(this.map, { x: t.x - Math.sign(t.x - p.x), y: t.y - Math.sign(t.y - p.y) }, 3);
+      if (!spot) return;
+      p.x = spot.x + 0.5;
+      p.y = spot.y + 0.5;
+      p.path = [];
+      p.dir = dir64(t.x - p.x, t.y - p.y);
+      this.events.push({ type: 'teleported', x: p.x, y: p.y });
+      return;
+    }
+    if (this.kick(s, lvl, t, linearPct(s.params[0] ?? 0, s.params[1] ?? 0, lvl), false)) this.releaseCharges(t);
   }
 
   /** 무술 차지 상태 목록 (states.txt progressive_*): 상태, 스킬, 레벨 (= 건 레벨과 지금 레벨 중 큰 쪽), 차지 수 */
@@ -4397,7 +4548,8 @@ export class Game {
     this.onPlayerHitMonster(m);
     const d = emptyDamage();
     const dv = this.derived();
-    d.phys = rollWeaponDamage({
+    if (spec.kick) d.phys = this.rollKick(spec);
+    else d.phys = rollWeaponDamage({
       weapon: w, str: this.effStat('str'), dex: this.effStat('dex'), enDmgPct: spec.enDmgPct + (spec.shield ? 0 : this.vsTypeDamagePct(m, w)), damagePercent: this.playerStat('damagepercent'),
       masteryDmg: spec.shield ? 0 : masteryBonus(passives, data.items, w, 'dmg'), srcDam: spec.srcDam,
       weaponRange: !spec.shield && dv && w ? { min: dv.weaponMin + dv.addMin, max: dv.weaponMax + dv.addMax } : undefined,
@@ -4415,7 +4567,7 @@ export class Game {
       d.coldLen += spec.vengeance.coldLen;
     }
     if (spec.stunLen) d.stunLen += spec.stunLen;
-    if (rollCritical(masteryBonus(passives, data.items, w, 'crit'), this.playerStat('passive_critical_strike'), this.rng, dv?.stat('item_deadlystrike') ?? 0)) {
+    if (!spec.kick && rollCritical(masteryBonus(passives, data.items, w, 'crit'), this.playerStat('passive_critical_strike'), this.rng, dv?.stat('item_deadlystrike') ?? 0)) {
       d.phys *= 2;
       d.crit = true;
     }
@@ -4438,9 +4590,11 @@ export class Game {
     this.addStatElemental(d);
     if (spec.hitClass) d.hitClass = spec.hitClass;
     const hpBefore = m.hp;
+    this.lastMeleePhys = d.phys;
     this.damageMonster(m, d, 'player', undefined, 'melee');
     this.procItemSkills('item_skillonattack', m, m);
-    if (!spec.shield) this.wearWeapon();
+    if (!spec.shield && !spec.kick) this.wearWeapon();
+    if (spec.knockback && m.mode !== 'DT' && m.mode !== 'DD') this.knockBack(m);
     // 생명·마나 흡수: 준 물리 피해의 lifedrainmindam / manadrainmindam % (Normal LifeStealDivisor 1). 출처: itemstatcost.txt, DifficultyLevels.txt
     const dvl = this.derived();
     if (dvl) {
@@ -10189,6 +10343,10 @@ interface MeleeSpec {
   leech?: { life: number; mana: number };
   prgConv?: { pct: number; eType: string }[];
   freezeDiv?: number;
+  /** 발차기 (Dragon Talon·Tail·Flight): 무기 대신 장화 피해 + 스킬 물리, hitclass 1 (출처: SkillAss.cpp sub_6FCF7CE0) */
+  kick?: { s: SkillRecord; lvl: number };
+  /** 명중하면 밀쳐내기 */
+  knockback?: boolean;
 }
 
 /** 소환 선택 사항: 정확한 칸(뼈 감옥), 기본 생명(Decoy·Hydra), 펫 레벨(Decoy·Revive) */

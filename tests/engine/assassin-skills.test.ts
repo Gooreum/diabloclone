@@ -338,3 +338,93 @@ describe.skipIf(!hasLod)('Phase 2 — 무술 차지', () => {
     expect(chargesOf(g, 'progressive_damage')).toBe(0);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 2 — 피니셔', () => {
+  const target = (g: Game, x = 21.5, y = 20.5) => {
+    const z = dummy(g, x, y);
+    z.stats.defense = 0;
+    z.stats.level = 1;
+    return z;
+  };
+  const chargesOf = (g: Game, state: string) => (g as unknown as { chargeCount(s: string): number }).chargeCount(state);
+  /** n 틱 동안 이벤트 모으기 */
+  const run = (g: Game, inner: Inner, n: number) => {
+    const evs: { type: string; [k: string]: unknown }[] = [];
+    for (let i = 0; i < n; i++) {
+      g.tick();
+      evs.push(...inner.events);
+    }
+    return evs;
+  };
+
+  it('kickDamage: 장화 피해 + item_kickdamage, % = 장화 Str·Dex 보너스 + damagepercent (하한 −90)', async () => {
+    const { kickDamage } = await import('../../src/engine/skills/assassin');
+    expect(kickDamage(undefined, 0, 100, 100, 0)).toEqual({ min: 0, max: 0, pct: 0 });
+    const boots = lod.items.base('lbt')!;
+    expect(boots.minDam).toBeGreaterThan(0);
+    const k = kickDamage(boots, 2, 100, 50, 10);
+    expect([k.min, k.max]).toEqual([boots.minDam + 2, boots.maxDam + 2]);
+    expect(k.pct).toBe(Math.trunc(boots.strBonus) + Math.trunc((boots.dexBonus * 50) / 100) + 10);
+    expect(kickDamage(boots, 0, 0, 0, -200).pct).toBe(-90);
+  });
+
+  it('Dragon Talon 13레벨: 발차기 calc1 = 3번 판정', () => {
+    const { g, inner } = game({ skills: { 'Dragon Talon': 13 }, equipment: { rarm: item('ktr'), feet: item('lbt') } });
+    const z = target(g);
+    g.enqueue({ type: 'useSkill', skill: S('Dragon Talon').id, hand: 'right', x: z.x, y: z.y, targetId: z.id });
+    const hits = run(g, inner, 80).filter((e) => e.type === 'monsterHit' && e.targetId === z.id).length;
+    expect(hits).toBe(lod.skillCalc!.calc(S('Dragon Talon'), 1, 13, { baseLevel: () => 13, skillLevel: () => 13, unitLevel: 30 }));
+    expect(hits).toBe(3);
+  });
+
+  it('Tiger 2차지 후 Dragon Talon: 발차기 명중 뒤 차지가 풀린다', () => {
+    const { g, inner } = game({ skills: { 'Tiger Strike': 5, 'Dragon Talon': 1 }, equipment: { rarm: item('ktr'), feet: item('lbt') } });
+    const z = target(g);
+    for (let i = 0; i < 2; i++) cast(g, 'Tiger Strike', z.x, z.y, z.id, 40);
+    expect(chargesOf(g, 'progressive_damage')).toBe(2);
+    g.enqueue({ type: 'useSkill', skill: S('Dragon Talon').id, hand: 'right', x: z.x, y: z.y, targetId: z.id });
+    const evs = run(g, inner, 60);
+    expect(evs.some((e) => e.type === 'chargeRelease')).toBe(true);
+    expect(chargesOf(g, 'progressive_damage')).toBe(0);
+  });
+
+  it('Dragon Claw: 손톱 두 개면 판정 두 번', () => {
+    const { g, inner } = game({ skills: { 'Dragon Claw': 5 }, equipment: { rarm: item('ktr'), larm: item('wrb') } });
+    const z = target(g);
+    g.enqueue({ type: 'useSkill', skill: S('Dragon Claw').id, hand: 'right', x: z.x, y: z.y, targetId: z.id });
+    const hits = run(g, inner, 60).filter((e) => (e.type === 'monsterHit' || e.type === 'miss') && e.targetId === z.id).length;
+    expect(hits).toBe(2);
+  });
+
+  it('Dragon Tail: 명중하면 대상 둘레 화염 폭발이 곁의 몬스터도 태운다', () => {
+    const { g, inner } = game({ skills: { 'Dragon Tail': 10 }, equipment: { rarm: item('ktr'), feet: item('hbt') } });
+    const z = target(g), other = target(g, 22.5, 22.5);
+    const hp = other.hp;
+    g.enqueue({ type: 'useSkill', skill: S('Dragon Tail').id, hand: 'right', x: z.x, y: z.y, targetId: z.id });
+    const evs = run(g, inner, 60);
+    expect(evs.some((e) => e.type === 'dragonTail')).toBe(true);
+    expect(other.hp).toBeLessThan(hp);
+  });
+
+  it('Dragon Flight: 멀리 있는 대상 곁으로 순간이동 후 발차기, 마을에서는 이동하지 않는다', () => {
+    const { g, inner } = game({ skills: { 'Dragon Flight': 5 }, equipment: { rarm: item('ktr'), feet: item('lbt') } });
+    const z = target(g, 35.5, 20.5);
+    g.enqueue({ type: 'useSkill', skill: S('Dragon Flight').id, hand: 'right', x: z.x, y: z.y, targetId: z.id });
+    const evs = run(g, inner, 60);
+    expect(Math.hypot(inner.player.x - z.x, inner.player.y - z.y)).toBeLessThan(3);
+    expect(evs.some((e) => (e.type === 'monsterHit' || e.type === 'miss') && e.targetId === z.id)).toBe(true);
+    const town = game({ skills: { 'Dragon Flight': 5 }, inTown: true });
+    const t = target(town.g, 35.5, 20.5);
+    town.g.enqueue({ type: 'useSkill', skill: S('Dragon Flight').id, hand: 'right', x: t.x, y: t.y, targetId: t.id });
+    run(town.g, town.inner, 60);
+    expect(town.inner.player.x).toBe(20.5);
+  });
+
+  it('Tiger 2차지 오버레이: 플레이어 그림 목록에 tiger_Strike_B', () => {
+    const { g } = game({ skills: { 'Tiger Strike': 5 } });
+    const z = target(g);
+    for (let i = 0; i < 2; i++) cast(g, 'Tiger Strike', z.x, z.y, z.id, 40);
+    const snap = g.snapshot() as unknown as { missiles: { celFile: string }[] };
+    expect(snap.missiles.some((m) => m.celFile.toLowerCase() === 'overlays\\expansion\\tiger_strike_b')).toBe(true);
+  });
+});

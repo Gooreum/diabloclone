@@ -84,17 +84,23 @@ export class StateList {
 /** 상태 오버레이 그림 (overlay.txt 한 행) */
 export interface StateOverlayDef { file: string; frames: number; predraw: boolean; /** overlay.txt Trans (0 불투명, 그 밖 = 빛 더하기) */ trans?: number }
 
-/**
- * states.txt overlay1~4 → overlay.txt (Filename, Frames, PreDraw). 'null' 그림은 뺀다.
- * 출처: 원작 MPQ data/global/excel/states.txt · overlay.txt (그림 = data\global\overlays\<Filename>.dcc)
- */
-export function parseStateOverlays(states: Record<string, string | undefined>[], overlays: Record<string, string | undefined>[]): Map<string, StateOverlayDef[]> {
+/** overlay.txt 이름(소문자) → 그림. 'null' 그림은 뺀다 */
+export function parseOverlays(overlays: Record<string, string | undefined>[]): Map<string, StateOverlayDef> {
   const ov = new Map<string, StateOverlayDef>();
   for (const r of overlays) {
     const file = r.Filename ?? '';
     if (!r.overlay || !file || file.toLowerCase() === 'null') continue;
     ov.set(r.overlay.toLowerCase(), { file, frames: Math.max(1, Number(r.Frames ?? 1) || 1), predraw: r.PreDraw === '1', trans: Number(r.Trans ?? 0) || 0 });
   }
+  return ov;
+}
+
+/**
+ * states.txt overlay1~4 → overlay.txt (Filename, Frames, PreDraw). 'null' 그림은 뺀다.
+ * 출처: 원작 MPQ data/global/excel/states.txt · overlay.txt (그림 = data\global\overlays\<Filename>.dcc)
+ */
+export function parseStateOverlays(states: Record<string, string | undefined>[], overlays: Record<string, string | undefined>[]): Map<string, StateOverlayDef[]> {
+  const ov = parseOverlays(overlays);
   const out = new Map<string, StateOverlayDef[]>();
   for (const r of states) {
     if (!r.state) continue;

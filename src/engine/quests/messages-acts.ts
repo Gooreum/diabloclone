@@ -233,6 +233,7 @@ const LOG_KEYS: Record<number, Record<number, string>> = {
   [QW.A4Q3]: { 1: 'qstsa4q31', 2: 'qstsa4q32', 3: 'qstsa4q33', 4: 'qstsa4q31', 5: 'qstsa4q34' },
   // 확장팩 Act 5 (A5Q1 설명 키는 원작 철자 qsta5q1x — "s" 없음)
   [QW.A5Q1]: { 1: 'qsta5q11', 2: 'qsta5q12', 3: 'qsta5q13', 4: 'qsta5q14' },
+  [QW.A5Q2]: { 1: 'qstsa5q21', 2: 'qstsa5q22', 3: 'qstsa5q23', 4: 'qstsa5q24', 5: 'qstsa5q21a' },
 };
 
 /** 퀘스트 로그 설명 키 (기록 워드·상태 바이트). 없으면 '' */

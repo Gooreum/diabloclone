@@ -13,7 +13,7 @@ import { generateAct5MazeLevel } from './act5-maze';
 import { ACT5_ALL, LEVEL5, LVLTYPE5 } from './act5-ids';
 import type { DrlgWorld } from './acts';
 import { DrlgGrid, Op, type Box } from './grid';
-import { Assembler, generatePresetLevel, presetMapRooms, type LevelLayout } from './layout';
+import { Assembler, generatePresetLevel, presetMapRooms, type LayoutUnit, type LevelLayout } from './layout';
 import { generateOutdoorGrid } from './outdoors';
 import { initAct5Outdoor } from './outsiege';
 import { buildOutdoorRoom, type RoomBuild } from './rooms';
@@ -249,6 +249,61 @@ export function generateAct5OutdoorLevel(data: DrlgData, placement: Act1Placemen
 }
 
 // =====================================================================================================
+// 벽 타일이 만드는 유닛 (DRLGROOMTILE_AddTilePresetUnits — Act 5 줄)
+// =====================================================================================================
+
+/**
+ * 출처: DrlgRoomTile.cpp stru_6FDD0DA8 (레벨 → 표 범위: Harrogath 23~24, Frigid Highlands·Arreat Plateau·Frozen Tundra 24~33) ·
+ *   stru_6FDD0F68 { 스타일, 순번, 오른쪽 벽 문인가, 유닛, 종류, dx, dy } — 문 달린 벽 타일 (TILETYPE_WALL_LEFT_DOOR 8 / RIGHT_DOOR 9) 에서
+ */
+const TILE_UNITS: readonly { style: number; seq: number; right: boolean; type: 1 | 2; unit: string | number; dx: number; dy: number }[] = [
+  { style: 3, seq: 3, right: false, type: 2, unit: 449, dx: -2, dy: 4 }, // 23 OBJECT_HARROGATH_TOWN_MAIN_GATE
+  { style: 2, seq: 1, right: false, type: 1, unit: 'barricadetower', dx: 1, dy: 2 }, // 24
+  { style: 2, seq: 1, right: true, type: 1, unit: 'barricadetower', dx: 2, dy: 1 },
+  { style: 2, seq: 6, right: false, type: 1, unit: 'barricadetower', dx: 1, dy: 1 },
+  { style: 2, seq: 2, right: false, type: 1, unit: 'barricadedoor2', dx: 0, dy: 1 },
+  { style: 2, seq: 3, right: true, type: 1, unit: 'barricadedoor1', dx: 1, dy: 0 },
+  { style: 26, seq: 0, right: false, type: 1, unit: 'prisondoor', dx: 0, dy: 1 },
+  { style: 2, seq: 4, right: true, type: 1, unit: 'barricadewall1', dx: 0, dy: 0 },
+  { style: 2, seq: 4, right: false, type: 1, unit: 'barricadewall2', dx: 0, dy: 0 },
+  { style: 29, seq: 0, right: true, type: 2, unit: 60, dx: 2, dy: 0 }, // OBJECT_PERMANENT_TOWN_PORTAL
+  { style: 29, seq: 0, right: false, type: 2, unit: 60, dx: 0, dy: 2 }, // 33
+];
+const TILE_UNIT_RANGE: Readonly<Record<number, readonly [number, number]>> = {
+  [LEVEL5.HARROGATH]: [0, 1], [LEVEL5.FRIGIDHIGHLANDS]: [1, 10], [LEVEL5.ARREATPLATEAU]: [1, 10], [LEVEL5.FROZENTUNDRA]: [1, 10],
+};
+
+/**
+ * 레벨의 문 달린 벽 타일 → 유닛 (몬스터는 monstats Id, 오브젝트는 objects.txt 번호). 표의 첫 일치 줄 하나.
+ * 근사(원작 미확인): 원작은 방마다 (방 안 서브타일만) — 여기서는 레벨 전체 (같은 타일이 이웃 방 가장자리에 겹쳐도 한 번)
+ */
+export function act5TileUnits(levelId: number, layout: LevelLayout): LayoutUnit[] {
+  const range = TILE_UNIT_RANGE[levelId];
+  if (!range) return [];
+  const out: LayoutUnit[] = [];
+  const seen = new Set<string>();
+  const W = layout.ds1.width;
+  for (const layer of layout.ds1.walls) {
+    layer.forEach((c, i) => {
+      if (c.orientation !== 8 && c.orientation !== 9) return;
+      const right = c.orientation === 9;
+      for (let j = range[0]; j <= range[1]; j++) {
+        const t = TILE_UNITS[j] as (typeof TILE_UNITS)[number];
+        if (c.style !== t.style || c.sequence !== t.seq || right !== t.right) continue;
+        const x = (i % W) * 5 + t.dx, y = Math.floor(i / W) * 5 + t.dy;
+        const k = `${x},${y}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push(t.type === 1 ? { type: 1, id: -1, x, y, mon: t.unit as string } : { type: 2, id: t.unit as number, x, y });
+        }
+        return;
+      }
+    });
+  }
+  return out;
+}
+
+// =====================================================================================================
 // 월드
 // =====================================================================================================
 
@@ -286,6 +341,8 @@ export function generateAct5World(data: DrlgData, seed: number, ids: readonly nu
       box = m.box;
     } else if (placed.drlgType === DRLGTYPE.OUTDOOR) layout = generateAct5OutdoorLevel(data, placement, id);
     else layout = generatePresetLevel(data, placement, id);
+    // 문 달린 벽 타일이 만드는 유닛 (감옥 문·바리케이드 문·벽·탑, Harrogath 정문)
+    layout.units.push(...act5TileUnits(id, layout));
     const { waypoint, shrines } = specials(data, layout);
     const seen = new Set<number>();
     const entrances = layout.warps.filter((w) => !seen.has(w.toLevel) && (seen.add(w.toLevel), true));

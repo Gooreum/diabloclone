@@ -162,4 +162,62 @@ describe.skipIf(!hasLod)('Act 5 퀘스트 (확장팩 원작 데이터)', () => {
       expect(g.tick().find((e) => e.type === 'socketed')?.sockets).toBe(1);
     }, T);
   });
+
+  describe('A5Q2', () => {
+    /** 레벨로 가되 몬스터는 남긴다 (감옥 문) */
+    const enter = (g: Game, key: string) => {
+      const def = g.levelDef(key)!;
+      const p = nearestWalkable(def.map, def.portalSpot ?? { x: def.map.width / 2, y: def.map.height / 2 }, 400)!;
+      g.changeLevel(key, p.x + 0.5, p.y + 0.5);
+      (g as unknown as { exitHold: boolean }).exitHold = true;
+      g.tick();
+    };
+
+    it('Rescue on Mount Arreat: Qual-Kehk 20096 → 감옥 문 3 개를 부수면 포로 15 명 → 보상 대기 CUSTOM1 → Qual-Kehk 20110 룬 Tal·Ral·Ort → 고용 가능', () => {
+      const r = new QuestRecord();
+      r.set(QW.A5Q1, QFLAG.REWARDGRANTED);
+      const g = makeGame(4, r.toJSON());
+      const W = QW.A5Q2;
+      expect(a5(g).stateOf(W).state).toBe(1);
+      expect(g.questControl.npcHasQuest('qual-kehk')).toBe(true);
+      expect(speechKeys(talkTo(g, 'qual-kehk'))).toEqual(['A5Q2InitQualKehk']);
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.STARTED)).toBe(true);
+      enter(g, 'frigidhighlands');
+      const cages = (inner(g) as unknown as { level: { objects: { type: { id: number }; x: number; y: number }[] } }).level.objects.filter((o) => o.type.id === 473);
+      expect(cages).toHaveLength(3);
+      const pows = g.npcs.filter((n) => n.type.id === 'act5pow');
+      expect(pows).toHaveLength(15);
+      const doors = inner(g).level.monsters.filter((m) => m.type.id === 'prisondoor' && m.mode !== 'DD');
+      expect(doors.length).toBeGreaterThanOrEqual(3);
+      for (const door of doors) inner(g).killMonster(door, 'player');
+      expect(rec(g, W, QFLAG.REWARDPENDING) && rec(g, W, QFLAG.PRIMARYGOALDONE)).toBe(true);
+      expect(rec(g, W, QFLAG.CUSTOM1)).toBe(true);
+      expect(a5(g).barbsToRescue()).toBe(0);
+      for (let i = 0; i < 60; i++) g.tick();
+      expect(g.npcs.filter((n) => n.type.id === 'act5pow')).toHaveLength(0);
+      // Qual-Kehk 보상
+      goTo(g, 'harrogath');
+      expect(speechKeys(talkTo(g, 'qual-kehk'))).toContain('A5Q2SuccessfulQualKehk');
+      closeTalk(g);
+      expect(rec(g, W, QFLAG.REWARDGRANTED)).toBe(true);
+      const codes = g.store.allItems().map((it) => it.code);
+      for (const c of ['r07', 'r08', 'r09']) expect(codes).toContain(c);
+      expect(g.questDone('a5q2')).toBe(true);
+    }, T);
+
+    it('구출 14 명이면 룬 2 개 (CUSTOM2), 그 밖은 1 개 (CUSTOM3)', () => {
+      for (const [flag, n] of [[QFLAG.CUSTOM2, 2], [QFLAG.CUSTOM3, 1]] as const) {
+        const r = new QuestRecord();
+        r.set(QW.A5Q1, QFLAG.REWARDGRANTED);
+        r.set(QW.A5Q2, QFLAG.REWARDPENDING);
+        r.set(QW.A5Q2, flag);
+        const g = makeGame(4, r.toJSON());
+        talkTo(g, 'qual-kehk');
+        closeTalk(g);
+        const runes = g.store.allItems().filter((it) => /^r0[789]$/.test(it.code)).map((it) => it.code);
+        expect(runes).toEqual(['r07', 'r08', 'r09'].slice(0, n));
+      }
+    }, T);
+  });
 });

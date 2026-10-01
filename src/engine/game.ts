@@ -202,7 +202,7 @@ export interface LevelDef {
   /** 마을 포털이 열리는 자리 (원작 타일 정보 11 — DUNGEON_FindActSpawnLocationEx(…, 11, …)) */
   portalSpot?: { x: number; y: number };
   /** DS1 프리셋 몬스터 (MonPreset 번호, 서브타일, DS1 경로 — 점마다 원작 경로 동작) · code = 하드코딩 프리셋 (Flavie 'navi') */
-  presetMonsters?: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string }[];
+  presetMonsters?: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string; mon?: string }[];
   /** 레벨 몬스터 정보: levels.txt 풀·고른 목록·보스 후보·MonLvlEx·막·WarpDist */
   monsterInfo?: { pool: string[]; region: string[]; umon: string[]; monLvlEx: number; act: number; warpDist: number; warpPoints: Pt[] };
 }
@@ -1366,7 +1366,7 @@ export class Game {
    * DS1 프리셋 몬스터. 출처: D2GAME_SpawnPresetMonster_6FC66560 — 슈퍼유니크, monstats 몬스터 (파티 포함), monplace:
    * 2 유니크 무리(umon, 챔피언 없음), 3 챔피언(umon + 1~3 챔피언), 5 Blood Raven, 17 Fallen, 18 Fallen Shaman (D2Common_11063 레벨 계열 + 레벨 보정)
    */
-  private spawnPreset(p: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string }): void {
+  private spawnPreset(p: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string; mon?: string }): void {
     const data = this.data, info = this.level.def.monsterInfo;
     if (!data?.uniques) return;
     const npcPath = (): NpcPathNode[] => (p.path ?? []).map((q) => ({ x: q.x + 0.5, y: q.y + 0.5, action: q.action ?? 1 }));
@@ -1376,7 +1376,8 @@ export class Game {
       return;
     }
     // 마을에는 monsterInfo 가 없다 → 현재 막의 MonPreset (출처: DRLGPRESET_ParseDS1File — MonPreset[레벨의 막][id])
-    const k = data.uniques.preset(info?.act ?? this.act + 1, p.id);
+    // 벽 타일이 만든 몬스터 (Act 5 감옥 문·바리케이드 — monstats Id 그대로)
+    const k = p.mon ? ({ kind: 'monster', id: p.mon } as const) : data.uniques.preset(info?.act ?? this.act + 1, p.id);
     if (k.kind === 'super') {
       this.spawnSuperUnique(k.idx, p.x, p.y, p.path);
       return;
@@ -9755,6 +9756,14 @@ export class Game {
       act: () => g.act,
       expansion: () => g.expansion,
       superUniqueKey: (idx) => g.data?.uniques?.superUnique(idx)?.key,
+      removeUnit: (levelNo, id) => {
+        const lv = levelOf(levelNo);
+        if (!lv) return;
+        for (const list of [lv.monsters, lv.npcs]) {
+          const i = list.findIndex((u) => u.id === id);
+          if (i >= 0) list.splice(i, 1);
+        }
+      },
       npcPos: (typeId) => {
         const n = g.level.npcs.find((x) => x.type.id === typeId);
         return n ? { x: Math.floor(n.x), y: Math.floor(n.y) } : null;

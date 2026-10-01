@@ -161,7 +161,8 @@ export class QuestPanel {
       const k = questLogKeyActs(w, e.status);
       if (!k) return [];
       const t = str(k);
-      return [w === QW.A4Q2 ? t.replace('%d', String(e.count)) : t];
+      // %d = 남은 수 (A4Q2 봉인, A5Q2 구할 포로)
+      return [t.includes('%d') ? t.replace('%d', String(e.count)) : t];
     }
     if (e.quest === 1 && e.status === 4) return [e.count === 1 ? str('qstsa1q140') : `${str('qstsa1q14')}${e.count}`];
     const k = questLogKey(e.quest, e.status);

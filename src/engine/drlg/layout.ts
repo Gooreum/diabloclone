@@ -16,7 +16,11 @@ import { generateOutdoorGrid, type OutdoorLevel } from './outdoors';
 import { allocRoomSeed, buildOutdoorRoom, buildPresetRooms, shiftUnit, type RoomBuild } from './rooms';
 import { G2, LEVEL, PREST, ROOM, TILE, TILETYPE, pickedFileOf, tileSequence, tileStyle, type DrlgData } from './types';
 
-export interface LayoutUnit { type: number; id: number; x: number; y: number; code?: string; flags?: number; path?: { x: number; y: number; action?: number }[] }
+export interface LayoutUnit {
+  type: number; id: number; x: number; y: number; code?: string; flags?: number; path?: { x: number; y: number; action?: number }[];
+  /** 타일이 만든 몬스터 (monstats Id 그대로 — DRLGROOMTILE_AddTilePresetUnits 의 UNIT_MONSTER) */
+  mon?: string;
+}
 /** 레벨 이동 타일 (동굴 입구 등). 좌표 = 레벨 기준 서브타일 */
 export interface WarpPoint { x: number; y: number; toLevel: number; warpId: number; visIndex: number }
 export interface LayoutRoom { x: number; y: number; w: number; h: number; flags: number; prest: number }

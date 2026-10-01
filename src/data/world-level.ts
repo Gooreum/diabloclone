@@ -173,8 +173,8 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     }
     // 프리셋 몬스터 (DS1 유닛 type 1: MonPreset 번호 — 슈퍼유니크·Andariel·Blood Raven·place_* 자리). 원작 bSpawned & 1 이면 배치 안 함
     // 마을 프리셋 (MonPreset Act 1: gheed·akara·kashya·warriv1·charsi·rogue1·chicken·cow) 은 NPC·장식 유닛, 하드코딩 프리셋 code(Flavie 'navi')도 포함
-    const presetMonsters = lv.layout.units.filter((u) => u.type === 1 && (u.id >= 0 || !!u.code) && !((u.flags ?? 0) & 1))
-      .map((u) => ({ id: u.id, x: u.x, y: u.y, ...(u.path ? { path: u.path } : {}), ...(u.code ? { code: u.code } : {}) }));
+    const presetMonsters = lv.layout.units.filter((u) => u.type === 1 && (u.id >= 0 || !!u.code || !!u.mon) && !((u.flags ?? 0) & 1))
+      .map((u) => ({ id: u.id, x: u.x, y: u.y, ...(u.path ? { path: u.path } : {}), ...(u.code ? { code: u.code } : {}), ...(u.mon ? { mon: u.mon } : {}) }));
     // 오브젝트: DS1 프리셋 유닛(type 2 = 오브젝트, 번호는 DRLGPRESET_ParseDS1File 에서 objects.txt 번호로 변환됨)과 방 목록 (오브젝트 그룹 배치)
     // 출처: Objects.cpp OBJECTS_PopulationHandler — 웨이포인트 방(DUNGEON_HasWaypoint)은 배치 안 함
     const objects = lv.layout.units.filter((u) => u.type === 2).map((u) => ({ classId: u.id, x: u.x, y: u.y }));

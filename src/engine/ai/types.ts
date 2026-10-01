@@ -133,6 +133,8 @@ export interface MonsterUnit {
   regenX8?: number;
   /** AI 명령 대상 유닛 (원작 AI 명령 nCmdParam[1]: Fetish Shaman 14 = 부활할 시체로, 1 = 공격 대상) */
   cmdTarget?: number;
+  /** AI 명령 만료 프레임 (Cry Help: nCmdParam[3]) */
+  cmdUntil?: number;
   /** 정해진 프레임에 사라지는 소환 유닛 (Hydra·Bone Prison) — 원작 dwAiParam[0] 만료 프레임 */
   expires?: number;
   /** 소환한 스킬 레벨 (몬스터 Hydra 의 미사일 레벨 = 소환 스킬 레벨) */
@@ -246,4 +248,11 @@ export interface AiWorld {
   levelVars?: Record<string, number>;
   /** 게임 사건 알림 (퀘스트 훅: 원작 ACT2Q1_OnRadamentActivated · ACT2Q5_OnSummonerActivated · ACT4Q1_OnIzualActivated) */
   event?(e: { type: string; [k: string]: unknown }): void;
+  // ---- 확장팩 Act 5 ----
+  /** monstats 칸에 없는 스킬 쓰기 (원작 AITACTICS_UseSkill(…, nMode, nSkillId, …) — Catapult Spotter·Baal Taunt·Impregnate) */
+  useNamedSkill?(m: MonsterUnit, skill: string, mode: string, target: SkillTarget | null): boolean;
+  /** 다른 monstats 행의 aip (원작 MONSTERMODE_GetMonStatsTxtRecord(MONSTER_IMP1~4)->wAiParam[i][난이도]) */
+  monsterParam?(typeId: string, i: number): number;
+  /** skills.txt ParamN (i = 0 부터) */
+  skillParam?(skill: string, i: number): number;
 }

@@ -6338,7 +6338,29 @@ export class Game {
       missileRange: (name) => this.data?.missiles.get(name)?.range ?? 0,
       skillLevel: (m, slot) => this.monSkillLvl(m, slot),
       levelVars: this.levelAiVarsOf(this.level.def.id),
+      // ---- 확장팩 Act 5 ----
+      useNamedSkill: (m, skill, mode, t) => this.monsterUseNamedSkill(m, skill, mode, t),
+      monsterParam: (id, i) => this.data?.monsters.types.get(id)?.aiParams[i] ?? 0,
+      skillParam: (skill, i) => this.data?.skills?.byNameOf(skill)?.params[i] ?? 0,
     };
+  }
+
+  /**
+   * monstats 칸에 없는 스킬 (원작 AITACTICS_UseSkill(pGame, pUnit, nMode, nSkillId, …) — Catapult Spotter 의 다섯 투석기 스킬·Baal Taunt·Impregnate).
+   * 스킬 레벨: 같은 스킬이 칸에 있으면 그 레벨, 아니면 1 (+ 난이도 MonsterSkillBonus).
+   * 근사(원작 미확인): 그 모드 애니메이션이 없는 몬스터는 A1 → S1 → NU 중 있는 것
+   */
+  private monsterUseNamedSkill(m: MonsterUnit, skill: string, mode: string, t: SkillTarget | null): boolean {
+    if (!this.data?.skills?.byNameOf(skill)) return false;
+    const slot = m.type.skills.findIndex((d) => d?.name === skill);
+    const lvl = (slot >= 0 ? Math.max(1, m.type.skills[slot]?.lvl ?? 1) : 1) + this.rules.monsterSkillBonus;
+    const want = (mode in MONMODE_INDEX ? mode : 'A1') as MonMode;
+    const use = ([want, 'A1', 'S1', 'NU'] as MonMode[]).find((x) => m.type.modes.has(x)) ?? 'NU';
+    const cast = this.makeCast(m, slot >= 0 ? slot : -1, skill, lvl, t ?? { unitId: m.targetId, ...this.targetOf(m) }, undefined);
+    this.startMonsterMode(m, use, cast);
+    this.monSkillStart(m, cast);
+    this.events.push({ type: 'monsterSkill', monsterId: m.id, skill });
+    return true;
   }
 
   /** 레벨별 AI 공용 값 (원작 D2MonsterRegionStrc) */
@@ -6361,6 +6383,7 @@ export class Game {
   private updateMonsters(): void {
     const w = this.aiWorld();
     this.updateChaos();
+    this.updateAttached();
     for (const m of [...this.monsters]) {
       if (m.mode === 'DD') continue;
       if (m.mode === 'DT') {
@@ -6973,6 +6996,95 @@ export class Game {
     return s;
   }
 
+  /**
+   * 투석기 돌 (Catapult Spotter 의 다섯 스킬, SrvDo028: 목표 지점에 위에서 떨어지는 미사일).
+   * 출처: missiles.txt — catapultchargedball (Hit 38 → catapultchargedballbolt 번개 조각), catapult spike ball (Hit 40 → spike in air → on ground 불),
+   *   catapult cold ball (Hit 1 냉기), catapult plague ball (Hit 2 → catapult plague cloud 독구름), catapult meteor ball (Hit 14 → catapult meteor fire 불길)
+   * 근사(원작 미확인): 떨어지는 시간 = 미사일 AnimLen × 4 프레임 (HellMeteor 와 같게), 터짐 반경 3, 번개 조각 수 = skills.txt Param1 (없으면 4)
+   */
+  private catapultShot(m: MonsterUnit, skill: string, rec: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const data = this.data;
+    const ball = data?.missiles.get(rec.srvMissileA);
+    if (!data || !ball) return;
+    const fall = Math.max(8, ball.animLen * 4);
+    const at = { x: tx, y: ty };
+    const ground = (name: string) => {
+      const def = data.missiles.get(name);
+      if (!def) return;
+      this.missiles.push({
+        id: this.nextUnitId++, def, x: Math.floor(tx) + 0.5, y: Math.floor(ty) + 0.5, dx: 0, dy: 0, left: def.range, age: 0, owner: 'monster', ownerId: m.id,
+        ownerLevel: m.stats.level, hitClass: def.hitClass || 0x20, hit: new Set(), lvl, mpkt: this.missileOwnDamage(def, lvl), groundFire: true,
+      });
+    };
+    switch (skill) {
+      case 'Catapult Charged Ball': {
+        const n = Math.max(1, rec.params[0] || 4);
+        this.fireMonMissile(m, ball.name, at, at, {
+          lvl, noCollide: true, range: fall,
+          onEnd: () => {
+            for (let i = 0; i < n; i++) {
+              const a = (i / n) * Math.PI * 2;
+              this.fireMonMissile(m, 'catapultchargedballbolt', at, { x: tx + Math.cos(a) * 8, y: ty + Math.sin(a) * 8 }, { lvl, wander: true });
+            }
+          },
+        });
+        return;
+      }
+      case 'Catapult Spike Ball':
+        this.fireMonMissile(m, ball.name, at, at, { lvl, noCollide: true, range: fall, onEnd: () => ground('catapult spike on ground') });
+        return;
+      case 'CatapultBlizzard':
+        this.fireMonMissile(m, ball.name, at, at, { lvl, noCollide: true, range: fall, explode: { radius: 3, visual: 'catapult cold explosion' } });
+        return;
+      case 'CatapultPlague':
+        this.fireMonMissile(m, ball.name, at, at, {
+          lvl, noCollide: true, range: fall,
+          onEnd: () => {
+            const cloud = data.missiles.get('catapult plague cloud');
+            if (cloud) this.fireMonMissile(m, cloud.name, at, at, { lvl, noCollide: true, pierce: true, every: 25, range: cloud.range });
+          },
+        });
+        return;
+      case 'CatapultMeteor':
+        this.fireMonMissile(m, ball.name, at, at, { lvl, noCollide: true, range: fall, explode: { radius: 3 }, onEnd: () => ground('catapult meteor fire') });
+        return;
+    }
+  }
+
+  /**
+   * 출처: SkillDruid.cpp sub_6FD01010 — 탄 임프가 내린다: 상태 attached 해제·주인 끊기, 생명 10% 미만이면 죽는다. 자리 = 대상 지점 (sub_6FCBDFE0 순간이동)
+   */
+  private impDetach(m: MonsterUnit, x: number, y: number): void {
+    m.states.remove('attached');
+    m.leaderId = m.id;
+    m.hidden = false;
+    m.ai[0] = -1;
+    const spot = nearestWalkable(this.map, { x, y }, 6);
+    if (spot) {
+      m.x = spot.x + 0.5;
+      m.y = spot.y + 0.5;
+    }
+    if (this.lifePctOf(m) < 10) this.killMonster(m, 'other');
+  }
+
+  private lifePctOf(m: MonsterUnit): number {
+    return Math.trunc((100 * Math.max(0, m.hp)) / Math.max(1, m.stats.maxHp));
+  }
+
+  /** 탄 임프는 탈 것 자리를 따라간다 (원작: 주인에 붙은 상태 — 클라이언트가 같이 그린다). 탈 것이 죽으면 내린다 */
+  private updateAttached(): void {
+    for (const m of this.monsters) {
+      if (!m.states.has('attached')) continue;
+      const o = this.monsters.find((x) => x.id === m.leaderId);
+      if (!o || o.mode === 'DT' || o.mode === 'DD') {
+        this.impDetach(m, m.x, m.y);
+        continue;
+      }
+      m.x = o.x;
+      m.y = o.y;
+    }
+  }
+
   /** 노바 (64 방향, 한 대상은 한 번). 출처: SKILLS_SrvDo022_NovaAttack + sub_6FD14170 */
   private monNova(m: MonsterUnit, name: string, lvl: number, vel?: number): void {
     const group = new Set<number>();
@@ -7218,6 +7330,118 @@ export class Game {
             this.events.push({ type: 'playerCursed', curse: rec.auraTargetState || 'fingermagecurse', by: m.id });
           },
         });
+        return true;
+      }
+      // ---- 확장팩 Act 5 몬스터 스킬 (SkillDruid.cpp SrvDo128~136, SkillSor.cpp SrvDo017·028) ----
+      case 'Imp Teleport': {
+        // SrvDo129: 탄 채면 대상 자리로 뛰어내림 (sub_6FD01010), 대상이 탈 것(Siege Beast·Barricade Tower)이면 올라탄다 (sub_6FD00EC0), 대상이 없으면 MonTeleport
+        const owner = m.states.has('attached') ? this.monsters.find((x) => x.id === m.leaderId) : undefined;
+        if (owner) {
+          this.impDetach(m, tp.x, tp.y);
+          return true;
+        }
+        const t = tp.unit;
+        if (t && !t.pet && t.mode !== 'DT' && t.mode !== 'DD' && ['barricadetower', 'siegebeast1'].includes(t.type.baseId || t.type.id)
+          && !this.monsters.some((x) => x !== m && x.leaderId === t.id && x.states.has('attached'))) {
+          m.states.set(rec.auraState || 'attached', Infinity);
+          m.leaderId = t.id;
+          m.hidden = true;
+          m.ai[1] = 0;
+          m.x = t.x;
+          m.y = t.y;
+          this.events.push({ type: 'monsterAttached', monsterId: m.id, ownerId: t.id });
+          return true;
+        }
+        if (!t) {
+          const spot = nearestWalkable(this.map, { x: m.x + m.rng.pick(9) - 4, y: m.y + m.rng.pick(9) - 4 }, 4);
+          if (spot) {
+            m.x = spot.x + 0.5;
+            m.y = spot.y + 0.5;
+          }
+        }
+        return true;
+      }
+      case 'ImpBolt': {
+        // SrvDo017: calc1 개의 충전 볼트 (PATHTYPE_CHARGEDBOLT)
+        const n = Math.max(1, calc.calc(rec, 1, lvl, o));
+        const a0 = Math.atan2(tp.y - m.y, tp.x - m.x);
+        for (let i = 0; i < n; i++) {
+          const a = a0 + ((this.rng.pick(9) - 4) * Math.PI) / 12;
+          this.fireMonMissile(m, rec.srvMissileA, { x: m.x, y: m.y }, { x: m.x + Math.cos(a) * 10, y: m.y + Math.sin(a) * 10 }, { lvl, wander: true });
+        }
+        return true;
+      }
+      case 'Imp Fire Missile': {
+        // SrvDo132: 미사일 = srvmissilea + 계열 순번 (impmiss21 …)
+        const b = data.missiles.get(rec.srvMissileA);
+        if (!b) return true;
+        const name = [...data.missiles.values()].find((d) => d.id === b.id + data.monsters.chainIndex(m.type))?.name ?? b.name;
+        this.fireMonMissile(m, name, { x: m.x, y: m.y }, tp, { lvl, explode: { radius: 0, visual: data.missiles.get(name)?.explosionMissile || '' } });
+        return true;
+      }
+      case 'Siege Beast Stomp': {
+        // SrvDo134: 자기 둘레 aurarange 안 모두에게 물리·원소 피해 (sub_6FD10200)
+        const r = Math.max(1, calc.eval(rec, rec.auraRangeCalc, lvl, o));
+        const d = this.monSkillDamage(m, rec, lvl);
+        for (const pet of [...this.pets]) if (pet.mode !== 'DT' && pet.mode !== 'DD' && Math.hypot(pet.x - m.x, pet.y - m.y) <= r) this.damagePet(pet, d);
+        if (Math.hypot(player.x - m.x, player.y - m.y) <= r) this.hitPlayer({ min: 0, max: 0, toHit: 0 }, m.stats.level, rec.hitClass, false, m, { ...d, manaDrain: 0 }, true);
+        return true;
+      }
+      case 'Catapult Charged Ball':
+      case 'Catapult Spike Ball':
+      case 'CatapultBlizzard':
+      case 'CatapultPlague':
+      case 'CatapultMeteor':
+        this.catapultShot(m, cast.skill, rec, lvl, cast.tx, cast.ty);
+        return true;
+      case 'Cry Help': {
+        // SrvDo128: 이 몬스터의 하수인에게 AI 명령 (대상 공격, calc1 프레임 동안 — Minion AI 가 따른다)
+        const until = this.tickCount + Math.max(1, calc.calc(rec, 1, lvl, o));
+        const targetId = tp.unit?.id ?? -1;
+        for (const x of this.monsters) {
+          if (x === m || x.leaderId !== m.id || x.mode === 'DT' || x.mode === 'DD') continue;
+          x.cmdTarget = targetId;
+          x.cmdUntil = until;
+        }
+        return true;
+      }
+      case 'Healing Vortex': {
+        // MISSMODE_SrvHit43_HealingVortex: 맞은 몬스터 생명 += 스킬 물리 피해 (최대 생명까지). 근사(원작 미확인): 미사일 비행 대신 바로
+        const t = tp.unit;
+        if (t && !t.pet && t.mode !== 'DT' && t.mode !== 'DD') t.hp = Math.min(t.stats.maxHp, t.hp + (this.monSkillDamage(m, rec, lvl).phys >> 8));
+        return true;
+      }
+      case 'Overseer Whip': {
+        // SrvDo131: minion 계열이면 rand%100 >= calc1 이고 Bloodlust 가 아닐 때 같은 순번의 suicideminion 으로 바꾼다 (SpecialState WHIPPED),
+        //   아니면 aurastate 저주 (Bloodlust: auralen 동안 aurastat)
+        const t = tp.unit;
+        if (!t || t.pet || t.mode === 'DT' || t.mode === 'DD') return true;
+        if ((t.type.baseId || t.type.id) === 'minion1' && (m.rng.roll() >>> 0) % 100 >= calc.calc(rec, 1, lvl, o) && !t.states.has(rec.auraTargetState || 'bloodlust')) {
+          const idx = data.monsters.chainIndex(t.type);
+          let id = rec.summon || 'suicideminion1';
+          for (let i = 0; i < idx; i++) id = data.monsters.types.get(id)?.nextInClass || id;
+          if (data.monsters.types.has(id)) {
+            const hpPct = t.hp / Math.max(1, t.stats.maxHp);
+            t.type = data.monsters.get(id);
+            t.stats = rollMonsterStats(data.monsters, t.type, t.rng);
+            t.hp = Math.max(1, Math.round(t.stats.maxHp * hpPct));
+            t.aiOverride = 'Whipped';
+            t.ai = [0, 0, 0];
+            t.states.set('changeclass', Infinity);
+            this.events.push({ type: 'monsterReinitialized', monsterId: t.id, typeId: id });
+          }
+          return true;
+        }
+        const stats: Record<string, number> = {};
+        for (const a of rec.auraStats) stats[a.stat] = calc.eval(rec, a.calc, lvl, o);
+        t.states.set(rec.auraTargetState || 'bloodlust', this.tickCount + Math.max(1, calc.eval(rec, rec.auraLenCalc, lvl, o)), stats);
+        return true;
+      }
+      case 'MinionSpawner': {
+        // SrvSt62/SrvDo135: monstats spawn 칸 몬스터를 둘레에 (경험치·드롭 없음, 주인 = 생성기)
+        const id = m.type.spawn || 'minion1';
+        const s2 = this.spawnMonMinion(m, id, m.x + m.rng.pick(5) - 2, m.y + m.rng.pick(5) - 2, (m.type.spawnMode as MonMode) || 'NU', { noTc: true });
+        if (s2) s2.leaderId = m.id;
         return true;
       }
       case 'Decrepify':

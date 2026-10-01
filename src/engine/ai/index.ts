@@ -7,6 +7,7 @@ import { ACT1_AI, type AiFn } from './act1';
 import { ACT2_AI, ACT2_TARGET_MODE } from './act2';
 import { ACT3_AI, ACT3_TARGET_MODE } from './act3';
 import { ACT4_AI } from './act4';
+import { ACT5_AI, ACT5_TARGET_MODE } from './act5';
 import { idle, wait, walkCloseToUnit } from './tactics';
 import type { AiWorld, MonsterUnit } from './types';
 
@@ -22,14 +23,14 @@ const PLAYER_SIZE = 2;
  * 막별 AI 표를 합친 것 (monstats AI 이름 → 함수). 원작 AI 표(gpMonsterAiTable)도 막 구분 없이 하나다.
  * 이름이 겹치면 앞 막 것이 이긴다 (같은 AI 는 한 번만 정의)
  */
-export const AI_TABLE: Readonly<Record<string, AiFn>> = { ...ACT4_AI, ...ACT3_AI, ...ACT2_AI, ...ACT1_AI };
+export const AI_TABLE: Readonly<Record<string, AiFn>> = { ...ACT5_AI, ...ACT4_AI, ...ACT3_AI, ...ACT2_AI, ...ACT1_AI };
 
 /**
  * 원작 AI 표 대상 방식 (AiThink.cpp gpAiTable_6FD3F990 첫 칸, D2GAME_MONSTERS_AiFunction03_6FCF0A70 의 switch):
  * 0 대상을 찾지 않음, 1 대상 필요 (없으면 sub_6FCCF9D0 거리별 대기), 2·5 대상 없어도 AI 함수 호출, 4 대상 필요 (없으면 20 프레임).
  * 표에 없는 AI 는 1
  */
-export const AI_TARGET_MODE: Readonly<Record<string, 0 | 1 | 2 | 4 | 5>> = { ...ACT3_TARGET_MODE, ...ACT2_TARGET_MODE };
+export const AI_TARGET_MODE: Readonly<Record<string, 0 | 1 | 2 | 4 | 5>> = { ...ACT5_TARGET_MODE, ...ACT3_TARGET_MODE, ...ACT2_TARGET_MODE };
 
 export function aiName(m: MonsterUnit): string {
   return m.aiOverride ?? m.type.ai;

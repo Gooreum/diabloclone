@@ -166,6 +166,8 @@ export interface PetInfo {
   hireling?: boolean;
   /** 용병이 이번 공격(A1)에 쓸 스킬 (hireling.txt Skill / monstats Skill1) */
   mercSkill?: { name: string; lvl: number };
+  /** Blade Sentinel 칼날: 던진 자리(A)와 목표(B) 사이 왕복, 지금 B 로 가는 중 */
+  creeper?: { ax: number; ay: number; bx: number; by: number; toB: boolean };
 }
 
 export interface AiTarget { x: number; y: number; size: number; dead: boolean; inTown: boolean; id?: number }

@@ -396,6 +396,8 @@ interface Missile {
   procs?: boolean;
   /** 이미 터짐 (Immolation Arrow 가 적중과 소멸에서 두 번 터지지 않게) */
   exploded?: boolean;
+  /** NextHit 미사일 (Shock Web 가시·Blade Sentinel): 맞힌 유닛을 NextDelay 프레임 뒤 다시 맞힌다 — id → 다시 맞힐 수 있는 age */
+  rehit?: Map<number, number>;
   /** 확장 몬스터 미사일 (Phase 5: 관통·지속 피해·유도·폭발·적중 효과) — updateMonMissileEx */
   mon?: { pierce: boolean; homing: boolean; every: number; nextHit: number; explode?: { radius: number; visual?: string }; onHit?: () => void };
 }
@@ -3010,6 +3012,12 @@ export class Game {
 
     // 미사일 스킬 (srvmissile): Magic/Fire/Cold/Exploding/Ice Arrow, Poison Javelin, Lightning Bolt, Plague Javelin
     if (s.srvMissile && s.srvDoFunc === 0) {
+      // Fire Blast: 던진 폭탄(pSrvHitFunc 36)은 목표 지점에 떨어진다
+      const inAir = data.missiles.get(s.srvMissile);
+      if (inAir?.srvHitFunc === 36) {
+        this.throwLob(inAir, s, lvl, cast.tx, cast.ty);
+        return;
+      }
       this.launchSkillMissile(s, lvl, s.srvMissile, cast.tx, cast.ty, live?.id);
       if (s.decQuant) this.decQuantity(this.isBowWeapon() ? 'larm' : 'rarm');
       return;
@@ -3614,6 +3622,8 @@ export class Game {
       case 76: return; // Whirlwind 판정은 updateCast (회전 이동 중 시퀀스 이벤트마다)
       // ------------------------------------------------ 어쌔신 (확장팩). 출처: D2MOO SkillAss.cpp
       case 33: return this.psychicHammer(s, lvl, live);
+      case 43: return this.shockWeb(s, lvl, cast.tx, cast.ty);
+      case 44: return this.bladeSentinel(s, lvl, cast.tx, cast.ty);
       case 34:
       case 35: return this.chargeUp(cast, live, index);
       case 42: return this.dragonTalon(cast, live);
@@ -3998,6 +4008,108 @@ export class Game {
         this.events.push({ type: 'meteorImpact', x: ms.x, y: ms.y });
       },
     });
+  }
+
+  /**
+   * 던지는 함정 (missiles.txt pSrvHitFunc 36 MissileInAir): 적과 부딪히지 않고 목표 지점까지 날아가 떨어지면 HitSubMissile1.
+   * bomb on ground (pSrvHitFunc 3) 는 그 자리에서 반경 sHitPar1 (없으면 스킬 aurarange) 폭발, shock field on ground 는 남아서 닿는 적을 NextDelay 마다.
+   * 출처: MissMode.cpp MISSMODE_SrvHit36_MissileInAir · SrvHit03_BombOnGround → SrvHit44 (반경)
+   * 근사(원작 미확인): 포물선(lob) 높이는 그리지 않는다 — 땅 위 직선 비행
+   */
+  private throwLob(def: MissileDef, s: SkillRecord, lvl: number, tx: number, ty: number, from?: Pt): void {
+    const data = this.data, calc = data?.skillCalc, p = this.player;
+    const ground = def.hitSubMissile1 ? data?.missiles.get(def.hitSubMissile1) : undefined;
+    if (!data || !calc || !ground) return;
+    const o = from ?? { x: p.x, y: p.y };
+    const speed = missileStep(def.vel), d = Math.hypot(tx - o.x, ty - o.y);
+    const life = Math.max(1, Math.min(def.range, Math.ceil(d / Math.max(speed, 1e-3))));
+    const sk = this.skillFor(ground) ?? s;
+    const roll = this.missileDamageRoller(ground, sk, lvl, { srcDam: 0, useSkillDamage: true });
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: o.x, y: o.y, dx: (tx - o.x) / life, dy: (ty - o.y) / life, left: life, age: 0, owner: 'player', ownerId: p.id, ownerLevel: this.character?.level ?? 1,
+      hitClass: 0, hit: new Set(), lvl, skill: s, noCollide: true,
+      onEnd: (ms) => {
+        if (ground.srvHitFunc === 3) {
+          const radius = ground.hitParams[0] || Math.max(calc.eval(sk, sk.auraRangeCalc, lvl, this.owner()), 1);
+          for (const m of this.monstersNear(ms.x, ms.y, radius)) this.damageMonster(m, roll());
+          this.spawnVisual(ground.name, ms.x, ms.y);
+          this.events.push({ type: 'trapExploded', x: ms.x, y: ms.y });
+          return;
+        }
+        this.missiles.push({
+          id: this.nextUnitId++, def: ground, x: ms.x, y: ms.y, dx: 0, dy: 0, left: ground.range + lvl * ground.levRange, age: 0, owner: 'player', ownerId: p.id,
+          ownerLevel: this.character?.level ?? 1, hitClass: ground.hitClass || s.hitClass || 0x40, roll, hit: new Set(), lvl, skill: sk, rehit: new Map(),
+        });
+      },
+    });
+  }
+
+  /**
+   * Shock Web: prgcalc1 개의 가시를 목표 지점 둘레 ±aurarange 무작위 지점으로 던진다 (던지는 사람과 거리 2 이상). 1 개거나 반경 < 2 면 목표 지점에 하나.
+   * 출처: SkillAss.cpp SKILLS_SrvDo043_ShockField / sub_6FCF8330
+   */
+  private shockWeb(s: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const data = this.data, calc = data?.skillCalc, p = this.player;
+    const def = data?.missiles.get(progressiveMissile(s, 0));
+    if (!data || !calc || !def) return;
+    const o = this.owner();
+    const n = calc.eval(s, progressiveCalc(s, 0), lvl, o), r = calc.eval(s, s.auraRangeCalc, lvl, o);
+    if (n <= 0) return;
+    if (n <= 1 || r < 2) {
+      this.throwLob(def, s, lvl, tx, ty);
+      return;
+    }
+    for (let i = 0; i < n; i++) {
+      const x = tx + this.rng.pick(2 * r) - r, y = ty + this.rng.pick(2 * r) - r;
+      if ((x - p.x) ** 2 + (y - p.y) ** 2 >= 4) this.throwLob(def, s, lvl, x, y);
+    }
+  }
+
+  /**
+   * Blade Sentinel: 칼날 몬스터(bladecreeper, 함정 펫)가 던진 자리와 목표 지점 사이를 속도 15 로 오가며 닿는 적을 NextDelay(25) 마다 벤다.
+   * 수명 calc4 프레임, 피해 = 스킬 물리 + 무기 × SrcDam, 명중 = 주인 AR. 출처: SkillAss.cpp SKILLS_SrvDo044_BladeSentinel,
+   * AiThink.cpp AITHINK_Fn102_BladeCreeper, MissMode.cpp SrvDo20 / SrvHit37 (blade creeper 미사일)
+   */
+  private bladeSentinel(s: SkillRecord, lvl: number, tx: number, ty: number): void {
+    const data = this.data, calc = data?.skillCalc, p = this.player;
+    if (!data || !calc || !s.summon || this.inTown) return;
+    const o = this.owner();
+    const life = calc.calc(s, 4, lvl, o);
+    const pet = this.summonPet(s, lvl, s.summon, p.x, p.y, s.petType, { expires: this.tickCount + Math.max(1, life), creeper: { ax: p.x, ay: p.y, bx: tx, by: ty, toB: true } }, { hpBase: 1000, level: this.character?.level ?? 1 });
+    const def = data.missiles.get(s.srvMissileA);
+    if (!pet || !def) return;
+    // 칼날 미사일이 펫을 따라다닌다 (SrvDo20: 매 프레임 주인 위치로)
+    this.missiles.push({
+      id: this.nextUnitId++, def, x: pet.x, y: pet.y, dx: 0, dy: 0, left: Math.max(1, life), age: 0, owner: 'player', ownerId: p.id, ownerLevel: this.character?.level ?? 1,
+      hitClass: s.hitClass || 0x0d, ar: this.playerAR(), roll: this.missileDamageRoller(def, s, lvl, { srcDam: s.srcDam, useSkillDamage: true }), hit: new Set(), lvl, skill: s, rehit: new Map(),
+      onTick: (ms) => {
+        if (!this.pets.includes(pet) || pet.mode === 'DT' || pet.mode === 'DD') ms.left = 0;
+        ms.x = pet.x;
+        ms.y = pet.y;
+      },
+    });
+  }
+
+  /** Blade Creeper 이동: A ↔ B 왕복 (AITHINK_Fn102 — 속도 15). 근사(원작 미확인): 벽은 무시하고 직선 */
+  private updateCreeper(pet: MonsterUnit): void {
+    const c = pet.pet?.creeper;
+    if (!c) return;
+    const tx = c.toB ? c.bx : c.ax, ty = c.toB ? c.by : c.ay;
+    const dx = tx - pet.x, dy = ty - pet.y, d = Math.hypot(dx, dy);
+    const step = (15 * SUBTILES_PER_YARD) / ENGINE_FPS;
+    if (d <= step) {
+      pet.x = tx;
+      pet.y = ty;
+      c.toB = !c.toB;
+      return;
+    }
+    pet.x += (dx / d) * step;
+    pet.y += (dy / d) * step;
+    pet.dir = dir64(dx, dy);
+    if (pet.mode !== 'WL') {
+      pet.mode = 'WL';
+      pet.modeStart = this.tickCount;
+    }
   }
 
   /** 스킬 물리 + 원소 피해 굴림 (D2GAME_RollPhysicalDamage + RollElementalDamage) */
@@ -7516,7 +7628,8 @@ export class Game {
     const aura = s.sumSkill1 ? data.skills?.byNameOf(s.sumSkill1) : undefined;
     if (aura?.aura) this.petAura.set(id, { skill: aura, lvl: Math.max(1, calc.eval(s, s.sumSk1Calc, lvl, o)), next: this.tickCount + 1 });
     const max = this.petMax(s, lvl);
-    const same = this.pets.filter((x) => x.pet?.skillId === s.id && x.mode !== 'DT' && x.mode !== 'DD');
+    // 같은 pettype 끼리 petmax (함정 5종·Blade Sentinel 은 assassintrap 하나로 5개). 출처: D2GAME_SummonPet_6FD14430 → sub_6FC7D7A0(pettype, petmax)
+    const same = this.pets.filter((x) => (petType ? x.pet?.petType === petType : x.pet?.skillId === s.id) && x.mode !== 'DT' && x.mode !== 'DD');
     while (same.length >= max && petType !== 'none') {
       const old = same.shift() as MonsterUnit;
       this.pets.splice(this.pets.indexOf(old), 1);
@@ -7581,6 +7694,10 @@ export class Game {
         continue;
       }
       if (info.petType === 'none' || info.petType === 'dopplezon') continue; // 뼈벽·Decoy(AI Idle): 제자리
+      if (info.creeper) {
+        this.updateCreeper(pet);
+        continue;
+      }
       if (pet.states.has('freeze') || pet.states.has('stunned')) {
         pet.modeEnd++;
         continue;
@@ -9114,6 +9231,10 @@ export class Game {
       }
       return false;
     };
+    if (ms.rehit) for (const [id, at] of ms.rehit) if (ms.age >= at) {
+      ms.hit.delete(id);
+      ms.rehit.delete(id);
+    }
     for (const m of this.monsters) {
       if (m.mode === 'DT' || m.mode === 'DD' || ms.hit.has(m.id) || ms.group?.has(m.id) || m.states.has('conversion')) continue;
       if (!touches(m)) continue;
@@ -9123,6 +9244,7 @@ export class Game {
       if (ms.homingTarget !== undefined && m.id !== ms.homingTarget && this.monsters.some((x) => x.id === ms.homingTarget && x.mode !== 'DT' && x.mode !== 'DD')) continue;
       ms.hit.add(m.id);
       ms.group?.add(m.id);
+      ms.rehit?.set(m.id, ms.age + Math.max(1, ms.def.nextDelay));
       this.onMissileCollide(ms, m);
       if (ms.def.collideKill) {
         if (ms.pierceChance && this.rng.pick(100) < ms.pierceChance) continue;

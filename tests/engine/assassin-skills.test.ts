@@ -428,3 +428,63 @@ describe.skipIf(!hasLod)('Phase 2 — 피니셔', () => {
     expect(snap.missiles.some((m) => m.celFile.toLowerCase() === 'overlays\\expansion\\tiger_strike_b')).toBe(true);
   });
 });
+
+describe.skipIf(!hasLod)('Phase 3 — 던지는 함정·Blade Sentinel', () => {
+  const run = (g: Game, inner: Inner, n: number) => {
+    const evs: { type: string; [k: string]: unknown }[] = [];
+    for (let i = 0; i < n; i++) {
+      g.tick();
+      evs.push(...inner.events);
+    }
+    return evs;
+  };
+
+  it('Fire Blast: 앞의 몬스터는 지나치고 목표 지점에 떨어져 반경 안을 태운다', () => {
+    const { g, inner } = game({ skills: { 'Fire Trauma': 10 } });
+    const front = dummy(g, 24.5, 20.5), goal = dummy(g, 32.5, 20.5);
+    g.enqueue({ type: 'useSkill', skill: S('Fire Trauma').id, hand: 'right', x: goal.x, y: goal.y });
+    const evs = run(g, inner, 60);
+    expect(evs.some((e) => e.type === 'trapExploded')).toBe(true);
+    expect(goal.hp).toBeLessThan(100000);
+    expect(front.hp).toBe(100000);
+  });
+
+  it('Shock Web: 목표 둘레에 가시 여러 개, 위에 선 몬스터는 25 프레임마다 다시 맞는다', () => {
+    const { g, inner } = game({ skills: { 'Shock Field': 10 } });
+    const z = dummy(g, 30.5, 20.5);
+    z.resist.li = 0;
+    g.enqueue({ type: 'useSkill', skill: S('Shock Field').id, hand: 'right', x: z.x, y: z.y });
+    let spikes = 0, hits = 0;
+    for (let i = 0; i < 120; i++) {
+      g.tick();
+      spikes = Math.max(spikes, inner.missiles.filter((m) => m.def.name === 'shock field on ground').length);
+      hits += inner.events.filter((e) => e.type === 'monsterHit' && e.targetId === z.id).length;
+    }
+    const s = S('Shock Field');
+    expect(spikes).toBeGreaterThan(1);
+    expect(spikes).toBeLessThanOrEqual(lod.skillCalc!.eval(s, s.prgCalc[0]!, 10, { baseLevel: () => 10, skillLevel: () => 10, unitLevel: 30 }));
+    // 가시가 몬스터 위에 떨어졌을 때만 — 시드 고정 (seed 7)
+    expect(hits).toBeGreaterThanOrEqual(2);
+  });
+
+  it('Blade Sentinel: 칼날이 시작점과 목표 사이를 오가며 경로 위 몬스터를 베고, 수명(calc4)이 끝나면 사라진다', () => {
+    const { g, inner } = game({ skills: { 'Blade Sentinel': 5 } });
+    const z = dummy(g, 26.5, 20.5);
+    z.stats.defense = 0;
+    z.stats.level = 1;
+    g.enqueue({ type: 'useSkill', skill: S('Blade Sentinel').id, hand: 'right', x: 32.5, y: 20.5 });
+    const xs: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      g.tick();
+      const pet = inner.pets.find((p) => p.type.id === 'bladecreeper');
+      if (pet) xs.push(pet.x);
+    }
+    expect(Math.max(...xs)).toBeGreaterThan(30);
+    expect(z.hp).toBeLessThan(100000);
+    const s = S('Blade Sentinel');
+    const life = lod.skillCalc!.calc(s, 4, 5, { baseLevel: () => 5, skillLevel: () => 5, unitLevel: 30 });
+    for (let i = 0; i < life; i++) g.tick();
+    expect(inner.pets.some((p) => p.type.id === 'bladecreeper')).toBe(false);
+    expect(inner.missiles.some((m) => m.def.name === 'blade creeper')).toBe(false);
+  });
+});

@@ -41,6 +41,37 @@ describe('단축키 설정 (CONFIGURE CONTROLS)', () => {
     expect(keyName({ key: '~' })).toBe('`');
     expect(keyName({ key: 'Enter' })).toBe('Enter');
   });
+  // 원작과 다름(사용자 요청): Shift·Ctrl·Alt 조합 단축키
+  it('조합 이름: Shift+F1, 수식 키 자체는 혼자, 글자·숫자는 물리 키 (Option·한글 입력 중)', () => {
+    expect(keyName({ key: 'F1', shiftKey: true })).toBe('Shift+F1');
+    expect(keyName({ key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true })).toBe('Control+Alt+Z');
+    expect(keyName({ key: 'Shift', shiftKey: true })).toBe('Shift');
+    expect(keyName({ key: 'Alt', altKey: true })).toBe('Alt');
+    expect(keyName({ key: 'Ω', code: 'KeyZ', altKey: true })).toBe('Alt+Z');
+    expect(keyName({ key: 'Process', code: 'KeyI' })).toBe('I');
+    expect(keyName({ key: 'Fn', shiftKey: true })).toBe('Shift+Fn');
+  });
+  it('조합 배정이 먼저, 없으면 키 하나로 (Shift+1 = 벨트 1), 수식 키만 누르면 없음', () => {
+    const k = new KeyBindings();
+    expect(k.actionOf({ key: '!', code: 'Digit1', shiftKey: true })).toBe('belt1');
+    expect(k.is({ key: 'r', code: 'KeyR', shiftKey: true }, 'run')).toBe(true);
+    expect(k.actionOf({ key: 'Shift', shiftKey: true })).toBeNull();
+    k.set('skill1', 'Shift+F1');
+    expect(k.actionOf({ key: 'F1', shiftKey: true })).toBe('skill1');
+    expect(k.actionOf({ key: 'F1' })).toBeNull();
+    k.set('skill2', 'Shift+Fn');
+    expect(k.actionOf({ key: 'Fn', shiftKey: true })).toBe('skill2');
+    expect(k.actionOf({ key: 'Fn' })).toBeNull();
+  });
+  it('키 이름 표시: 조합은 + 로, 좁은 곳은 짧게', () => {
+    const k = new KeyBindings();
+    const str = (s: string) => ({ KeyShift: 'Shift', KeyF1: 'F1', KeyControl: 'Ctrl' })[s] ?? s;
+    expect(k.label('Shift+F1', str)).toBe('Shift+F1');
+    expect(k.label('Shift+F1', str, true)).toBe('S+F1');
+    expect(k.label('Control+Shift+Z', str, true)).toBe('C+S+Z');
+    expect(k.label('Shift', str)).toBe('Shift');
+    expect(k.label('Shift++', str)).toBe('Shift++');
+  });
 });
 
 describe('바닥 이름표 배치 (Alt)', () => {

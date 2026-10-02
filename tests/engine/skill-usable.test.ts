@@ -123,3 +123,52 @@ describe.skipIf(!hasGameData)('무기 · 수량 · 마나 · 지연', () => {
     expect(game.skillUseState(S('Blizzard').id)).toBe('usable');
   });
 });
+
+// 7직업 전수: 맞는 무기를 들려 "쓸 수 있다(usable)"가 되면, 실제로 써서 skillStart 가 나와야 한다 (조용한 실패 0)
+describe.skipIf(!hasGameData)('7직업 전 스킬: usable 인데 안 나가는 스킬 없음', () => {
+  /** 스킬마다 차례로 들려 볼 장비 (맨손 → 근접+방패 → 활+화살 → 자벨린 → 클로 둘 → 던지는 도끼 둘 → 단검) */
+  const LOADOUTS: [string, Record<string, [string, number?]>][] = [
+    ['맨손', {}], ['도끼+방패', { rarm: ['axe'], larm: ['buc'] }], ['활+화살', { rarm: ['sbw'], larm: ['aqv', 100] }],
+    ['자벨린', { rarm: ['jav', 50] }], ['클로 둘', { rarm: ['ktr'], larm: ['ktr'] }], ['던지는 도끼 둘', { rarm: ['tax', 50], larm: ['tax', 50] }], ['단검', { rarm: ['dgr'] }],
+  ];
+  const CORPSE_SKILLS = new Set(['Raise Skeleton', 'Raise Skeletal Mage', 'Revive', 'Corpse Explosion', 'Poison Explosion', 'Find Potion', 'Find Item', 'Grim Ward']);
+  for (const cls of ['Amazon', 'Sorceress', 'Necromancer', 'Paladin', 'Barbarian', 'Druid', 'Assassin'] as ClassName[]) {
+    it(`${cls}: 모든 비패시브 스킬`, () => {
+      const silent: string[] = [], never: string[] = [];
+      for (const s of [...data.skills!.byId.values()].filter((x) => x.charclass === CLASS_CODE[cls] && !x.passive)) {
+        let started = false, usableSomewhere = false;
+        for (const [, lo] of LOADOUTS) {
+          const eq = Object.fromEntries(Object.entries(lo).map(([slot, [code, q]]) => [slot, item(code, q)]));
+          const { game, ch } = setup(cls, eq);
+          // 늑대·곰 전용 스킬은 그 모습으로
+          if (s.restrict === 2 && s.states[0]) use(game, S(s.states[0] === 'bear' ? 'Wearbear' : 'Wearwolf').id, 21, 21);
+          if (game.skillUseState(s.id) !== 'usable') continue;
+          usableSomewhere = true;
+          ch.mana = ch.maxMana;
+          const corpse = dummy(game, 'zombie1', 23.5, 22.5);
+          (game as unknown as { killMonster(m: unknown): void }).killMonster(corpse);
+          for (let i = 0; i < 40; i++) game.tick();
+          const m = dummy(game);
+          let ev: GameEvent[];
+          if (s.name === 'IronGolem') {
+            const it = item('axe');
+            (game as unknown as { dropItem(i: ItemInstance, x: number, y: number): void }).dropItem(it, 22.5, 21.5);
+            game.enqueue({ type: 'useSkill', skill: s.id, hand: 'right', x: 22.5, y: 21.5, targetItem: it.id });
+            ev = [];
+            for (let i = 0; i < 60; i++) ev.push(...game.tick());
+          } else if (CORPSE_SKILLS.has(s.name)) ev = use(game, s.id, corpse.x, corpse.y, corpse.id);
+          else ev = use(game, s.id, m.x, m.y, m.id);
+          if (ev.some((e) => e.type === 'skillStart' && e.skill === s.id)) {
+            started = true;
+            break;
+          }
+        }
+        if (usableSomewhere && !started) silent.push(s.name);
+        if (!usableSomewhere) never.push(s.name);
+      }
+      expect(silent, `${cls}: usable 인데 안 나감`).toEqual([]);
+      // 어떤 장비로도 쓸 수 없다고 나오는 스킬은 없어야 한다 (늘 빨간 스킬 = 판정 버그)
+      expect(never, `${cls}: 늘 쓸 수 없음`).toEqual([]);
+    });
+  }
+});

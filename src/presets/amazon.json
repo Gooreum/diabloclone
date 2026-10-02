@@ -113,6 +113,126 @@
   {
    "item": {
     "id": 25,
+    "code": "tsp",
+    "quality": 3,
+    "ilvl": 99,
+    "identified": true,
+    "quantity": 80,
+    "durability": 6,
+    "maxDurability": 6,
+    "defense": 0,
+    "invW": 1,
+    "invH": 4,
+    "levelReq": 0,
+    "prefixes": [],
+    "suffixes": [],
+    "sockets": 0,
+    "socketed": [],
+    "stats": [
+     {
+      "stat": "tohit",
+      "param": 0,
+      "value": 3
+     },
+     {
+      "stat": "item_mindamage_percent",
+      "param": 0,
+      "value": 15
+     },
+     {
+      "stat": "item_maxdamage_percent",
+      "param": 0,
+      "value": 15
+     }
+    ],
+    "superiorIdx": 3
+   },
+   "x": 2,
+   "y": 0
+  },
+  {
+   "item": {
+    "id": 26,
+    "code": "tsp",
+    "quality": 3,
+    "ilvl": 99,
+    "identified": true,
+    "quantity": 80,
+    "durability": 6,
+    "maxDurability": 6,
+    "defense": 0,
+    "invW": 1,
+    "invH": 4,
+    "levelReq": 0,
+    "prefixes": [],
+    "suffixes": [],
+    "sockets": 0,
+    "socketed": [],
+    "stats": [
+     {
+      "stat": "tohit",
+      "param": 0,
+      "value": 3
+     },
+     {
+      "stat": "item_mindamage_percent",
+      "param": 0,
+      "value": 15
+     },
+     {
+      "stat": "item_maxdamage_percent",
+      "param": 0,
+      "value": 15
+     }
+    ],
+    "superiorIdx": 3
+   },
+   "x": 3,
+   "y": 0
+  },
+  {
+   "item": {
+    "id": 27,
+    "code": "tsp",
+    "quality": 3,
+    "ilvl": 99,
+    "identified": true,
+    "quantity": 80,
+    "durability": 6,
+    "maxDurability": 6,
+    "defense": 0,
+    "invW": 1,
+    "invH": 4,
+    "levelReq": 0,
+    "prefixes": [],
+    "suffixes": [],
+    "sockets": 0,
+    "socketed": [],
+    "stats": [
+     {
+      "stat": "tohit",
+      "param": 0,
+      "value": 3
+     },
+     {
+      "stat": "item_mindamage_percent",
+      "param": 0,
+      "value": 15
+     },
+     {
+      "stat": "item_maxdamage_percent",
+      "param": 0,
+      "value": 15
+     }
+    ],
+    "superiorIdx": 3
+   },
+   "x": 4,
+   "y": 0
+  },
+  {
+   "item": {
+    "id": 28,
     "code": "rvl",
     "quality": 2,
     "ilvl": 99,
@@ -135,75 +255,6 @@
   },
   {
    "item": {
-    "id": 26,
-    "code": "rvl",
-    "quality": 2,
-    "ilvl": 99,
-    "identified": true,
-    "quantity": 1,
-    "durability": 0,
-    "maxDurability": 0,
-    "defense": 0,
-    "invW": 1,
-    "invH": 1,
-    "levelReq": 0,
-    "prefixes": [],
-    "suffixes": [],
-    "sockets": 0,
-    "socketed": [],
-    "stats": []
-   },
-   "x": 1,
-   "y": 3
-  },
-  {
-   "item": {
-    "id": 27,
-    "code": "rvl",
-    "quality": 2,
-    "ilvl": 99,
-    "identified": true,
-    "quantity": 1,
-    "durability": 0,
-    "maxDurability": 0,
-    "defense": 0,
-    "invW": 1,
-    "invH": 1,
-    "levelReq": 0,
-    "prefixes": [],
-    "suffixes": [],
-    "sockets": 0,
-    "socketed": [],
-    "stats": []
-   },
-   "x": 2,
-   "y": 3
-  },
-  {
-   "item": {
-    "id": 28,
-    "code": "rvl",
-    "quality": 2,
-    "ilvl": 99,
-    "identified": true,
-    "quantity": 1,
-    "durability": 0,
-    "maxDurability": 0,
-    "defense": 0,
-    "invW": 1,
-    "invH": 1,
-    "levelReq": 0,
-    "prefixes": [],
-    "suffixes": [],
-    "sockets": 0,
-    "socketed": [],
-    "stats": []
-   },
-   "x": 3,
-   "y": 3
-  },
-  {
-   "item": {
     "id": 29,
     "code": "rvl",
     "quality": 2,
@@ -222,7 +273,7 @@
     "socketed": [],
     "stats": []
    },
-   "x": 4,
+   "x": 1,
    "y": 3
   },
   {

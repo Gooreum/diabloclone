@@ -384,7 +384,13 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
   };
   const belt = Array.from({ length: beltBoxes(data.items, equipment.belt) }, () => make('rvl'));
   const inventory: Placed[] = [{ item: make('tbk'), x: 0, y: 0 }, { item: make('ibk'), x: 1, y: 0 }];
-  for (let x = 0; x < 10; x++) inventory.push({ item: make('rvl'), x, y: 3 });
+  // 던지는 무기(일반·상급 등급)는 다 던지면 없어지고 가방의 같은 묶음이 자동 장착된다 (원작 sub_6FC80B90, itemtypes Reload) — 여분 3묶음
+  const weapon = equipment.rarm, wbase = weapon ? data.items.base(weapon.code) : undefined;
+  if (weapon && wbase?.stackable && data.items.types.get(wbase.type)?.throwable && weapon.quality < QUALITY.MAGIC) {
+    for (let i = 0; i < 3; i++) inventory.push({ item: { ...structuredClone(weapon), id: nextId++ }, x: 2 + i * weapon.invW, y: 0 });
+  }
+  const taken = (x: number, y: number) => inventory.some((q) => x >= q.x && x < q.x + q.item.invW && y >= q.y && y < q.y + q.item.invH);
+  for (let x = 0; x < 10; x++) if (!taken(x, 3)) inventory.push({ item: make('rvl'), x, y: 3 });
 
   // Hell 까지 끝냄: 세 난이도 모든 웨이포인트·퀘스트 보상
   const lod = spec.expansion === true;

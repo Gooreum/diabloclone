@@ -364,8 +364,8 @@ async function boot(): Promise<void> {
 
 // 프리셋 세이브는 배포판에도 들어간다: 아이템 코드·수치뿐 (원작 그림·소리·MPQ 없음)
 const PRESET_FILES: Record<string, () => Promise<unknown>> = import.meta.glob('./presets/*.json', { import: 'default' });
-// 프리셋 내용이 바뀌면 키 버전을 올린다 (v2: 스킬 모두 20·스탯 1000) — 새 버전을 처음 열면 같은 이름 캐릭터를 한 번 덮어쓴다
-const PRESETS_KEY = 'd2clone.presets.v2';
+// 프리셋 내용이 바뀌면 키 버전을 올린다 (v2: 스킬 모두 20·스탯 1000, v3: 투창 아마존 여분 투창 3묶음) — 새 버전을 처음 열면 같은 이름 캐릭터를 한 번 덮어쓴다
+const PRESETS_KEY = 'd2clone.presets.v3';
 
 /** 이 버전에서 아직 넣은 적 없는 프리셋을 캐릭터 목록 맨 아래에 (그 뒤로 지우거나 플레이한 프리셋은 다시 덮지 않는다) */
 async function addMissingPresets(): Promise<void> {

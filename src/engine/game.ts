@@ -3315,15 +3315,36 @@ export class Game {
     return items.isType(qb, shoots) ? q : undefined;
   }
 
-  /** 수량 1 감소 (화살·투척 무기). 0 이 되면 장비에서 사라진다. 출처: D2MOO sub_6FD118C0 */
+  /**
+   * 수량 1 감소 (화살·투척 무기). 0 이 되면:
+   *  - 매직·세트·레어·유니크·제작 무기는 장착한 채 부서짐 (내구도 0 — 수리하면 수량과 함께 돌아온다)
+   *  - 그 밖(일반·상급 투창, 화살통)은 없어지고, itemtypes Reload 면 가방의 같은 아이템 묶음을 그 손에 자동 장착
+   * 출처: D2MOO Skills.cpp sub_6FD118C0 → sub_6FD11340 (수량 − 1, 0 에서 멈춤) → PlrModes.cpp sub_6FC80A30 → sub_6FC80B90
+   * 근사(원작 미확인): ReEquip (던지는 물약을 다 쓰면 원래 무기로) 과 STAT_ITEM_THROWABLE 아이템은 옮기지 않았다
+   */
   private decQuantity(slot: 'rarm' | 'larm'): void {
     const it = this.equipment[slot];
     if (!it) return;
-    it.quantity--;
-    if (it.quantity <= 0) {
-      delete this.equipment[slot];
-      this.events.push({ type: 'itemDepleted', slot, code: it.code });
+    it.quantity = Math.max(0, it.quantity - 1);
+    if (it.quantity > 0) return;
+    const items = this.data?.items, base = items?.base(it.code);
+    this.statsDirty = true;
+    if (items && base && items.isType(base, 'weap') && it.quality >= QUALITY.MAGIC) {
+      if (it.durability > 0) {
+        it.durability = 0;
+        this.events.push({ type: 'itemBroken', itemId: it.id, code: it.code });
+      }
+      return;
     }
+    delete this.equipment[slot];
+    this.events.push({ type: 'itemDepleted', slot, code: it.code });
+    if (!items || !base || !items.types.get(base.type)?.reload) return;
+    // 가방(인벤토리)에서 같은 아이템(같은 코드)의 첫 묶음 — 부서진 것은 건너뛴다. 그 하나만 시도한다 (원작 루프가 첫 일치에서 끝난다)
+    const next = this.store.inv.items.map((q) => q.item).find((x) => x.code === it.code);
+    const c = this.character;
+    if (!next || isBroken(next) || !c) return;
+    const r = this.store.move(next.id, { kind: 'equip', slot }, { cls: c.cls, level: c.level, str: this.effStat('str'), dex: this.effStat('dex') });
+    if (r.ok) this.events.push({ type: 'itemReloaded', slot, itemId: next.id, code: next.code });
   }
 
   private updateCast(cast: Cast): void {

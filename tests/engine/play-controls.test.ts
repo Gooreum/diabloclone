@@ -310,3 +310,46 @@ describe.skipIf(!hasGameData)('맞을 때 반응: 막기 쿨타임 · 원본 피
     expect((inner.player as unknown as { modeEnd: number }).modeEnd).toBe(end);
   });
 });
+
+describe.skipIf(!hasGameData)('수량 0 (원본 PlrModes.cpp sub_6FC80B90): 일반 등급은 없어지고 가방의 같은 묶음을 자동 장착, 매직 이상은 부서짐으로 남는다', () => {
+  /** 좀비에게 Throw 로 n 번 던진다 */
+  function throwN(game: Game, n: number) {
+    const m = dummy(game, 'zombie1', 28.5, 20.5);
+    for (let i = 0; i < n; i++) {
+      game.enqueue({ type: 'useSkill', skill: S('Throw').id, hand: 'left', x: m.x, y: m.y, targetId: m.id });
+      run(game, 40);
+    }
+  }
+  it('일반 투창을 다 던지면 가방의 같은 투창 묶음이 그 손에 자동 장착된다', () => {
+    const spare = item('jav', 60);
+    const { game } = setup('Amazon', { rarm: item('jav', 2) }, { inventory: [spare] });
+    throwN(game, 2);
+    expect(game.equipment.rarm?.id, '가방 묶음이 오른손에').toBe(spare.id);
+    expect(game.equipment.rarm?.quantity).toBe(60);
+    expect(game.inventory.some((it) => it.id === spare.id)).toBe(false);
+  });
+  it('가방에 같은 묶음이 없으면 무기 칸이 빈다 (원작: 일반 등급은 없어진다)', () => {
+    const { game } = setup('Amazon', { rarm: item('jav', 1) }, { inventory: [item('tax', 30)] });
+    throwN(game, 1);
+    expect(game.equipment.rarm).toBeUndefined();
+  });
+  it('매직 이상 투창은 없어지지 않고 수량 0 · 부서짐(내구도 0)으로 남는다', () => {
+    const magic = item('jav', 1, QUALITY.MAGIC);
+    const { game } = setup('Amazon', { rarm: magic });
+    throwN(game, 1);
+    expect(game.equipment.rarm?.id).toBe(magic.id);
+    expect(game.equipment.rarm?.quantity).toBe(0);
+    expect(game.equipment.rarm?.durability).toBe(0);
+    // 수량 0 이면 던지기는 빨간 아이콘 (quantity)
+    expect(game.skillUseState(S('Throw').id)).toBe('quantity');
+  });
+  it('화살통이 비면 가방의 화살통이 자동 장착된다', () => {
+    const spare = item('aqv', 100);
+    const { game } = setup('Amazon', { rarm: item('sbw'), larm: item('aqv', 1) }, { inventory: [spare] });
+    const m = dummy(game, 'zombie1', 28.5, 20.5);
+    game.enqueue({ type: 'attack', targetId: m.id, standStill: true });
+    game.enqueue({ type: 'release', button: 'left' });
+    run(game, 40);
+    expect(game.equipment.larm?.id).toBe(spare.id);
+  });
+});

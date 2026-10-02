@@ -53,7 +53,7 @@ test('?preset 없이 들어가면 원래 메뉴, 캐릭터 목록에 프리셋 7
   expect(await page.evaluate(() => window.__game?.ready ?? false)).toBe(false);
   await page.click('#btn-single');
   await expectListed(page);
-  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.v2'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
+  expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.v3'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
 });
 
 test('지운 프리셋은 다시 열어도 생기지 않고, 새 캐릭터는 프리셋보다 위', async ({ page }) => {
@@ -143,7 +143,7 @@ test('옛 버전(v1) 프리셋이 들어 있던 브라우저: 새 버전을 열�
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   // 옛 상태 만들기: v2 기록을 지우고 v1 기록만, Preset-Necro 를 옛 값(스탯 25·스킬 1)으로
   await page.evaluate(async () => {
-    localStorage.removeItem('d2clone.presets.v2');
+    localStorage.removeItem('d2clone.presets.v3');
     localStorage.setItem('d2clone.presets.installed', JSON.stringify(['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb']));
     const db = await new Promise<IDBDatabase>((resolve) => {
       const req = indexedDB.open('diabloclone', 1);

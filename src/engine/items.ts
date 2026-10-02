@@ -102,6 +102,8 @@ export interface ItemTypeDef {
   staffMods: string;
   /** 수리 가능 (itemtypes Repair) */
   repair: boolean;
+  /** 다 쓰면 가방의 같은 아이템을 자동 장착 (itemtypes Reload — 화살통·던지는 무기) */
+  reload: boolean;
   /** 인벤토리 그림 변형 (itemtypes VarInvGfx 개수, InvGfx1~6 파일) — 반지·목걸이·참·주얼 */
   invGfx: string[];
 }
@@ -126,7 +128,7 @@ export class ItemDb {
         code: r.Code, name: r.ItemType ?? '', equiv: [r.Equiv1, r.Equiv2].filter((x): x is string => !!x),
         normal: n(r.Normal) === 1, magic: n(r.Magic) === 1, rare: n(r.Rare) === 1,
         treasureClass: n(r.TreasureClass) === 1, throwable: n(r.Throwable) === 1,
-        shoots: r.Shoots ?? '', quiver: r.Quiver ?? '', repair: r.Repair === '1',
+        shoots: r.Shoots ?? '', quiver: r.Quiver ?? '', repair: r.Repair === '1', reload: r.Reload === '1',
         body: n(r.Body) === 1, bodyLoc1: r.BodyLoc1 ?? '', bodyLoc2: r.BodyLoc2 ?? '', beltable: n(r.Beltable) === 1,
         maxSock: [n(r.MaxSock1), n(r.MaxSock25), n(r.MaxSock40)],
         classCode: r.Class ?? '', storePage: r.StorePage ?? '', staffMods: r.StaffMods ?? '',

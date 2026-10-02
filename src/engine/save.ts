@@ -206,6 +206,11 @@ export function makeSave(name: string, character: Character, gold: number, items
   };
 }
 
+/** 원작 LoD 선택 화면 "Convert to Expansion": 클래식 캐릭터를 확장팩 캐릭터로 (되돌릴 수 없음). 진행·퀘스트·웨이포인트는 그대로 */
+export function convertToExpansion(s: CharacterSave): CharacterSave {
+  return { ...s, expansion: true };
+}
+
 export function serializeSave(s: CharacterSave): string {
   return JSON.stringify(s);
 }

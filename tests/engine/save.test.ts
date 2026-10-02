@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { makeSave, parseSave, serializeSave, summarize, validHeroName } from '../../src/engine/save';
+import { convertToExpansion, makeSave, parseSave, serializeSave, summarize, validHeroName } from '../../src/engine/save';
 import type { Character } from '../../src/engine/player';
 import { QUALITY, type ItemInstance } from '../../src/engine/treasure';
 
@@ -70,5 +70,23 @@ describe('확장팩 캐릭터 저장', () => {
     const raw = JSON.parse(serializeSave(makeSave('Bad', ch, 0, { inventory: [], equipment: {} }))) as Record<string, unknown>;
     raw.expansion = 'yes';
     expect(parseSave(JSON.stringify(raw)).expansion).toBeUndefined();
+  });
+
+  it('Convert to Expansion: 클래식 저장을 확장팩으로 (진행·퀘스트·웨이포인트 그대로, 원본은 그대로)', () => {
+    const qf = Array.from({ length: 48 }, (_, i) => (i === 26 ? 1 : 0));
+    const c = parseSave(serializeSave(makeSave('Conv', ch, 0, {
+      inventory: [], equipment: {}, difficulty: 2, difficultyUnlocked: 2, progression: 12,
+      waypointsByDiff: [[0, 1, 2], [0, 5], [0, 27]], questFlagsByDiff: [qf, qf, qf],
+    })));
+    const x = convertToExpansion(c);
+    expect(x.expansion).toBe(true);
+    expect(c.expansion).toBeUndefined();
+    expect(x.waypointsByDiff).toEqual(c.waypointsByDiff);
+    expect(x.questFlagsByDiff).toEqual(c.questFlagsByDiff);
+    expect(x.progression).toBe(12);
+    expect(x.difficultyUnlocked).toBe(2);
+    const back = parseSave(serializeSave(x));
+    expect(back.expansion).toBe(true);
+    expect(summarize(back).expansion).toBe(true);
   });
 });

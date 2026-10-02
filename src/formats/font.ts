@@ -40,15 +40,15 @@ export function textWidth(t: FontTable, text: string): number {
 }
 
 /**
- * 너비 제한 줄바꿈 (공백 기준). 원작 NPC 대사는 string.tbl 에 줄바꿈이 들어 있어 보통 필요 없다 — 툴팁·설명용.
+ * 너비 제한 줄바꿈 (공백 기준). width = 줄 너비 함수 (한글처럼 표에 없는 글자를 재려면 넘긴다). 원작 NPC 대사는 string.tbl 에 줄바꿈이 들어 있어 보통 필요 없다 — 툴팁·설명용.
  */
-export function wrapText(t: FontTable, text: string, maxWidth: number): string[] {
+export function wrapText(t: FontTable, text: string, maxWidth: number, width: (s: string) => number = (s) => lineWidth(t, s)): string[] {
   const out: string[] = [];
   for (const para of text.split('\n')) {
     let line = '';
     for (const word of para.split(' ')) {
       const next = line ? `${line} ${word}` : word;
-      if (line && lineWidth(t, next) > maxWidth) {
+      if (line && width(next) > maxWidth) {
         out.push(line);
         line = word;
       } else line = next;

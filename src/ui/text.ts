@@ -2,9 +2,11 @@
 // 출처: data\local\font\latin\<글꼴>.dc6 / .tbl (src/formats/font.ts), data\global\palette\<act>\Pal.PL2 TextColorShifts (src/formats/pl2.ts)
 // 쓰임(원작): font16 = 툴팁·패널·NPC 대사·HUD 글자, font8 = 작은 숫자, font30/font42 = 큰 금색 제목·게임 메뉴, fontexocet10 = 프런트엔드 버튼,
 //             fontformal10 = 캐릭터 선택 목록. 흰색(0)은 원본 인덱스 그대로, 검정(6)은 모두 인덱스 0(검정) — PL2 표가 0 으로 채워져 있음(원작 파일 확인)
+// 근사(원작 미확인): 한글 등 원작 비트맵 글꼴(latin)에 없는 글자는 브라우저 글꼴로 그린다 — 원작 한국어판 글꼴이 사용자 MPQ 에 없다.
+//   크기(CJK_PX)·세로 위치(줄 가운데)·글꼴 이름은 근사
 // 근사(원작 미확인): 16진 색 문자열은 PL2 TextColors 13 색 중 가장 가까운 색으로 바꿔 칠한다
 import { parseDc6, type Dc6Frame } from '../formats/dc6';
-import { parseFontTbl, lineWidth, wrapText, type FontTable } from '../formats/font';
+import { parseFontTbl, wrapText, type FontTable } from '../formats/font';
 import { parsePl2Text, TEXT_COLOR, type Pl2Text, type TextColorName } from '../formats/pl2';
 import type { Palette } from '../formats/palette';
 import { indexedToCanvas, type Drawable } from '../render/sprites';
@@ -21,10 +23,18 @@ export interface TextOpts { font?: FontName; color?: TextColor; align?: Align; /
 const FONT_DIR = 'data\\local\\font\\latin\\';
 export const fontPaths = (n: FontName) => [`${FONT_DIR}${n}.tbl`, `${FONT_DIR}${n}.dc6`];
 
-interface LoadedFont { table: FontTable; frames: Dc6Frame[]; lineHeight: number; glyphs: Map<string, Drawable | null> }
+interface CanvasGlyph { img: Drawable; w: number }
+interface LoadedFont { table: FontTable; frames: Dc6Frame[]; lineHeight: number; glyphs: Map<string, Drawable | null>; wide: Map<string, CanvasGlyph | null> }
 
 // 캔버스 대체 글꼴 (원작 글꼴을 못 읽었을 때)
 const FALLBACK_PX: Record<FontName, number> = { font6: 9, font8: 11, font16: 13, font24: 20, font30: 24, font42: 32, fontformal10: 12, fontformal12: 14, fontexocet10: 12, fontexocet8: 10 };
+
+// 브라우저 글꼴로 그리는 글자 (한글 등) 크기·글꼴
+const CJK_PX: Record<FontName, number> = { font6: 8, font8: 10, font16: 14, font24: 20, font30: 24, font42: 34, fontformal10: 12, fontformal12: 13, fontexocet10: 12, fontexocet8: 10 };
+const CJK_FAMILY = '"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
+
+/** 원작 비트맵 글꼴에 없는 글자 (한글 등) → 브라우저 글꼴로 그린다. 0xFF 이하 라틴 글자는 원작처럼 건너뜀 */
+export const needsCanvasGlyph = (t: FontTable, code: number): boolean => code > 0xff && !t.glyphs.has(code);
 
 export class D2Text {
   private readonly fonts = new Map<FontName, LoadedFont>();
@@ -59,7 +69,7 @@ export class D2Text {
         const f = g ? frames[g.frame] : undefined;
         if (f) lh = Math.max(lh, f.height);
       }
-      this.fonts.set(n, { table, frames, lineHeight: lh || FALLBACK_PX[n] + 3, glyphs: new Map() });
+      this.fonts.set(n, { table, frames, lineHeight: lh || FALLBACK_PX[n] + 3, glyphs: new Map(), wide: new Map() });
     }));
   }
 
@@ -79,13 +89,13 @@ export class D2Text {
   width(text: string, font: FontName = 'font16'): number {
     const f = this.fonts.get(font);
     const lines = text.split('\n');
-    if (f) return Math.max(0, ...lines.map((l) => lineWidth(f.table, l)));
+    if (f) return Math.max(0, ...lines.map((l) => this.measure(f, font, l)));
     return Math.max(0, ...lines.map((l) => Math.ceil(l.length * FALLBACK_PX[font] * 0.55)));
   }
 
   wrap(text: string, maxWidth: number, font: FontName = 'font16'): string[] {
     const f = this.fonts.get(font);
-    return f ? wrapText(f.table, text, maxWidth) : text.split('\n');
+    return f ? wrapText(f.table, text, maxWidth, (s) => this.measure(f, font, s)) : text.split('\n');
   }
 
   /** 16진 색 → 원작 13색 중 가장 가까운 번호 */
@@ -104,6 +114,50 @@ export class D2Text {
       }
     });
     return best;
+  }
+
+  /** 글자 전진 너비: 원작 표 너비, 표에 없는 한글 등은 브라우저 글꼴 너비 */
+  private advance(f: LoadedFont, font: FontName, ch: string): number {
+    const code = ch.codePointAt(0) ?? 0;
+    const g = f.table.glyphs.get(code);
+    if (g) return g.width;
+    return needsCanvasGlyph(f.table, code) ? (this.canvasGlyph(f, font, code, 0)?.w ?? 0) : 0;
+  }
+
+  private measure(f: LoadedFont, font: FontName, line: string): number {
+    let w = 0;
+    for (const ch of line) w += this.advance(f, font, ch);
+    return w;
+  }
+
+  private rgb(color: number): string {
+    if (color < 0) return '#c7b377';
+    const [r, g, b] = this.pl2?.colors[color] ?? DEFAULT_COLORS[color] ?? [255, 255, 255];
+    return `rgb(${r},${g},${b})`;
+  }
+
+  /** 브라우저 글꼴 글자 한 개를 작은 캔버스에 (색마다 캐시). document 가 없으면 (테스트) null */
+  private canvasGlyph(f: LoadedFont, font: FontName, code: number, color: number): CanvasGlyph | null {
+    const key = `${color}:${code}`;
+    const hit = f.wide.get(key);
+    if (hit !== undefined) return hit;
+    let out: CanvasGlyph | null = null;
+    const c = typeof document === 'undefined' ? null : document.createElement('canvas');
+    const g = c?.getContext('2d');
+    if (c && g) {
+      const css = `${CJK_PX[font]}px ${CJK_FAMILY}`, ch = String.fromCodePoint(code);
+      g.font = css;
+      const w = Math.ceil(g.measureText(ch).width);
+      c.width = w + 1;
+      c.height = f.lineHeight;
+      g.font = css;
+      g.textBaseline = 'middle';
+      g.fillStyle = this.rgb(color);
+      g.fillText(ch, 0, Math.round(f.lineHeight / 2));
+      out = { img: c, w };
+    }
+    f.wide.set(key, out);
+    return out;
   }
 
   private glyph(f: LoadedFont, code: number, color: number): Drawable | null {
@@ -149,13 +203,20 @@ export class D2Text {
     }
     const color = this.colorIndex(opts.color ?? (font === 'font30' || font === 'font42' ? 'native' : 'white'));
     lines.forEach((line, i) => {
-      const w = lineWidth(f.table, line);
+      const w = this.measure(f, font, line);
       let cx = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x);
       const cy = Math.round(y + i * lh);
       for (const ch of line) {
-        const code = ch.charCodeAt(0);
+        const code = ch.codePointAt(0) ?? 0;
         const g = f.table.glyphs.get(code);
-        if (!g) continue;
+        if (!g) {
+          const c = needsCanvasGlyph(f.table, code) ? this.canvasGlyph(f, font, code, color) : null;
+          if (c) {
+            ctx.drawImage(c.img as CanvasImageSource, cx, cy);
+            cx += c.w;
+          }
+          continue;
+        }
         const img = this.glyph(f, code, color);
         if (img) ctx.drawImage(img as CanvasImageSource, cx, cy);
         cx += g.width;

@@ -3,6 +3,7 @@ import { hasGameData, mustRead } from '../support/gamedata';
 import { glyphAdvance, lineWidth, parseFontTbl, textWidth, wrapText } from '../../src/formats/font';
 import { parsePl2Text, TEXT_COLOR } from '../../src/formats/pl2';
 import { parseDc6 } from '../../src/formats/dc6';
+import { needsCanvasGlyph } from '../../src/ui/text';
 
 /** 합성 .tbl: "Woo!" 머리 12바이트 + 글자마다 14바이트 (코드, ?, 너비, 높이, ?×3, 프레임, ?×4) */
 function fakeTbl(glyphs: [string, number, number][]): Uint8Array {
@@ -35,6 +36,14 @@ describe('글꼴 표 (합성)', () => {
     expect(wrapText(t, 'A A A', 30)).toEqual(['A A', 'A']);
   });
   it('시그니처가 다르면 에러', () => expect(() => parseFontTbl(new Uint8Array(12))).toThrow(/Woo/));
+  it('너비 함수를 넘기면 표에 없는 한글도 공백 기준으로 줄바꿈', () => {
+    expect(wrapText(t, '가나 다라 마바', 50, (s) => s.length * 10)).toEqual(['가나 다라', '마바']);
+  });
+  it('브라우저 글꼴로 그릴 글자: 표에 없는 0xFF 초과 글자만', () => {
+    expect(needsCanvasGlyph(t, '숏'.charCodeAt(0))).toBe(true);
+    expect(needsCanvasGlyph(t, 'A'.charCodeAt(0))).toBe(false);
+    expect(needsCanvasGlyph(t, 0xe9)).toBe(false);
+  });
 });
 
 describe.skipIf(!hasGameData)('원작 글꼴 (data\\local\\font\\latin)', () => {

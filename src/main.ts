@@ -331,8 +331,8 @@ async function boot(): Promise<void> {
     if (inMenu) sound.setMusic('music_options');
   }).catch(() => undefined);
   if (import.meta.env.DEV) window.__audio = sound;
-  // 99레벨 프리셋 캐릭터 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 5개.
-  // ?preset=<직업> 은 그 프리셋으로 덮어써 메뉴를 건너뛰고 Hell 로 바로, ?preset=all 은 5개를 덮어쓴다
+  // 99레벨 프리셋 캐릭터 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 7개 (어쌔신·드루이드는 확장팩 MPQ 일 때만 보인다).
+  // ?preset=<직업> 은 그 프리셋으로 덮어써 메뉴를 건너뛰고 Hell 로 바로, ?preset=all 은 7개를 덮어쓴다
   await addMissingPresets();
   let presetStart = await installPresets(new URLSearchParams(location.search).get('preset'));
   for (;;) {
@@ -398,7 +398,7 @@ async function installPresets(id: string | null): Promise<string | null> {
   for (const k of keys) {
     const load = files[k];
     if (!load) {
-      console.warn(`[preset] 없는 프리셋: ${id} (amazon, sorceress, necromancer, paladin, barbarian, all)`);
+      console.warn(`[preset] 없는 프리셋: ${id} (amazon, sorceress, necromancer, paladin, barbarian, assassin, druid, all)`);
       continue;
     }
     const s = parseSave(JSON.stringify(await load()));

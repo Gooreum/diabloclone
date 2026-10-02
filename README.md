@@ -167,10 +167,11 @@ npm run dev          # http://localhost:5173
 - 크롬 계열 브라우저를 권장합니다(WebGL2 필요).
 
 ### 99레벨 프리셋 캐릭터
-- 처음 열면 캐릭터 목록 맨 아래에 직업별 99레벨 캐릭터 5개(`Preset-Amazon`, `Preset-Sorc`, `Preset-Necro`, `Preset-Pala`, `Preset-Barb`)가 들어 있습니다. Hell까지 끝낸 상태이고 장비·스킬은 `src/presets/SUMMARY.md`에 있습니다.
-- 프리셋은 클래식 캐릭터입니다. 확장팩으로 띄웠다면 캐릭터 선택 화면의 "Convert to Expansion"으로 바꾸면 Act 5에 갈 수 있습니다.
+- 처음 열면 캐릭터 목록 맨 아래에 직업별 99레벨 캐릭터 7개가 들어 있습니다. Hell까지 끝낸 상태이고 장비·스킬은 `src/presets/SUMMARY.md`에 있습니다.
+  - 클래식 5개(`Preset-Amazon`, `Preset-Sorc`, `Preset-Necro`, `Preset-Pala`, `Preset-Barb`): 확장팩으로 띄웠다면 캐릭터 선택 화면의 "Convert to Expansion"으로 바꾸면 Act 5에 갈 수 있습니다.
+  - 확장팩 2개(`Preset-Assa`, `Preset-Druid`): Act 5까지 끝낸 확장팩 캐릭터입니다. 싱글에서 나오는 최고급 장비(Enigma·Heart of the Oak 룬워드, Shako 등)를 입고 있고, 확장팩 MPQ를 넣었을 때만 보입니다.
 - 지우거나 플레이한 프리셋은 다시 덮어쓰지 않습니다.
-- 주소 뒤에 `?preset=paladin`(amazon, sorceress, necromancer, paladin, barbarian)을 붙이면 그 캐릭터를 처음 상태로 되돌려 Hell 마을에서 바로 시작합니다. `?preset=all`은 5개를 모두 처음 상태로 되돌립니다.
+- 주소 뒤에 `?preset=paladin`(amazon, sorceress, necromancer, paladin, barbarian, assassin, druid)을 붙이면 그 캐릭터를 처음 상태로 되돌려 Hell 마을에서 바로 시작합니다. `?preset=all`은 7개를 모두 처음 상태로 되돌립니다.
 - 프리셋 파일에는 아이템 코드와 수치만 있고 원작 그림·소리는 없습니다.
 
 ### 배포

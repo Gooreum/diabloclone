@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 
 test.skip(!existsSync('game-data/d2data.mpq'), '원작 game-data 필요');
 
-// 99레벨 프리셋 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 5개 (배포판 포함), ?preset=<직업> 은 메뉴 없이 Hell Act 1 마을에서 바로 시작
+// 99레벨 프리셋 (src/presets, scripts/gen-presets.ts): 처음 열면 캐릭터 목록에 7개 (배포판 포함, 어쌔신·드루이드는 확장팩 서버에서만 보임), ?preset=<직업> 은 메뉴 없이 Hell Act 1 마을에서 바로 시작
 
 test('?preset=sorceress: 메뉴 없이 Hell 마을, 레벨 99, 사양 장비, 퀘스트 보상을 다시 받지 않는다', async ({ page }) => {
   const errors: string[] = [];
@@ -29,21 +29,30 @@ test('?preset=sorceress: 메뉴 없이 Hell 마을, 레벨 99, 사양 장비, �
   expect(errors).toEqual([]);
 });
 
-test('?preset=all: 캐릭터 목록에 프리셋 5개', async ({ page }) => {
+const CLASSIC_NAMES = ['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb'];
+const LOD_NAMES = ['Preset-Assa', 'Preset-Druid'];
+const PRESET_NAMES = [...CLASSIC_NAMES, ...LOD_NAMES];
+
+/** 목록에 보이는 프리셋: 확장팩 서버는 7개, 클래식 서버는 확장팩 캐릭터를 숨겨 5개 */
+async function expectListed(page: Page): Promise<void> {
+  const lod = (await page.evaluate(() => window.__edition)) === 'lod';
+  for (const n of CLASSIC_NAMES) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
+  for (const n of LOD_NAMES) await expect(page.locator(`#hero-${n}`)).toHaveCount(lod ? 1 : 0);
+}
+
+test('?preset=all: 캐릭터 목록에 프리셋 7개 (클래식 서버는 5개)', async ({ page }) => {
   await page.goto('/?preset=all');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   await page.click('#btn-single');
-  for (const n of ['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb']) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
+  await expectListed(page);
 });
 
-const PRESET_NAMES = ['Preset-Amazon', 'Preset-Sorc', 'Preset-Necro', 'Preset-Pala', 'Preset-Barb'];
-
-test('?preset 없이 들어가면 원래 메뉴, 캐릭터 목록에 프리셋 5개가 기본으로', async ({ page }) => {
+test('?preset 없이 들어가면 원래 메뉴, 캐릭터 목록에 프리셋 7개가 기본으로', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   expect(await page.evaluate(() => window.__game?.ready ?? false)).toBe(false);
   await page.click('#btn-single');
-  for (const n of PRESET_NAMES) await expect(page.locator(`#hero-${n}`)).toHaveCount(1);
+  await expectListed(page);
   expect(JSON.parse((await page.evaluate(() => localStorage.getItem('d2clone.presets.v2'))) ?? '[]').sort()).toEqual([...PRESET_NAMES].sort());
 });
 
@@ -99,6 +108,32 @@ for (const [id, cls, slots] of [['amazon', 'Amazon', 10], ['necromancer', 'Necro
       return { cls: c.cls, level: c.level, difficulty: g.difficulty, slots: Object.keys(g.equipment).length, full: p.life >= p.maxLife, points: c.statPoints + c.skillPoints };
     });
     expect(info).toEqual({ cls, level: 99, difficulty: 2, slots, full: true, points: 0 });
+    expect(errors).toEqual([]);
+  });
+}
+
+// 확장팩 프리셋: 확장팩 서버에서 바로 시작 — Act 5 까지 끝낸 확장팩 캐릭터, 룬워드 장착
+for (const [id, cls] of [['assassin', 'Assassin'], ['druid', 'Druid']] as const) {
+  test(`?preset=${id}: 확장팩 캐릭터로 Hell 마을, 레벨 99, 장비 10칸, 룬워드 2개`, async ({ page }) => {
+    test.skip(!existsSync('game-data/d2exp.mpq'), '원작 확장팩 game-data 필요');
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('/');
+    await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+    test.skip((await page.evaluate(() => window.__edition)) !== 'lod', '확장팩 서버에서만');
+    await page.goto(`/?preset=${id}`);
+    await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
+    await page.waitForFunction(() => (window.__game?.game.snapshot().tick ?? 0) > 1, undefined, { timeout: 30_000 });
+    await page.waitForTimeout(1500);
+    const info = await page.evaluate(() => {
+      const g = window.__game!.game, c = g.character!, p = g.snapshot().player;
+      const rw = Object.values(g.equipment).filter((it) => it?.runeword !== undefined).length;
+      return { cls: c.cls, level: c.level, difficulty: g.difficulty, expansion: g.expansion, inTown: g.inTown, slots: Object.keys(g.equipment).length, runewords: rw, full: p.life >= p.maxLife, points: c.statPoints + c.skillPoints };
+    });
+    expect(info).toEqual({ cls, level: 99, difficulty: 2, expansion: true, inTown: true, slots: 10, runewords: 2, full: true, points: 0 });
+    await page.keyboard.press('i');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `test-results/preset-${id}.png` });
     expect(errors).toEqual([]);
   });
 }

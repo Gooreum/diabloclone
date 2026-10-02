@@ -13,24 +13,31 @@ import { CLASS_CODE } from '../../src/engine/skills/db';
 import { parseSave, type CharacterSave } from '../../src/engine/save';
 import { PRESETS, PRESET_LEVEL, PRESET_STAT, buildPreset, classSkills } from '../../src/engine/presets';
 import { QFLAG } from '../../src/engine/quests/record';
+import { QW } from '../../src/engine/quests/messages-acts';
 import { QUALITY } from '../../src/engine/treasure';
 import { gameChain, hasGameData } from '../support/gamedata';
 
 // 개발용 99레벨 프리셋 검증 (강화판: 네 스탯 1000, 스킬 30개 모두 20 — 원작 포인트 제한 밖, 사용자 요청): 스킬 요구 레벨·선행, 장비 요구치, 클래식 전용, 블록 75%, 소지품, 생성기 재현.
 // 실패 메시지는 "[프리셋] <id>: <항목>" 으로 어느 직업·항목인지 보인다.
-describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래식)', () => {
-  let data: GameData, gen: ItemGen, tables: GameTables;
+describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래식 5 + 확장팩 2)', () => {
+  let classic: GameData, lod: GameData, tables: GameTables;
   const saves = new Map<string, CharacterSave>();
   beforeAll(() => {
     tables = new GameTables(gameChain());
-    data = buildGameData(gameChain(), tables);
-    gen = data.treasure.gen as ItemGen;
+    classic = buildGameData(gameChain(), tables);
+    lod = buildGameData(gameChain(), tables, { expansion: true });
     for (const p of PRESETS) saves.set(p.id, parseSave(readFileSync(resolve(__dirname, '../../src/presets', `${p.id}.json`), 'utf8')));
   });
   const version = (table: string, key: string, value: string) => Number(tables.row(table, key, value)?.version ?? 0) || 0;
 
   for (const p of PRESETS) {
     const tag = `[프리셋] ${p.id}`;
+    // 확장팩 프리셋은 확장팩 표로 (유니크·룬워드·Act 5)
+    let data: GameData, gen: ItemGen;
+    beforeAll(() => {
+      data = p.expansion ? lod : classic;
+      gen = data.treasure.gen as ItemGen;
+    });
 
     it(`${p.id}: 레벨 99 · 경험치 = experience.txt 레벨 98 · 네 스탯 1000 · 생명 = 원작 공식 + 퀘스트 60`, () => {
       const s = saves.get(p.id)!;
@@ -73,17 +80,26 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
         const d = computeDerived(ch, cs, rest, data.items, gen);
         const err = canEquip({ items: data.items, cls: p.cls, level: ch.level, str: d.str, dex: d.dex, equipment: rest }, it, slot as BodyLoc);
         expect(err, `${tag}: ${slot} ${it.code} 장착`).toBeNull();
-        expect(base.version, `${tag}: ${slot} 베이스 클래식`).toBeLessThan(100);
-        // 무기·방어구는 노멀 등급 (익셉셔널·엘리트 아님). 반지·목걸이는 등급 칸이 비어 있다
-        if (base.normCode) expect(base.code, `${tag}: ${slot} 노멀 등급 베이스`).toBe(base.normCode);
+        if (!p.expansion) {
+          expect(base.version, `${tag}: ${slot} 베이스 클래식`).toBeLessThan(100);
+          // 무기·방어구는 노멀 등급 (익셉셔널·엘리트 아님). 반지·목걸이는 등급 칸이 비어 있다
+          if (base.normCode) expect(base.code, `${tag}: ${slot} 노멀 등급 베이스`).toBe(base.normCode);
+        }
         const cls = [...data.items.typeChain(base.type)].map((t) => data.items.types.get(t)?.classCode).find(Boolean);
         expect(!cls || cls === CLASS_CODE[p.cls], `${tag}: ${slot} 직업 제한`).toBe(true);
         expect(it.identified, `${tag}: ${slot} 감정됨`).toBe(true);
         if (it.uniqueIdx !== undefined) {
-          expect(version('UniqueItems', 'index', gen.uniques[it.uniqueIdx]!.name), `${tag}: ${slot} 유니크 클래식`).toBeLessThan(100);
+          if (!p.expansion) expect(version('UniqueItems', 'index', gen.uniques[it.uniqueIdx]!.name), `${tag}: ${slot} 유니크 클래식`).toBeLessThan(100);
           expect(gen.uniques[it.uniqueIdx]!.enabled, `${tag}: ${slot} 유니크 사용 가능`).toBe(true);
         }
-        if (it.setIdx !== undefined) expect(version('Sets', 'index', gen.setItems[it.setIdx]!.set), `${tag}: ${slot} 세트 클래식`).toBeLessThan(100);
+        if (it.setIdx !== undefined && !p.expansion) expect(version('Sets', 'index', gen.setItems[it.setIdx]!.set), `${tag}: ${slot} 세트 클래식`).toBeLessThan(100);
+        if (it.runeword !== undefined) {
+          // 원작 매칭 규칙으로 다시 맞춰 봐도 같은 룬워드 (매칭은 완성 전 아이템으로), 래더 전용(server) 아님
+          const rw = data.runewords!.get(it.runeword)!;
+          expect(data.runewords!.match(data.items, { ...it, runeword: undefined })?.idx, `${tag}: ${slot} 룬워드 ${rw.name}`).toBe(rw.idx);
+          expect(tables.row('runes', 'Rune Name', rw.name)?.server ?? '', `${tag}: ${slot} 래더 전용 아님`).toBe('');
+          expect(it.socketed.length, `${tag}: ${slot} 소켓 가득`).toBe(it.sockets);
+        }
         if (it.quality === QUALITY.RARE) {
           expect(it.prefixes.length, `${tag}: ${slot} 접두 ≤ 3`).toBeLessThanOrEqual(3);
           expect(it.suffixes.length, `${tag}: ${slot} 접미 ≤ 3`).toBeLessThanOrEqual(3);
@@ -105,8 +121,12 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
       expect(codes, `${tag}: 인벤토리`).toEqual(expect.arrayContaining(['tbk', 'ibk', 'rvl']));
       expect(s.difficultyUnlocked, `${tag}: Hell 열림`).toBe(2);
       expect(s.difficulty, `${tag}: Hell 에서 시작`).toBe(2);
-      expect(s.progression, `${tag}: 진행 값`).toBe(12);
-      for (const words of s.questFlagsByDiff) for (let q = 0; q <= 28; q++) expect(((words?.[q] ?? 0) >> QFLAG.REWARDGRANTED) & 1, `${tag}: 퀘스트 워드 ${q}`).toBe(1);
+      expect(s.progression, `${tag}: 진행 값`).toBe(p.expansion ? 15 : 12);
+      expect(s.expansion === true, `${tag}: 확장팩 캐릭터`).toBe(p.expansion === true);
+      // 확장팩은 Act 5 (워드 35~40) 까지, 워드 34 는 원작에서 쓰지 않음
+      const last = p.expansion ? QW.A5Q6 : 28;
+      for (const words of s.questFlagsByDiff) for (let q = 0; q <= last; q++) if (q !== QW.A5Q0) expect(((words?.[q] ?? 0) >> QFLAG.REWARDGRANTED) & 1, `${tag}: 퀘스트 워드 ${q}`).toBe(1);
+      if (p.expansion) for (const words of s.questFlagsByDiff) expect(((words?.[QW.A5Q3] ?? 0) >> QFLAG.CUSTOM3) & 1, `${tag}: Anya 저항 두루마리`).toBe(1);
       const ids = [...Object.values(s.equipment), ...s.inventory.map((q) => q.item), ...s.belt].map((it) => it!.id);
       expect(new Set(ids).size, `${tag}: 아이템 번호 겹침 없음`).toBe(ids.length);
     });
@@ -120,7 +140,7 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
   it('팔라딘: 민첩 1000 으로 막기 75% (원작 상한)', () => {
     const s = saves.get('paladin')!;
     const cs = classStats(tables.table('charstats'), 'Paladin');
-    const d = computeDerived(s.character, cs, s.equipment, data.items, gen);
+    const d = computeDerived(s.character, cs, s.equipment, classic.items, classic.treasure.gen as ItemGen);
     expect(blockChance(d.block, cs.blockFactor, d.dex, 99)).toBe(75);
   });
 
@@ -129,5 +149,15 @@ describe.skipIf(!hasGameData)('개발용 프리셋 캐릭터 (99레벨, 클래�
     expect(stat('paladin', 'larm', 'fireresist')).toBe(50);
     expect(stat('sorceress', 'neck', 'lifedrainmindam')).toBe(7);
     expect(stat('barbarian', 'rarm', 'item_maxdamage_percent')).toBe(250);
+  });
+
+  it('확장팩 룬워드는 가변 옵션 최대값: Heart of the Oak 모든 스킬 +3·시전 40, Enigma 텔레포트 +1·이동 45', () => {
+    const stat = (id: string, slot: string, name: string, param = 0) => saves.get(id)!.equipment[slot]!.stats.filter((x) => x.stat === name && x.param === param).reduce((a, x) => a + x.value, 0);
+    for (const id of ['assassin', 'druid']) {
+      expect(stat(id, 'rarm', 'item_allskills')).toBe(3);
+      expect(stat(id, 'rarm', 'item_fastercastrate')).toBe(40);
+      expect(stat(id, 'tors', 'item_nonclassskill', lod.skills!.byNameOf('Teleport')!.id)).toBe(1);
+      expect(stat(id, 'tors', 'item_fastermovevelocity')).toBe(45);
+    }
   });
 });

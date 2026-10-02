@@ -15,11 +15,13 @@ const names = ['patch_d2.mpq', 'd2char.mpq', 'd2data.mpq'];
 if (!names.every(find)) throw new Error('game-data/ 에 patch_d2.mpq, d2char.mpq, d2data.mpq 가 필요합니다');
 const chain = new MpqChain(names.map((n) => MpqArchive.open(readFileSync(resolve(dir, find(n) as string)))));
 const tables = new GameTables(chain);
-const data = buildGameData(chain, tables);
+// 확장팩 프리셋(어쌔신·드루이드)은 확장팩 표로 (1.14d patch_d2 에 확장팩 표가 함께 들어 있다)
+const classic = buildGameData(chain, tables);
+const lod = buildGameData(chain, tables, { expansion: true });
 
-const parts = ['# 개발용 프리셋 캐릭터 (99레벨, 클래식)', '', '`npx tsx scripts/gen-presets.ts` 가 원작 표에서 만든다. 개발 서버에서 `?preset=<직업>` 으로 Hell Act 1 마을에서 바로 시작, `?preset=all` 은 캐릭터 목록에 5개를 넣는다.', ''];
+const parts = ['# 개발용 프리셋 캐릭터 (99레벨, 클래식 5 + 확장팩 2)', '', '`npx tsx scripts/gen-presets.ts` 가 원작 표에서 만든다. 개발 서버에서 `?preset=<직업>` 으로 Hell Act 1 마을에서 바로 시작, `?preset=all` 은 캐릭터 목록에 7개를 넣는다. 어쌔신·드루이드는 확장팩 캐릭터라 확장팩 MPQ 를 넣었을 때만 보인다.', ''];
 for (const spec of PRESETS) {
-  const { save, summary } = buildPreset(spec, data, { charstats: tables.table('charstats'), experience: tables.table('experience') });
+  const { save, summary } = buildPreset(spec, spec.expansion ? lod : classic, { charstats: tables.table('charstats'), experience: tables.table('experience') });
   writeFileSync(resolve(root, 'src/presets', `${spec.id}.json`), `${JSON.stringify(save, null, 1)}\n`);
   parts.push(summaryMarkdown(summary));
   console.log(`[프리셋] ${spec.id}: 레벨 ${save.character.level}, 힘 ${save.character.str} 민첩 ${save.character.dex} 활력 ${save.character.vit} 에너지 ${save.character.ene}${summary.unmet.length ? `, 못 붙인 옵션 ${summary.unmet.join(' ')}` : ''}`);

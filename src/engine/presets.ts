@@ -1,4 +1,4 @@
-// 개발용 프리셋 캐릭터 (99레벨, 클래식 5직업). 사양 → 기존 세이브 형식(CharacterSave).
+// 개발용 프리셋 캐릭터 (99레벨, 클래식 5직업 + 확장팩 어쌔신·드루이드). 사양 → 기존 세이브 형식(CharacterSave).
 // 모든 수치는 원작 표에서: charstats.txt (기본 스탯·블록), experience.txt (99레벨 = 레벨 98 행), skills.txt (클래스 스킬·선행·요구 레벨),
 //   uniqueitems / setitems / magicprefix / magicsuffix / qualityitems (장비), levels.txt (웨이포인트).
 // 포인트: 505 스탯 = 98 × 5 + Lam Esen 5 × 3 난이도, 110 스킬 = 98 + (Den 1 + Radament 1 + Izual 2) × 3 → Hell 까지 끝낸 캐릭터.
@@ -7,7 +7,7 @@
 //       (https://classic.battle.net/diablo2exp/quests/)
 import type { TxtRow } from '../formats/txt';
 import type { GameData } from './game';
-import type { ItemGen, MagicAffix } from './itemgen';
+import { gemStats, type ItemGen, type MagicAffix } from './itemgen';
 import type { ItemBase } from './items';
 import { beltBoxes, requirements, type BodyLoc, type Placed } from './inventory';
 import { addExperience, classStats, createCharacter, expTable, spendStat, type Character, type ClassName, type ClassStats } from './player';
@@ -19,6 +19,7 @@ import { MaxRng } from './rng';
 import { QUALITY, type ItemInstance } from './treasure';
 import { makeSave, type CharacterSave } from './save';
 import { QFLAG, QUEST_WORDS } from './quests/record';
+import { QW } from './quests/messages-acts';
 
 export type Opt = 'ed' | 'ias' | 'ar' | 'leech' | 'skills' | 'fcr' | 'res' | 'life' | 'frw';
 export type Gear =
@@ -27,7 +28,9 @@ export type Gear =
   /** 상급(Superior): 붙을 수 있는 상급 행 중 옵션 최대값 합이 가장 큰 것 */
   | { superior: { type: string } }
   /** 최대 옵션 레어: 노멀 등급 중 가장 좋은 베이스 + 옵션마다 값이 가장 큰 클래식 레어 접사 */
-  | { rare: { type: string; opts: Opt[] } };
+  | { rare: { type: string; opts: Opt[] } }
+  /** 룬워드 (확장팩): base 아이템 코드에 runes.txt 룬을 순서대로 박는다 — 래더 전용(server) 제외 */
+  | { runeword: { name: string; base: string } };
 
 export interface PresetSpec {
   /** 파일 이름 (src/presets/<id>.json), 개발 진입점 ?preset=<id> */
@@ -45,9 +48,11 @@ export interface PresetSpec {
   gear: Partial<Record<BodyLoc, Gear>>;
   /** 사양과 다르게 정한 것 (데이터·원작 규칙 때문에) */
   notes: string[];
+  /** 확장팩 캐릭터 (Act 5 까지 끝낸 기록, 확장팩 표로 만든다) */
+  expansion?: boolean;
 }
 
-/** 사양 5개 (사용자 지정 + 데이터로 확인해 바꾼 무기) */
+/** 사양 7개: 클래식 5 (사용자 지정 + 데이터로 확인해 바꾼 무기) + 확장팩 2 (싱글 1.14d 에서 나오는 최고급 장비) */
 export const PRESETS: PresetSpec[] = [
   {
     id: 'amazon', name: 'Preset-Amazon', cls: 'Amazon', build: 'Lightning Javazon',
@@ -99,6 +104,26 @@ export const PRESETS: PresetSpec[] = [
     },
     notes: ['Bonesnap → Steeldriver: Bonesnap 은 확장팩 전용(클래식 uniqueitems 에 없음). 사용자: 레어보다 좋은 유니크로 (공속 40·대미지 +250%·요구치 −50%)'],
   },
+  {
+    id: 'assassin', name: 'Preset-Assa', cls: 'Assassin', build: 'Lightning Trapsin', expansion: true,
+    core: ['Lightning Sentry', 'Death Sentry', 'Shock Field', 'Charged Bolt Sentry'], bonus: 'Fire Trauma', right: 'Lightning Sentry',
+    gear: {
+      rarm: { runeword: { name: 'Heart of the Oak', base: 'fla' } }, larm: { unique: 'Lidless Wall' }, head: { unique: 'Harlequin Crest' },
+      tors: { runeword: { name: 'Enigma', base: 'xtp' } }, glov: { unique: 'Magefist' }, belt: { unique: 'Arachnid Mesh' }, feet: { unique: 'Sandstorm Trek' },
+      rrin: { unique: 'The Stone of Jordan' }, lrin: { unique: 'The Stone of Jordan' }, neck: { unique: "Mara's Kaleidoscope" },
+    },
+    notes: ['래더 전용 룬워드(Spirit·Infinity 등, runes.txt server=1)는 싱글에서 나오지 않아 Heart of the Oak·Enigma 로', 'Enigma 는 소켓 3 이 최대인 Mage Plate (힘 요구치가 가장 낮다)'],
+  },
+  {
+    id: 'druid', name: 'Preset-Druid', cls: 'Druid', build: 'Wind (Tornado/Hurricane)', expansion: true,
+    core: ['Tornado', 'Hurricane', 'Twister', 'Cyclone Armor'], bonus: 'Oak Sage', right: 'Tornado',
+    gear: {
+      rarm: { runeword: { name: 'Heart of the Oak', base: 'fla' } }, larm: { unique: 'Lidless Wall' }, head: { unique: "Jalal's Mane" },
+      tors: { runeword: { name: 'Enigma', base: 'xtp' } }, glov: { unique: 'Magefist' }, belt: { unique: 'Arachnid Mesh' }, feet: { unique: 'Sandstorm Trek' },
+      rrin: { unique: 'The Stone of Jordan' }, lrin: { unique: 'The Stone of Jordan' }, neck: { unique: "Mara's Kaleidoscope" },
+    },
+    notes: ['래더 전용 룬워드(Spirit·Infinity 등, runes.txt server=1)는 싱글에서 나오지 않아 Heart of the Oak·Enigma 로'],
+  },
 ];
 
 /** 옵션 → 속성 코드 (magicprefix/suffix mod code). skills 는 클래스 코드 (ama/sor/nec/pal/bar) */
@@ -116,8 +141,8 @@ export const PRESET_STAT = 1000;
 const QUEST_STAT = 5 * 3, QUEST_SKILL = (1 + 1 + 2) * 3, QUEST_LIFE = 20 * 3;
 /** 클래식 퀘스트 워드: Act 1~4 퀘스트와 막 완료 (quests/messages-acts.ts QW: 0 … A4COMPLETED 28) */
 const LAST_QUEST_WORD = 28;
-/** 원작 진행 값: Hell 완료 = 12 */
-const PROGRESSION_HELL_DONE = 12;
+/** 원작 진행 값: Hell 완료 = 12 (확장팩 15) */
+const PROGRESSION_HELL_DONE = 12, PROGRESSION_HELL_DONE_LOD = 15;
 
 export interface PresetTables { charstats: TxtRow[]; experience: TxtRow[] }
 
@@ -229,7 +254,28 @@ function makeGear(data: GameData, gen: ItemGen, cls: ClassName, g: Gear): { item
     gen.makeFixed(item, base, { superiorIdx: pick.idx });
     return { item, unmet: [] };
   }
+  if ('runeword' in g) return { item: makeRuneword(data, gen, g.runeword.name, g.runeword.base), unmet: [] };
   return makeRare(data, gen, cls, bestBase(data, g.rare.type), g.rare.opts);
+}
+
+/** 룬워드: 소켓을 룬 수만큼 뚫고 순서대로 박은 뒤 원작 매칭 규칙으로 확인, T1 속성은 최대값 (game.ts 소켓 처리와 같은 순서) */
+function makeRuneword(data: GameData, gen: ItemGen, name: string, code: string): ItemInstance {
+  const rw = data.runewords?.list.find((r) => r.name === name);
+  if (!rw) throw new Error(`runeword not found: ${name}`);
+  const base = data.items.base(code);
+  if (!base) throw new Error(`no base ${code}`);
+  const item = baseItem(data, base);
+  item.sockets = rw.runes.length;
+  item.socketed = rw.runes.map((rc) => {
+    const r = baseItem(data, data.items.base(rc)!);
+    r.stats = gemStats(gen, r, base);
+    return r;
+  });
+  if (data.runewords!.match(data.items, item)?.idx !== rw.idx) throw new Error(`runeword ${name} does not fit ${code}`);
+  item.runeword = rw.idx;
+  item.runewordBase = { stats: structuredClone(item.stats), defense: item.defense };
+  gen.assignMods(item, base, rw.mods, new MaxRng());
+  return item;
 }
 
 /** 장비 하나를 뺀 나머지 장비(세트 보너스 포함)로 본 유효 힘·민첩 보너스 */
@@ -341,8 +387,11 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
   for (let x = 0; x < 10; x++) inventory.push({ item: make('rvl'), x, y: 3 });
 
   // Hell 까지 끝냄: 세 난이도 모든 웨이포인트·퀘스트 보상
-  const waypoints = [...new Set([...data.objects!.levels.values()].filter((l) => l.act <= 3 && l.waypoint < 255).map((l) => l.waypoint))].sort((a, b) => a - b);
-  const words = Array.from({ length: QUEST_WORDS }, (_, q) => (q <= LAST_QUEST_WORD ? 1 << QFLAG.REWARDGRANTED : 0));
+  const lod = spec.expansion === true;
+  const waypoints = [...new Set([...data.objects!.levels.values()].filter((l) => l.act <= (lod ? 4 : 3) && l.waypoint < 255).map((l) => l.waypoint))].sort((a, b) => a - b);
+  // 확장팩: Act 5 워드까지 (34 는 원작에서 쓰지 않음), A5Q3 저항 두루마리 읽음(CUSTOM3) — 난이도마다 저항 +10
+  const words = Array.from({ length: QUEST_WORDS }, (_, q) => (q <= (lod ? QW.A5Q6 : LAST_QUEST_WORD) && q !== QW.A5Q0 ? 1 << QFLAG.REWARDGRANTED : 0));
+  if (lod) words[QW.A5Q3]! |= 1 << QFLAG.CUSTOM3;
   // 장비 포함 최대치로 가득 찬 채 시작
   const d = computeDerived(ch, cs, equipment, data.items, gen);
   ch.life = Math.floor(d.maxLife);
@@ -350,8 +399,8 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
   ch.stamina = Math.floor(d.maxStamina);
   const save = makeSave(spec.name, ch, 0, {
     inventory, equipment, belt, stash: [], cube: [], stashGold: 0, corpse: {}, merc: null, quests: [],
-    act: 0, difficulty: 2, difficultyUnlocked: 2, actByDiff: [0, 0, 0], progression: PROGRESSION_HELL_DONE,
-    waypointsByDiff: [waypoints, waypoints, waypoints], questFlagsByDiff: [words, words, words],
+    act: 0, difficulty: 2, difficultyUnlocked: 2, actByDiff: [0, 0, 0], progression: lod ? PROGRESSION_HELL_DONE_LOD : PROGRESSION_HELL_DONE,
+    waypointsByDiff: [waypoints, waypoints, waypoints], questFlagsByDiff: [words, words, words], ...(lod ? { expansion: true } : {}),
   }, 0);
 
   const summary: PresetSummary = {
@@ -364,7 +413,7 @@ export function buildPreset(spec: PresetSpec, data: GameData, tables: PresetTabl
     skills: classSkills(data, spec.cls).map((s) => ({ name: s.name, points: ch.skills[s.id] ?? 0 })),
     gear: Object.entries(equipment).map(([slot, it]) => {
       const base = data.items.base(it.code)!;
-      return { slot: slot as BodyLoc, name: itemName(gen, base, it), base: base.name, quality: QUALITY_NAME[it.quality] ?? '', stats: it.stats.map((s) => `${s.stat}${s.param ? `(${s.param})` : ''} ${s.value}`) };
+      return { slot: slot as BodyLoc, name: it.runeword !== undefined ? (data.runewords?.get(it.runeword)?.name ?? '') : itemName(gen, base, it), base: base.name, quality: it.runeword !== undefined ? 'Runeword' : (QUALITY_NAME[it.quality] ?? ''), stats: it.stats.map((s) => `${s.stat}${s.param ? `(${s.param})` : ''} ${s.value}`) };
     }),
     notes: spec.notes,
     unmet,

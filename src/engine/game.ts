@@ -8,6 +8,7 @@ import { findPath, nearestWalkable, reachableNear, type WalkMap } from './path';
 import { Rng } from './rng';
 import type { AnimData } from '../formats/animdata';
 import { actionFrame } from '../formats/animdata';
+import { animSpeedOf, animTiming, attackRate, attackStartFrame, castRate, otherRate, wereformBaseSpeed } from './animspeed';
 import type { ItemBase, ItemDb } from './items';
 import { QUALITY, type ItemInstance, type Quality, type TreasureDb } from './treasure';
 import type { MonsterDb, MonsterStats, MonsterType, MonSeqFrame } from './monster';
@@ -2399,10 +2400,47 @@ export class Game {
     return c && cs ? playerAttackRating(this.effStat('dex'), cs.toHitFactor, (this.derived()?.toHit ?? 0) + this.player.states.stat('tohit')) : 0;
   }
 
-  /** 무기 공격 속도 %: 100 − WSM + EIAS (EIAS = ⌊120 × IAS / (120 + IAS)⌋). 출처: Maxroll Attack Speed */
-  private attackSpeedPct(): number {
-    const ias = this.derived()?.stat('item_fasterattackrate') ?? 0;
-    return 100 - (this.weaponBase()?.speed ?? 0) + Math.trunc((120 * ias) / (120 + ias));
+  /**
+   * 공격 rate (%): EIAS + 100 − WSM + 스킬·오라·상태의 attackrate (늑대인간·광신·프렌지·버스트 오브 스피드, 냉기 감속), 양손 평균, 시퀀스 −30, 15..175.
+   * 출처: D2MOO Units.cpp UNITS_UpdateAttackAnimRateAndVelocity (animspeed.ts attackRate)
+   */
+  private attackRatePct(opt: { sequence?: boolean; extra?: number } = {}): number {
+    const items = this.data?.items;
+    const r = this.equipment.rarm, l = this.equipment.larm;
+    const rb = r ? items?.base(r.code) : undefined, lb = l ? items?.base(l.code) : undefined;
+    // 두 손에 무기 (바바리안·어쌔신): 두 무기 WSM 평균 (UNITS_CanDualWield + 양손 다 무기)
+    const dual = !!items && !!rb && !!lb && items.isType(rb, 'weap') && items.isType(lb, 'weap');
+    return attackRate({
+      gearIas: this.derived()?.stat('item_fasterattackrate') ?? 0,
+      stateAttackRate: this.playerStat('attackrate'),
+      wsm: this.weaponBase()?.speed ?? 0,
+      ...(dual ? { wsmLeft: lb.speed ?? 0 } : {}),
+      ...opt,
+    });
+  }
+
+  /**
+   * 스킬 동작의 애니 속도 (1/256 프레임/틱)와 시작 프레임. 원작 모드별 분기 (UNITS_UpdateAnimRateAndVelocity · gaPlayerModesAnimModulators):
+   *  - 변신 중: 모든 동작이 공격 rate × 변신 기본 속도 (시전도 — 변신 중 시전은 공격 속도를 따른다)
+   *  - A1·A2·TH·KK: 공격 rate / S1~S4·SQ: 스킬에 UseAttackRate 가 있으면 공격 rate (SQ −30), SQ 가 시전 계열(seqtrans SC)이면 시전 rate
+   *  - SC: 시전 rate / 그 밖: STAT_OTHER_ANIMRATE
+   * 근사(원작 미확인): D2MOO 의 UNITS_CanAnimModeUseAttackRate 는 몬스터(변신) 분기에 break 가 빠져 FALSE 를 돌려준다 — 역분석 오류로 보고 공격 rate 를 쓴다
+   */
+  private skillAnimSpeed(s: SkillRecord, mode: string, baseSpeed: number, sequence: boolean): number {
+    const extra = s.srvStFunc === 27 ? (s.params[3] ?? 0) : 0; // Dragon Tail: 공격 속도 + par4 (SKILLS_SrvSt27_DragonTail)
+    const shape = this.shapeType();
+    if (shape) {
+      const w = this.weaponItem(), wb = this.weaponBase();
+      const human = this.data?.anim.get(`${this.playerToken()}A1${this.weaponWclass()}`);
+      const neutral = this.data?.anim.get(`${shape.code}NU${shape.baseW}`)?.frames ?? 9;
+      const wias = w ? [w, ...w.socketed].reduce((a, it) => a + it.stats.reduce((b, st) => b + (st.stat === 'item_fasterattackrate' ? st.value : 0), 0), 0) : 0;
+      const base = wereformBaseSpeed(neutral, human ? { frames: human.frames, speed: human.speed } : undefined, w && wb ? { wsm: wb.speed ?? 0, ias: wias } : null);
+      return animSpeedOf(this.attackRatePct({ extra }), base || baseSpeed);
+    }
+    const attackMode = mode === 'A1' || mode === 'A2' || mode === 'TH' || mode === 'KK';
+    if (attackMode || ((sequence || /^S[1-4]$/.test(mode)) && s.useAttackRate)) return animSpeedOf(this.attackRatePct({ sequence, extra }), baseSpeed);
+    if (mode === 'SC' || (sequence && s.seqTrans === 'SC')) return animSpeedOf(castRate(this.derived()?.stat('item_fastercastrate') ?? 0), baseSpeed);
+    return animSpeedOf(otherRate(this.playerStat('other_animrate')), baseSpeed);
   }
 
   // ---------------------------------------------------------------- player update
@@ -3106,19 +3144,13 @@ export class Game {
     // 발차기(KK)는 무기와 상관없이 맨손 COF·AnimData (원작 CHARS\AI\COF\AIKKHTH 만 있다)
     const wclass = s.anim === 'KK' ? 'HTH' : this.weaponWclass();
     const token = this.playerToken();
-    // 무기 공격 속도: weapons.txt speed (WSM, 음수 = 빠름). 출처: Maxroll Attack Speed — AnimRate − WSM
-    // 공격 속도: WSM + IAS / 시전 속도: FCR (EFCR = ⌊120 × FCR / (120 + FCR)⌋). 출처: Maxroll Attack Speed / Cast Rate
-    const fcr = this.derived()?.stat('item_fastercastrate') ?? 0;
-    // Dragon Tail(St27): 공격 속도 + par4 (출처: SKILLS_SrvSt27_DragonTail — sub_6FD15470)
-    const speedPct = (s.useAttackRate ? this.attackSpeedPct() : s.anim === 'SC' ? 100 + Math.trunc((120 * fcr) / (120 + fcr)) : 100) + (s.srvStFunc === 27 ? (s.params[3] ?? 0) : 0);
     const cast: Cast = { skill: s, lvl, targetId, tx, ty, start: this.tickCount, end: this.tickCount + 1, hitTicks: [], fired: 0, targetItem };
     // 변신 중에는 플레이어 시퀀스 대신 몬스터 COF 한 동작
     const seq = s.seqNum > 0 && !this.shapeType() ? PLAYER_SEQUENCES[s.seqNum]?.[wclass] : undefined;
     if (seq && seq.length) {
-      // 시퀀스는 seqtrans 모드의 AnimData 속도로 진행한다
-      // 근사(원작 미확인): 원작 시퀀스 진행 속도 세부(UNITS_GetFrameBonus) — seqtrans 애니메이션 속도 × 공격 속도% 로 근사
+      // 시퀀스는 seqtrans 모드의 AnimData 속도 × rate 로 진행한다 (dwSeqSpeed = wAnimSpeed — 공격 계열은 rate − 30)
       const r = data.anim.get(`${token}${s.seqTrans || 'A1'}${wclass}`);
-      const rate = Math.max(1, Math.floor(((r?.speed ?? 256) * speedPct) / 100));
+      const rate = Math.max(1, this.skillAnimSpeed(s, 'SQ', r?.speed ?? 256, true));
       cast.seq = { frames: seq, rate };
       seq.forEach((f, i) => {
         if (f[2] === 1) cast.hitTicks.push(Math.ceil((i * 256) / rate));
@@ -3129,8 +3161,10 @@ export class Game {
       const mode = s.anim || 'A1';
       const look = this.animLook(mode, wclass);
       const r = data.anim.get(`${look.token}${look.mode}${look.wclass}`);
-      const t = modeTiming(data.anim, look.token, look.mode, look.wclass, speedPct, true);
       const af = r ? actionFrame(r) : -1;
+      // 아마존·소서리스의 A1·A2 는 시작 프레임만큼 짧다 (UNITS_GetFrameBonus), 변신 중에는 없음
+      const start = this.shapeType() ? 0 : attackStartFrame(c?.cls ?? '', mode, wclass);
+      const t = r ? animTiming(r.frames, af, this.skillAnimSpeed(s, mode, r.speed, false), start) : { duration: 10, hitTick: 5 };
       cast.hitTicks.push(af >= 0 ? t.hitTick : Math.max(0, t.duration - 1));
       cast.end = this.tickCount + Math.max(1, t.duration);
       p.mode = mode;
@@ -6359,6 +6393,8 @@ export class Game {
     const o = this.owner();
     const stats: Record<string, number> = {};
     for (const a of s.auraStats) stats[a.stat] = calc.eval(s, a.calc, lvl, o);
+    // attackrate 는 other_animrate 에도 (출처: SkillDruid.cpp sub_6FCFE0E0 — STAT_ATTACKRATE 면 STAT_OTHER_ANIMRATE 도 같은 값)
+    if (stats.attackrate) stats.other_animrate = stats.attackrate;
     p.states.set(s.auraState, this.tickCount + calc.eval(s, s.auraLenCalc, lvl, o), stats, { id: s.id, lvl });
     this.statsDirty = true;
     this.events.push({ type: 'shapeShift', state: s.auraState });

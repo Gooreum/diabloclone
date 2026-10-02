@@ -353,3 +353,64 @@ describe.skipIf(!hasGameData)('수량 0 (원본 PlrModes.cpp sub_6FC80B90): 일�
     expect(game.equipment.larm?.id).toBe(spare.id);
   });
 });
+
+interface SpeedInner extends Inner { attackRatePct(o?: { sequence?: boolean }): number }
+
+describe.skipIf(!hasGameData)('공격·시전 속도: 원본 공식 (Units.cpp) + 원작 AnimData', () => {
+  /** 스킬을 한 번 써서 동작 길이(틱)를 잰다 */
+  function castTicks(game: Game, inner: Inner, skill: number, target: { id: number; x: number; y: number }): number {
+    game.enqueue({ type: 'useSkill', skill, hand: 'right', x: target.x, y: target.y, targetId: target.id });
+    let st = -1;
+    for (let i = 0; i < 200; i++) {
+      game.tick();
+      if (inner.player.cast && st < 0) st = i;
+      if (st >= 0 && !inner.player.cast) return i - st;
+    }
+    return -1;
+  }
+  it('늑대인간 변신: 스킬의 공격 속도(+69)가 rate 에 들어가 상한 175', () => {
+    const { game, inner } = setup('Druid', { rarm: item('fla') });
+    const sp = inner as SpeedInner;
+    const before = sp.attackRatePct();
+    game.enqueue({ type: 'useSkill', skill: S('Wearwolf').id, hand: 'right', x: 21, y: 21 });
+    run(game, 60);
+    expect(inner.player.states.has('wolf')).toBe(true);
+    expect(before).toBe(110);
+    expect(sp.attackRatePct()).toBe(175);
+  });
+  it('늑대 공격 프레임: 변신 공식 (서 있기 9 프레임 · Flail WSM −10 → 기본 속도 135, rate 175 → 13 프레임 동작이 14틱)', () => {
+    const { game, inner } = setup('Druid', { rarm: item('fla') });
+    game.enqueue({ type: 'useSkill', skill: S('Wearwolf').id, hand: 'right', x: 21, y: 21 });
+    run(game, 60);
+    const m = dummy(game);
+    // 135 × 175 / 100 = 236 → ceil(13 × 256 / 236) − 1 = 14
+    expect(castTicks(game, inner, 0, m)).toBe(14);
+  });
+  it('소서리스 시전: FCR 0 → 13틱 (원작 표)', () => {
+    const { game, inner } = setup('Sorceress');
+    const m = dummy(game, 'zombie1', 28.5, 20.5);
+    expect(castTicks(game, inner, S('Fire Bolt').id, m)).toBe(13);
+  });
+  it('아마존 한손 휘두르기: 시작 프레임 2 → 13틱, 바바리안 같은 무기(시작 프레임 없음, 16 프레임) → 15틱', () => {
+    const a = setup('Amazon', { rarm: item('ssd') });
+    expect(castTicks(a.game, a.inner, 0, dummy(a.game))).toBe(13);
+    const b = setup('Barbarian', { rarm: item('ssd') });
+    expect(castTicks(b.game, b.inner, 0, dummy(b.game))).toBe(15);
+  });
+  it('버스트 오브 스피드(Quickness): 공격이 빨라진다', () => {
+    const { game, inner } = setup('Assassin', { rarm: item('ktr') });
+    const m = dummy(game);
+    const slow = castTicks(game, inner, 0, m);
+    game.enqueue({ type: 'useSkill', skill: S('Quickness').id, hand: 'right', x: 21, y: 21 });
+    run(game, 40);
+    expect(inner.player.states.has('quickness')).toBe(true);
+    expect(castTicks(game, inner, 0, m)).toBeLessThan(slow);
+  });
+  it('냉기에 걸리면(attackrate −50) 공격이 느려진다', () => {
+    const { game, inner } = setup('Barbarian', { rarm: item('ssd') });
+    const m = dummy(game);
+    const normal = castTicks(game, inner, 0, m);
+    inner.player.states.set('cold', inner.tickCount + 500, { velocitypercent: -50, attackrate: -50, other_animrate: -50 });
+    expect(castTicks(game, inner, 0, m)).toBeGreaterThan(normal);
+  });
+});

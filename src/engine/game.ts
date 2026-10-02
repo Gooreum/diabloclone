@@ -2961,7 +2961,8 @@ export class Game {
       p.states.set(s.auraState, cast.end, stats);
     }
     p.cast = cast;
-    this.events.push({ type: 'skillStart', skill: s.id, level: lvl });
+    // hitTick: 시작부터 첫 판정 프레임까지 (휘두름 소리를 타격 순간에)
+    this.events.push({ type: 'skillStart', skill: s.id, level: lvl, hitTick: cast.hitTicks[0] ?? 0 });
     return true;
   }
 
@@ -5350,7 +5351,7 @@ export class Game {
       const ls = this.skillRecord(lt.skill.id), calc = this.data?.skillCalc;
       if (ls && calc) c.life = Math.min(this.maxLife(), c.life + (total / 256) * calc.calc(ls, 1, lt.skill.lvl, this.owner()) / 100);
     }
-    this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit });
+    this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit, hitClass: d.hitClass, source, melee: proc === 'melee' });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));
     // 출처: DifficultyLevels.txt MonsterColdDivisor / MonsterFreezeDivisor (현재 난이도 행)
     const coldDiv = this.rules.monsterColdDivisor, frzDiv = this.rules.monsterFreezeDivisor;

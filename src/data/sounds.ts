@@ -251,6 +251,25 @@ export function weaponSwingSound(wclass: string, large: boolean): string {
   }
 }
 
+/** HitClass.txt 물리 순서 (하위 4비트: 0 None, 1 hth, 2~5 1hss/1hsl/2hss/2hsl, 6~7 1ht/2ht, 8 club, 9 staf, 10 bow, 11 xbow, 12 claw, 13 overlay) → impact 묶음 */
+const IMPACT_PHYS: readonly (string | null)[] = [
+  null, 'impact_punch_1', 'impact_blade_swing_1', 'impact_blade_swing_1', 'impact_blade_swing_1', 'impact_blade_swing_1',
+  'impact_blade_thrust_1', 'impact_blade_thrust_1', 'impact_blunt_1', 'impact_blunt_1', 'impact_arrow_1', 'impact_arrow_1', 'impact_claw_1', null,
+];
+/** 원소 HitClass (상위 4비트, skills/damage.ts addElemental: 0x20 불 · 0x30 냉기 · 0x40 번개 · 0x50 독 · 0x60 기절) → 겹소리 */
+const IMPACT_ELEM: Record<number, string> = { 0x20: 'impact_fire_1', 0x30: 'impact_cold_1', 0x40: 'impact_lightning_1', 0x50: 'impact_poison_1', 0x60: 'impact_stun_1' };
+
+/** 맞는 소리 (HitClass → sounds.txt impact_* 묶음, 같은 묶음 안에서 무작위).
+ *  근사(원작 미확인): 맞는 소리는 클라이언트 처리라 D2MOO 에 없다 — HitClass.txt 이름과 sounds.txt impact_* 이름으로 맞춤 */
+export function impactSounds(hitClass: number): string[] {
+  const out: string[] = [];
+  const phys = IMPACT_PHYS[hitClass & 0x0f];
+  if (phys) out.push(phys);
+  const elem = IMPACT_ELEM[hitClass & 0xf0];
+  if (elem) out.push(elem);
+  return out;
+}
+
 // ---------------------------------------------------------------- 오브젝트
 
 /** objects.txt OperateFn → 여는 소리.

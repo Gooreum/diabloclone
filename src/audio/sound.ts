@@ -12,7 +12,7 @@ import { NPC_DEFS } from '../engine/npc';
 import { playerWclass } from '../engine/inventory';
 import {
   ItemSoundTable, MissileSoundTable, MonsterSounds, SkillSoundTable, SoundEnvTable, SoundTable, footstepSound, npcGossipSound, npcGreetingSound,
-  objectOpenSound, questPlayerSound, questSpeechCandidates, resolveSoundPath, weaponSwingSound, type SoundEntry, type SoundEnv,
+  impactSounds, objectOpenSound, questPlayerSound, questSpeechCandidates, resolveSoundPath, weaponSwingSound, type SoundEntry, type SoundEnv,
 } from '../data/sounds';
 import { decodeRequest, type DecodeRequest, type DecodeResponse } from './decode-worker';
 
@@ -620,7 +620,7 @@ class GameListener {
         if (sk.startClass) void s.play(sk.startClass, { delay });
         // 근사(원작 미확인): dosound 는 원작 공격 프레임에서 — 여기서는 시작 후 0.2초
         if (sk.doSound) void s.play(sk.doSound, { delay: delay + 0.2 });
-        if (Number(ev.skill) === 0) this.swing();
+        if (Number(ev.skill) === 0) this.swing(Number(ev.hitTick ?? 0) / ENGINE_FPS);
         break;
       }
       case 'chargeUp':
@@ -632,6 +632,8 @@ class GameListener {
         const ms = typeId ? t.mon.of(typeId) : undefined;
         const at = this.at(ev.targetId);
         if (ms?.hit) void s.play(ms.hit, { ...(at ? { at } : {}), delay: ms.hitDelay / ENGINE_FPS });
+        // 근접 타격의 맞는 소리 (무기 HitClass + 원소 겹소리). 미사일은 missiles.txt HitSound 가 따로 난다
+        if (ev.melee) for (const n of impactSounds(Number(ev.hitClass ?? 0))) void s.play(n, at ? { at } : {});
         break;
       }
       case 'monsterKilled': {
@@ -718,15 +720,17 @@ class GameListener {
     return undefined;
   }
 
-  /** 플레이어 기본 공격: 무기 종류별 휘두르는 소리 */
-  private swing(): void {
+  /** 플레이어 기본 공격: 무기 종류별 휘두르는 소리 (타격 프레임에, 활·석궁은 시작에 당기는 소리) */
+  private swing(hitDelay: number): void {
     const t = this.s.table;
     const rarm = this.game.equipment.rarm;
     const base = rarm ? this.opts.data.items.base(rarm.code) : undefined;
     const wclass = playerWclass(this.opts.data.items, this.game.equipment);
     // 근사(원작 미확인): 큰 무기 = 인벤토리 높이 3 이상
     const large = (base?.invHeight ?? 0) >= 3;
-    if (t) void this.s.play(weaponSwingSound(wclass, large), { delay: 0.15 });
+    if (!t) return;
+    if (wclass === 'bow' || wclass === 'xbw') void this.s.play('weapon_bow_draw_1');
+    void this.s.play(weaponSwingSound(wclass, large), { delay: hitDelay });
   }
 
   /** 스냅숏 변화: 플레이어 발소리·피격, 몬스터 공격·중립 소리, 미사일 발사/명중 */

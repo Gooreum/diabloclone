@@ -5,6 +5,7 @@ import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
 import { blobRange, MpqStore } from './assets/local-mpq';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
+import { KOR_STRING, lngPaths, loadLang, saveLang, type Lang } from './data/lang';
 import { buildGameData, withDifficulty } from './data/gamedata';
 import { parsePalette, type Palette } from './formats/palette';
 import { AnimData } from './formats/animdata';
@@ -116,6 +117,10 @@ declare global {
     /** e2e: 캐릭터 저장소 (난이도 해금 등 저장 필드 조작) */
     __heroStore?: typeof HeroStore;
     __edition?: Edition;
+    /** e2e: 표시 언어 · 원작 문자열 · 글자 너비 */
+    __lang?: Lang;
+    __str?: (k: string) => string;
+    __d2text?: typeof d2text;
   }
 }
 
@@ -244,8 +249,11 @@ async function boot(): Promise<void> {
     }
     throw e;
   }
-  await assets.preload([PALETTE, ANIMDATA, ...WORLD_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\local\\lng\\eng\\string.tbl', 'data\\local\\lng\\eng\\expansionstring.tbl', 'data\\local\\lng\\eng\\patchstring.tbl']);
-  const { data, tables } = await loadGameData(assets);
+  // 표시 언어: 한국어 원작 표 (확장팩 MPQ 에만 있음) 가 있을 때만 고를 수 있다
+  const languages: Lang[] = assets.has(KOR_STRING) ? ['eng', 'kor'] : ['eng'];
+  const lang: Lang = languages.includes(loadLang()) ? loadLang() : 'eng';
+  await assets.preload([PALETTE, ANIMDATA, ...WORLD_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), ...lngPaths(lang)]);
+  const { data, tables } = await loadGameData(assets, lang);
   // Act 1 월드 DRLG 가 읽는 원작 DS1/DT1 (LvlPrest·LvlSub·LvlTypes). 다른 막은 그 막에 갈 때·게임 시작 때 배경으로
   await assets.preload(actWorldPaths(assets, tables, 0));
   const gamePal = parsePalette(assets.read(PALETTE) as Uint8Array);
@@ -268,6 +276,13 @@ async function boot(): Promise<void> {
 
   const menu = new Menu(stage, ctx, new UiArt(assets, skyPal), new UiArt(assets, fecharPal));
   menu.edition = src.edition;
+  menu.languages = languages;
+  menu.lang = lang;
+  // 언어를 바꾸면 저장하고 다시 시작 (타이틀 화면이라 잃는 것이 없다)
+  menu.onLanguage = () => {
+    saveLang(languages[(languages.indexOf(lang) + 1) % languages.length]!);
+    location.reload();
+  };
   window.__menuArtReady = () => menu.ready && shared.art.ready(CURSOR_ART);
   menu.overlay = (c, m, now) => cursor.draw(c, shared.art, m, cursor.pick({ holding: false }), now);
   if (import.meta.env.DEV) {
@@ -275,6 +290,9 @@ async function boot(): Promise<void> {
     window.__menu = menu;
     window.__heroStore = HeroStore;
     window.__edition = src.edition;
+    window.__lang = lang;
+    window.__str = (k) => tables.string(k);
+    window.__d2text = d2text;
   }
   // 캐릭터 선택 칸 영웅 그림: 저장된 장비로 게임 속 COF 합성 (서 있기 NU, 앞(아래)을 봄 = 64방향 0)
   const figGfx = new UnitGfx(assets);

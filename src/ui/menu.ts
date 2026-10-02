@@ -20,6 +20,7 @@ import type { Difficulty } from '../engine/difficulty';
 import { validHeroName } from '../engine/save';
 import { ALL_CLASSES, CLASSIC_CLASSES, EXPANSION_CLASSES, isExpansionClass, type ClassName } from '../engine/player';
 import type { Edition } from '../assets/edition';
+import type { Lang } from '../data/lang';
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
 import { HeroStore } from './storage';
@@ -31,6 +32,8 @@ const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;
 const FPS = 25;
 const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
+/** 타이틀 언어 단추 (Other Multiplayer 와 Exit 사이 빈 자리) */
+const LANG_BTN = { x: 264, y: 450, w: 272, h: 35 } as const;
 /** 확장팩 캐릭터 체크 상자 그림 (15×16, 프레임 0 빈 칸 / 1 체크) — d2data FrontEnd */
 const CLICKBOX = `${FE}clickbox.dc6`;
 /** 확장팩 판본 배경 (d2exp): 만들기 화면 · 선택 화면 */
@@ -100,6 +103,10 @@ export class Menu {
    * 클래식 판본은 확장팩 캐릭터를 시작할 수 없다 (원작 클래식 설치와 같다)
    */
   edition: Edition = 'classic';
+  /** 고를 수 있는 표시 언어 (둘 이상이면 타이틀에 언어 단추) · 지금 언어 · 단추를 누르면 (main 이 저장 후 다시 시작) */
+  languages: Lang[] = ['eng'];
+  lang: Lang = 'eng';
+  onLanguage: (() => void) | null = null;
   /** 만들기 화면 체크 상태 */
   private expansionChecked = true;
   /** 선택 화면 알림 (클래식 판본에서 확장팩 캐릭터를 골랐을 때) */
@@ -178,6 +185,8 @@ export class Menu {
       this.btn('single', { x: 264, y: 290, w: 272, h: 35 }, () => void this.openSelect(), 'btn-single', 'Single Player');
       this.btn('bnet', { x: 264, y: 330, w: 272, h: 35 }, () => undefined, 'btn-battlenet', 'Battle.net');
       this.btn('multi', { x: 264, y: 370, w: 272, h: 35 }, () => undefined, 'btn-multiplayer', 'Other Multiplayer');
+      // 근사(원작 미확인): 원작은 설치 언어가 고정 — 언어 단추·위치는 이 클론 것
+      if (this.languages.length > 1) this.btn('lang', LANG_BTN, () => this.onLanguage?.(), 'btn-language', 'Language');
       this.btn('exit', { x: 264, y: 500, w: 272, h: 35 }, () => undefined, 'btn-exit-d2', 'Exit Diablo II');
     } else if (screen === 'select') {
       this.confirmDelete = false;
@@ -395,6 +404,7 @@ export class Menu {
       this.button(a, WIDE, { x: 264, y: 290, w: 272, h: 35 }, 'Single Player');
       this.button(a, WIDE, { x: 264, y: 330, w: 272, h: 35 }, 'Battle.net');
       this.button(a, WIDE, { x: 264, y: 370, w: 272, h: 35 }, 'Other Multiplayer');
+      if (this.languages.length > 1) this.button(a, WIDE, LANG_BTN, this.lang === 'kor' ? '한국어' : 'English');
       this.button(a, WIDE, { x: 264, y: 500, w: 272, h: 35 }, 'Exit Diablo II');
       drawText(ctx, 'v 1.14d', 20, 575, { font: 'font8', color: 'white' });
     } else if (this.screen === 'select') {

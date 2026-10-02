@@ -132,6 +132,8 @@ export class D2Text {
 
   private rgb(color: number): string {
     if (color < 0) return '#c7b377';
+    // 검정 글자: 비트맵 글자처럼 가장 어두운 색 (PL2 표의 검정 칸은 색 바꾸기 표라 색 값이 아니다)
+    if (color === TEXT_COLOR.black) return '#000';
     const [r, g, b] = this.pl2?.colors[color] ?? DEFAULT_COLORS[color] ?? [255, 255, 255];
     return `rgb(${r},${g},${b})`;
   }

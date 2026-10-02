@@ -2859,9 +2859,16 @@ export class Game {
       return;
     }
     const alive = target && target.mode !== 'DT' && target.mode !== 'DD' ? target : undefined;
+    // 대상이 살아 있는 몬스터가 아니면 (커서가 시체·오브젝트·NPC 위였거나 가는 사이 죽음) 클릭한 자리로 쓴다.
+    // 원작 클라이언트는 그 스킬이 고를 수 있는 유닛만 대상으로 보내고 나머지는 위치 시전이다 (skills.txt TargetCorpse / TargetableOnly).
+    // 반복 공격(왼쪽 클릭 attack)과 대상이 꼭 필요한 근접 스킬은 대상이 사라지면 끝낸다.
     if (act.targetId !== undefined && !alive) {
-      p.action = null;
-      return;
+      if (act.repeat || (this.needsMelee(s) && s.targetableOnly)) {
+        p.action = null;
+        return;
+      }
+      act = { ...act, targetId: undefined };
+      p.action = act;
     }
     if (this.needsMelee(s)) {
       if (!alive) {

@@ -1908,6 +1908,31 @@ export class Game {
     return out;
   }
 
+  /**
+   * 지금 이 스킬을 쓸 수 있나 (스킬 버튼·목록을 빨갛게 그릴지). 원작 SKILLS_GetUseState 순서:
+   * 레벨(충전) → 오라·패시브는 쓸 수 있음 → 수량(화살·던질 무기) → 무기 종류 → 변신 제한 → 마나 → 지연(skilldelay).
+   * 출처: D2MOO D2Skills.cpp SKILLS_GetUseState (USABLE · AURA 가 아니면 클라이언트가 아이콘을 빨갛게)
+   * 근사(원작 미확인): 마나가 모자라도 AttackNoMana 스킬은 일반 공격으로 대신하므로 쓸 수 있다고 본다
+   */
+  skillUseState(skillId: number, charge = false): 'usable' | 'nolevel' | 'quantity' | 'weapon' | 'shape' | 'mana' | 'delay' {
+    const s = this.skillRecord(skillId), c = this.character, data = this.data;
+    if (!s || !c || !data) return 'usable';
+    if (charge) {
+      if (!this.equippedCharges().some((e) => e.skill === skillId && e.cur > 0)) return 'nolevel';
+    } else if (s.id > 5 && this.effectiveSkillLevel(s.id) <= 0) return 'nolevel';
+    if (s.passive || s.aura) return 'usable';
+    if ((s.srvStFunc === 1 || s.srvStFunc === 4 || s.srvStFunc === 8) && this.isBowWeapon() && !this.ammo() && !(s.id === 0 && this.specialArrow()?.noAmmo)) return 'quantity';
+    if (s.srvStFunc === 65 && !((this.weaponItem()?.quantity ?? 0) > 0)) return 'quantity';
+    if (!this.weaponAllows(s)) return 'weapon';
+    if (data.stateInfo && !shapeAllowed(s, (st) => this.player.states.has(st), this.shapeRestricted())) return 'shape';
+    if (!charge && s.id > 5 && data.skillCalc && !s.attackNoMana) {
+      const need = s.repeat ? s.startMana * 256 : data.skillCalc.manaCost256(s, this.skillLevel(s));
+      if (need > c.mana * 256) return 'mana';
+    }
+    if (s.delay && this.player.states.has('skilldelay') && (data.skillCalc?.eval(s, s.delay, this.skillLevel(s), this.owner()) ?? 0) > 0) return 'delay';
+    return 'usable';
+  }
+
   private isBusy(): boolean {
     const p = this.player;
     return p.cast !== null || ((p.mode === 'GH' || p.mode === 'BL') && this.tickCount < p.modeEnd);
@@ -2761,7 +2786,9 @@ export class Game {
       return !!b && !!items && items.isType(b, 'shld');
     }
     const w = this.weaponBase(), items = this.data?.items;
-    if (!w || !items) return false;
+    // 맨손: 아이템이 없으면 itypeA 첫 칸이 weap·mele·h2h 이고 itypeB 가 없을 때만 쓸 수 있다 (주먹). 출처: D2MOO D2Skills.cpp sub_6FDB1130
+    if (!w) return ['weap', 'mele', 'h2h'].includes(s.itypeA[0] ?? '') && !s.itypeB.length;
+    if (!items) return false;
     if (s.etypeA.some((t) => items.isType(w, t))) return false;
     return s.itypeA.some((t) => items.isType(w, t));
   }

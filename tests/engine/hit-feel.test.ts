@@ -91,3 +91,33 @@ describe.skipIf(!hasGameData)('맞는 소리·휘두름 (원작 데이터)', () 
     expect(Number(st!.hitTick)).toBeGreaterThan(0);
   });
 });
+
+/** 지금 떠 있는 그림 미사일 이름 */
+const visuals = (game: Game) => (game as unknown as { missiles: { def: { name: string }; visual?: boolean }[] }).missiles.filter((x) => x.visual).map((x) => x.def.name);
+
+describe.skipIf(!hasGameData)('피 튀김 (MonStats2 Bleed)', () => {
+  it('Bleed 1 몬스터(zombie1)를 치면 blood1·blood2 그림', () => {
+    expect(data.monsters.types.get('zombie1')!.bleed).toBe(1);
+    const { game } = setup();
+    const m = dummy(game);
+    meleeUntilHit(game, m.id);
+    const v = visuals(game);
+    expect(v.some((n) => n === 'blood1' || n === 'blood2'), v.join(',')).toBe(true);
+    expect(v.some((n) => n.startsWith('bigblood'))).toBe(false);
+  });
+  it('Bleed 0 몬스터는 피 없음', () => {
+    const id = [...data.monsters.types.values()].find((t) => t.bleed === 0 && t.modes.has('GH') && !t.npc && t.killable)!.id;
+    const { game } = setup();
+    const m = dummy(game, id);
+    meleeUntilHit(game, m.id);
+    expect(visuals(game).filter((n) => n.includes('blood'))).toEqual([]);
+  });
+  it('Bleed 2 몬스터는 big 까지 넷 중에서만', () => {
+    const t = [...data.monsters.types.values()].find((x) => x.bleed === 2 && x.killable && !x.npc);
+    expect(t, 'Bleed 2 몬스터').toBeDefined();
+    const { game } = setup();
+    const m = dummy(game, t!.id);
+    for (let i = 0; i < 6; i++) meleeUntilHit(game, m.id, 60);
+    expect(visuals(game).filter((n) => n.includes('blood')).every((n) => ['blood1', 'blood2', 'bigblood1', 'bigblood2'].includes(n))).toBe(true);
+  });
+});

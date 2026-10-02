@@ -441,6 +441,10 @@ const CURSE_STATES = ['amplifydamage', 'dimvision', 'weaken', 'ironmaiden', 'ter
 /** 원작 미사일 Vel(프레임당 픽셀) → 프레임당 서브타일. 출처: Phrozen Keep KB a=463 — Yards = Vel × Range / 32 */
 const missileStep = (vel: number): number => (vel / 32) * SUBTILES_PER_YARD;
 
+/** 피 미사일 (Missiles.txt 18~21) */
+const BLOOD_SMALL = ['blood1', 'blood2'] as const;
+const BLOOD_BIG = ['blood1', 'blood2', 'bigblood1', 'bigblood2'] as const;
+
 export class Game {
   readonly rng: Rng;
   readonly data: GameData | undefined;
@@ -5350,6 +5354,14 @@ export class Game {
     if (lt?.skill && source === 'player' && c) {
       const ls = this.skillRecord(lt.skill.id), calc = this.data?.skillCalc;
       if (ls && calc) c.life = Math.min(this.maxLife(), c.life + (total / 256) * calc.calc(ls, 1, lt.skill.lvl, this.owner()) / 100);
+    }
+    // 피 튀김 (그림만): MonStats2 Bleed 1 = blood1·2, 2 = bigblood1·2 까지 무작위 하나.
+    // 출처: Phrozen Keep MonStats2 가이드 (Bleed — missiles 18~21). 근사(원작 미확인): 피가 나오는 높이(localBlood)는 반영하지 않는다
+    const bleed = m.type.bleed ?? 0;
+    if (bleed > 0 && total > 0) {
+      const pool = bleed >= 2 ? BLOOD_BIG : BLOOD_SMALL;
+      // 게임 난수를 쓰지 않는다 (그림만 — 전투 난수 순서를 바꾸지 않게)
+      this.spawnVisual(pool[(this.tickCount + m.id) % pool.length]!, m.x, m.y, { life: this.data?.missiles.get(pool[0]!)?.animLen });
     }
     this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit, hitClass: d.hitClass, source, melee: proc === 'melee' });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));

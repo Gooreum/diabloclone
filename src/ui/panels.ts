@@ -13,7 +13,7 @@
 //   CONFIGURE CONTROLS 화면 배치(틀 100,64 600×420, 줄 간격 22)
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
-import { KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, type KeyAction } from './keys';
+import { KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, UNBINDABLE_KEYS, type KeyAction } from './keys';
 import { d2text, drawText } from './text';
 
 const PENT = `${UI}CURSOR\\pentspin.dc6`;
@@ -246,6 +246,8 @@ export class Panels {
   key(k: string): boolean {
     if (!this.menuOpen) return false;
     if (this.waitingKey && k !== 'Escape') {
+      // fn+F1 처럼 누르면 fn 이 먼저 온다 — 다음 키 (F1) 를 기다린다
+      if (UNBINDABLE_KEYS.has(k)) return true;
       keyBindings.set(this.waitingKey, keyName({ key: k }));
       this.waitingKey = null;
       this.assignedAt = performance.now();

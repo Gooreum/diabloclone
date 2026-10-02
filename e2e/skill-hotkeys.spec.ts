@@ -85,5 +85,19 @@ test('Skill 1 을 Z 로 바꿔 등록·전환, 기본 F2 도 되고 F키로 새�
   });
   for (const k of ['F1', 'F3', 'F12']) await page.keyboard.press(k);
   expect(await page.evaluate(() => (window as unknown as { __keys: [string, boolean][] }).__keys)).toEqual([['F1', true], ['F3', true], ['F12', false]]);
+
+  // 맥: fn+F3 으로 바꾸면 fn 이 먼저 온다 — fn 은 무시하고 F3 을 배정
+  await page.keyboard.press('Escape');
+  await page.click('#btn-options');
+  await page.click('#btn-configure-controls');
+  await page.click('#key-skill2');
+  await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Fn' })));
+  await page.waitForTimeout(100);
+  await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Fn' })));
+  await page.keyboard.press('F3');
+  await page.keyboard.press('Escape');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('d2clone.keys') ?? '{}') as Record<string, string>);
+  expect(saved.skill2).toBe('F3');
+  expect(Object.values(saved)).not.toContain('Fn');
   expect(errors).toEqual([]);
 });

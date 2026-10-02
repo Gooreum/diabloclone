@@ -30,6 +30,9 @@ const NAMED: Record<string, string> = {
   Home: 'KeyHome', End: 'KeyEnd', PageUp: 'KeyPrior', PageDown: 'KeyNext', ArrowUp: 'KeyUp', ArrowDown: 'KeyDown', ArrowLeft: 'KeyLeft', ArrowRight: 'KeyRight', '`': 'KeyTilde',
 };
 
+/** 혼자서는 단축키가 될 수 없는 키 (맥 fn·⌘, Caps Lock, 한글 입력 조합 중 'Process', 알 수 없는 키) — 단축키 바꾸기에서 무시하고 다음 키를 기다린다 */
+export const UNBINDABLE_KEYS: ReadonlySet<string> = new Set(['Fn', 'FnLock', 'Meta', 'OS', 'Hyper', 'Super', 'CapsLock', 'Process', 'Unidentified']);
+
 const STORE_KEY = 'd2clone.keys';
 
 /** 이벤트 → 저장용 키 이름 (글자는 대문자, ~ 와 ` 는 같은 키) */

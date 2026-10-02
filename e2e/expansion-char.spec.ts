@@ -57,11 +57,42 @@ test('체크를 끄면 클래식 캐릭터 (확장팩 판본에서도)', async (
   expect(errors).toEqual([]);
 });
 
-test('클래식 판본(D2_EDITION=classic 서버): 만들기 화면에 체크 상자가 없다', async ({ page }) => {
+test('Convert to Expansion: 클래식 캐릭터를 선택 화면에서 확장팩으로 (No 는 그대로) → 확장팩 게임', async ({ page }) => {
+  test.setTimeout(400_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const name = uniqueName('Cv');
+  await create(page, name, false);
+  expect(await page.evaluate(() => window.__game!.game.expansion)).toBe(false);
+  await saveExit(page);
+  const stored = () => page.evaluate((n) => window.__heroStore!.load(n).then((s) => s?.expansion ?? null), name);
+  await page.click('#btn-single');
+  await page.click(`#hero-${name}`);
+  // No: 그대로 클래식
+  await page.click('#btn-convert');
+  await page.click('#btn-convert-no');
+  expect(await stored()).toBeNull();
+  // Yes: 확장팩 캐릭터로 저장
+  await page.click(`#hero-${name}`);
+  await page.click('#btn-convert');
+  await page.screenshot({ path: 'test-results/convert-confirm.png' });
+  await page.click('#btn-convert-yes');
+  await expect.poll(stored).toBe(true);
+  await page.click(`#hero-${name}`);
+  await page.screenshot({ path: 'test-results/convert-after.png' });
+  await page.click('#btn-select-ok');
+  await chooseDifficulty(page);
+  await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });
+  expect(await page.evaluate(() => window.__game!.game.expansion)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('클래식 판본(D2_EDITION=classic 서버): 바꾸기 단추·만들기 화면 체크 상자가 없다', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   test.skip((await page.evaluate(() => window.__edition)) !== 'classic', '클래식 서버에서만 (D2_EDITION=classic)');
   await page.click('#btn-single');
+  await expect(page.locator('#btn-convert')).toHaveCount(0);
   await page.click('#btn-create');
   await page.click('#btn-sorceress');
   await expect(page.locator('#chk-expansion')).toHaveCount(0);

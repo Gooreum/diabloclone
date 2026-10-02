@@ -17,7 +17,7 @@
 //   영웅 그림 위치(칸 왼쪽 45, 아래 82), 확인 창 가운데 배치, Battle.net·Other Multiplayer 는 동작 없음
 import type { HeroSummary } from '../engine/save';
 import type { Difficulty } from '../engine/difficulty';
-import { validHeroName } from '../engine/save';
+import { convertToExpansion, validHeroName } from '../engine/save';
 import { ALL_CLASSES, CLASSIC_CLASSES, EXPANSION_CLASSES, isExpansionClass, type ClassName } from '../engine/player';
 import type { Edition } from '../assets/edition';
 import type { Lang } from '../data/lang';
@@ -45,6 +45,13 @@ const EXP_BOX: HRect = { x: 318, y: 541, w: 180, h: 16 };
 const SCROLL = `${UI}PANEL\\scrollbar.dc6`, POPUP = `${CS}PopUpOkCancel.dc6`, SMALL = `${FE}CancelButtonBlank.dc6`;
 const SB = { x: 586, y: 87, h: 369 } as const;
 const POP = { x: 268, y: 212, w: 264, h: 176 } as const;
+/** 원작 LoD 선택 화면 "Convert to Expansion" (클래식 영웅을 골랐을 때). 근사(원작 미확인): 위치 — Exit·OK 사이 가운데 */
+const CONVERT_BTN = { x: 264, y: 537, w: 272, h: 35 } as const;
+/** 확인 창 문구. 근사(원작 미확인): 바꾸기 문구 (원작 문구는 tbl 이 아니라 D2Launch.dll 안) */
+const CONFIRM_TEXT = {
+  delete: 'Are you sure that you want\nto delete this character?\nTake note: this will delete all\nversions of this Character.',
+  convert: 'Are you sure that you want\nto convert this character\nto an Expansion Character?\nThis cannot be undone.',
+} as const;
 const DIFF_POPUP = `${FE}PopUp_340x224.dc6`;
 /** 난이도 창 (800×600 가운데), 아래 단추 자리 (그림 안 x 108 y 182, 128×32) */
 const DPOP = { x: 230, y: 188, w: 340, h: 224 } as const;
@@ -84,7 +91,8 @@ export class Menu {
   private selectedHero = 0;
   /** 스크롤 (줄 단위, 한 줄 = 2명) */
   private scroll = 0;
-  private confirmDelete = false;
+  /** 선택 화면 확인 창 (지우기 / 확장팩으로 바꾸기) */
+  private confirm: keyof typeof CONFIRM_TEXT | null = null;
   /** 난이도 창이 떠 있는 영웅 (없으면 null) */
   private diffHero: HeroSummary | null = null;
   /** 영웅 그림 (없으면 클래스 서 있기 그림으로 근사) */
@@ -137,7 +145,7 @@ export class Menu {
       this.mouse = { x: ((e.clientX - r.left) * 800) / r.width, y: ((e.clientY - r.top) * 600) / r.height };
     });
     this.layer.root.addEventListener('wheel', (e) => {
-      if (this.screen !== 'select' || this.confirmDelete) return;
+      if (this.screen !== 'select' || this.confirm) return;
       this.scrollBy(e.deltaY > 0 ? 1 : -1);
     });
     void sky.preload([CLICKBOX, SCROLL, POPUP, SMALL, DIFF_POPUP, `${FE}TitleScreen.dc6`, `${FE}D2logoBlackLeft.dc6`, `${FE}D2logoBlackRight.dc6`, `${FE}D2logoFireLeft.dc6`, `${FE}D2logoFireRight.dc6`, WIDE, MED, `${CS}charselectbckg.dc6`, `${CS}charselectbox.dc6`]);
@@ -194,12 +202,13 @@ export class Menu {
         }, `btn-lang-${l}`, LANG_NAME[l]));
       this.btn('exit', { x: 264, y: 500, w: 272, h: 35 }, () => undefined, 'btn-exit-d2', 'Exit Diablo II');
     } else if (screen === 'select') {
-      this.confirmDelete = false;
+      this.confirm = null;
       this.layoutHeroes();
       this.btn('sbup', { x: SB.x, y: SB.y, w: 10, h: 10 }, () => this.scrollBy(-1), 'charsel-up', 'Up');
       this.btn('sbdown', { x: SB.x, y: SB.y + SB.h - 10, w: 10, h: 10 }, () => this.scrollBy(1), 'charsel-down', 'Down');
       this.btn('create', { x: 33, y: 468, w: 272, h: 35 }, () => this.go('create'), 'btn-create', 'Create New Character');
-      this.btn('delete', { x: 433, y: 468, w: 272, h: 35 }, () => this.askDelete(), 'btn-delete', 'Delete Character');
+      this.btn('delete', { x: 433, y: 468, w: 272, h: 35 }, () => this.askConfirm('delete'), 'btn-delete', 'Delete Character');
+      if (this.edition === 'lod') this.btn('convert', CONVERT_BTN, () => this.askConfirm('convert'), 'btn-convert', 'Convert to Expansion');
       this.btn('selexit', { x: 33, y: 537, w: 128, h: 35 }, () => this.go('title'), 'btn-select-exit', 'Exit');
       this.btn('selok', { x: 627, y: 537, w: 128, h: 35 }, () => {
         const h = this.heroes[this.selectedHero];
@@ -317,14 +326,16 @@ export class Menu {
     return !!this.diffHero;
   }
 
-  /** 지우기 확인 창 (원작: 정말 지울지 묻는다) */
-  private askDelete(): void {
-    if (!this.heroes[this.selectedHero]) return;
-    this.confirmDelete = true;
-    this.btn('delyes', { x: POP.x + 10, y: POP.y + 133, w: 96, h: 32 }, () => void this.deleteHero(), 'btn-delete-yes', 'Yes');
-    this.btn('delno', { x: POP.x + 163, y: POP.y + 133, w: 96, h: 32 }, () => this.closeConfirm(), 'btn-delete-no', 'No');
+  /** 확인 창 (원작: 정말 지울지 · 확장팩으로 바꿀지 묻는다). 이미 확장팩인 영웅은 바꾸지 않는다 */
+  private askConfirm(kind: keyof typeof CONFIRM_TEXT): void {
+    const h = this.heroes[this.selectedHero];
+    if (!h || (kind === 'convert' && h.expansion)) return;
+    this.confirm = kind;
+    const yes = kind === 'delete' ? () => void this.deleteHero() : () => void this.convertHero();
+    this.btn('cfyes', { x: POP.x + 10, y: POP.y + 133, w: 96, h: 32 }, yes, `btn-${kind}-yes`, 'Yes');
+    this.btn('cfno', { x: POP.x + 163, y: POP.y + 133, w: 96, h: 32 }, () => this.closeConfirm(), `btn-${kind}-no`, 'No');
     // 확인 창이 떠 있는 동안 다른 단추는 막는다
-    this.layer.only(new Set(['delyes', 'delno']));
+    this.layer.only(new Set(['cfyes', 'cfno']));
   }
 
   private closeConfirm(): void {
@@ -333,9 +344,18 @@ export class Menu {
 
   private async deleteHero(): Promise<void> {
     const h = this.heroes[this.selectedHero];
-    this.confirmDelete = false;
+    this.confirm = null;
     if (!h) return;
     await HeroStore.remove(h.name);
+    await this.openSelect();
+  }
+
+  /** 원작 LoD "Convert to Expansion": 저장을 확장팩 캐릭터로 바꿔 다시 저장 (되돌릴 수 없음) */
+  private async convertHero(): Promise<void> {
+    const h = this.heroes[this.selectedHero];
+    this.confirm = null;
+    const s = h ? await HeroStore.load(h.name) : null;
+    if (s) await HeroStore.save(convertToExpansion(s));
     await this.openSelect();
   }
 
@@ -453,7 +473,8 @@ export class Menu {
       this.button(a, WIDE, { x: 433, y: 468, w: 272, h: 35 }, 'Delete Character');
       this.button(a, MED, { x: 33, y: 537, w: 128, h: 35 }, 'Exit');
       this.button(a, MED, { x: 627, y: 537, w: 128, h: 35 }, 'OK');
-      if (this.confirmDelete) this.drawConfirm(ctx);
+      if (this.edition === 'lod' && sel && !sel.expansion) this.button(a, WIDE, CONVERT_BTN, 'Convert to Expansion');
+      if (this.confirm) this.drawConfirm(ctx, this.confirm);
       if (this.diffHero) this.drawDifficulty(ctx, this.diffHero);
     } else {
       const a = this.fechar;
@@ -504,12 +525,12 @@ export class Menu {
     if (max) a.draw(ctx, SCROLL, 4, SB.x, ty);
   }
 
-  private drawConfirm(ctx: CanvasRenderingContext2D): void {
+  private drawConfirm(ctx: CanvasRenderingContext2D, kind: keyof typeof CONFIRM_TEXT): void {
     const a = this.sky;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, 800, 600);
     a.drawTiles(ctx, POPUP, 2, POP.x, POP.y, 0, 2);
-    drawText(ctx, 'Are you sure that you want\nto delete this character?\nTake note: this will delete all\nversions of this Character.', POP.x + POP.w / 2, POP.y + 30, { font: 'font16', align: 'center', color: 'gold' });
+    drawText(ctx, CONFIRM_TEXT[kind], POP.x + POP.w / 2, POP.y + 30, { font: 'font16', align: 'center', color: 'gold' });
     for (const [bx, label] of [[POP.x + 10, 'YES'], [POP.x + 163, 'NO']] as const) {
       a.draw(ctx, SMALL, 0, bx, POP.y + 133);
       drawText(ctx, label, bx + 48, POP.y + 142, { font: 'fontexocet10', align: 'center', color: 'black' });

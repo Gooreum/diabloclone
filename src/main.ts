@@ -880,6 +880,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     // Alt (Show Items) 누르고 있는 동안 바닥 아이템 이름 모두
     let altHeld = false;
     const onKeyUp = (e: KeyboardEvent) => {
+      // 단축키 바꾸기: Shift·Alt·Fn 만 눌렀다 떼면 그 키로
+      if (panels.menuOpen) panels.keyUp();
       if (keyBindings.is(e, 'showitems')) altHeld = false;
     };
     const onBlur = () => (altHeld = false);
@@ -893,7 +895,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         // F1 도움말·F5 새로고침 같은 브라우저 동작 대신 단축키로 (키 바꾸기 중에도)
         if (e.key === 'Tab' || e.key === 'Alt' || /^F\d+$/.test(e.key)) e.preventDefault();
         if (e.key === 'Escape') panels.back();
-        else panels.key(e.key);
+        else panels.key(e.key, e);
         return;
       }
       const act = keyBindings.actionOf(e);
@@ -973,7 +975,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
     // 컨트롤 패널 동작 (클릭)
-    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand, charge) => game.canSelectSkill(s, hand, charge), itemSkills: () => game.itemSkillEntries(), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str) });
+    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand, charge) => game.canSelectSkill(s, hand, charge), itemSkills: () => game.itemSkillEntries(), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str, true) });
     onHud = (a: HudAction, button: number, cur: ItemInstance | null) => {
       if (a.kind === 'run') input.run = !input.run;
       else if (a.kind === 'minipanel') hud.miniOpen = !hud.miniOpen;

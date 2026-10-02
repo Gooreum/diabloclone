@@ -99,5 +99,45 @@ test('Skill 1 을 Z 로 바꿔 등록·전환, 기본 F2 도 되고 F키로 새�
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('d2clone.keys') ?? '{}') as Record<string, string>);
   expect(saved.skill2).toBe('F3');
   expect(Object.values(saved)).not.toContain('Fn');
+
+  // 조합 단축키 (원작과 다름, 사용자 요청): Shift 누른 채 F4 → 'Shift+F4', Shift 누른 채 fn → 'Shift+Fn'
+  await page.click('#btn-configure-controls');
+  await page.click('#key-skill3');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('F4');
+  await page.keyboard.up('Shift');
+  await page.click('#key-skill4');
+  await page.keyboard.down('Shift');
+  await page.evaluate(() => {
+    dispatchEvent(new KeyboardEvent('keydown', { key: 'Fn', shiftKey: true }));
+    dispatchEvent(new KeyboardEvent('keyup', { key: 'Fn', shiftKey: true }));
+  });
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(300);
+  await page.locator('#game').screenshot({ path: 'test-results/combo-keys-controls.png' });
+  await page.keyboard.press('Escape');
+  const combo = await page.evaluate(() => JSON.parse(localStorage.getItem('d2clone.keys') ?? '{}') as Record<string, string>);
+  expect([combo.skill3, combo.skill4]).toEqual(['Shift+F4', 'Shift+Fn']);
+  // 메뉴 닫고 게임에서: Shift+F4 → Fire Bolt, Shift+Fn → Attack
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.gameMenu.menuOpen)).toBe(false);
+  await page.evaluate((id) => {
+    const hk = window.__game!.game.character!.hotkeys!;
+    hk[2] = { skill: id, hand: 'right' };
+    hk[3] = { skill: 0, hand: 'right' };
+  }, FIRE_BOLT);
+  await page.mouse.move(400, 100);
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('F4');
+  await page.keyboard.up('Shift');
+  await expect.poll(() => rightSkill(page)).toBe(FIRE_BOLT);
+  await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Fn', shiftKey: true })));
+  await expect.poll(() => rightSkill(page)).toBe(0);
+  // 스킬 고르기 목록 아이콘 구석에 짧은 이름 (S+F4)
+  await page.evaluate(() => (window.__game!.ui!.hud.skillMenu = 'right'));
+  await page.waitForTimeout(300);
+  await page.locator('#game').screenshot({ path: 'test-results/combo-keys-hud.png' });
+  await page.evaluate(() => (window.__game!.ui!.hud.skillMenu = null));
   expect(errors).toEqual([]);
 });

@@ -13,7 +13,7 @@
 //   CONFIGURE CONTROLS 화면 배치(틀 100,64 600×420, 줄 간격 22)
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
-import { KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, UNBINDABLE_KEYS, type KeyAction } from './keys';
+import { baseKeyName, HOLD_KEYS, KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, UNBINDABLE_KEYS, type KeyAction, type KeyEv } from './keys';
 import { d2text, drawText } from './text';
 
 const PENT = `${UI}CURSOR\\pentspin.dc6`;
@@ -118,6 +118,8 @@ export class Panels {
   private selected = 1;
   /** 단축키 바꾸는 중인 기능 (키를 기다림) */
   waitingKey: KeyAction | null = null;
+  /** 단축키 기다리는 중 누르고 있는 Shift·Ctrl·Alt·Fn (다음 키와 조합, 그대로 떼면 그 키 하나) */
+  private holdName: string | null = null;
   private assignedAt = 0;
   /** 옵션이 바뀌면 (main 이 자동 지도 등에 반영) */
   onOptions: ((o: GameOptions) => void) | null = null;
@@ -148,7 +150,10 @@ export class Panels {
       });
     }
     // 단축키 목록 줄 (누르면 다음 키를 기다린다) · 기본값 단추
-    KEY_ACTIONS.forEach((a, i) => this.layer.button(`key:${a}`, this.keyRow(i), () => (this.waitingKey = a), { id: `key-${a}` }, a));
+    KEY_ACTIONS.forEach((a, i) => this.layer.button(`key:${a}`, this.keyRow(i), () => {
+      this.waitingKey = a;
+      this.holdName = null;
+    }, { id: `key-${a}` }, a));
     this.layer.button('keydefault', { x: CTRL.x + 20, y: CTRL.y + CTRL.h - 36, w: 120, h: 24 }, () => {
       keyBindings.reset();
       this.waitingKey = null;
@@ -242,15 +247,31 @@ export class Panels {
     else this.toggleMenu(false);
   }
 
+  /** 키를 뗌: 단축키 기다리는 중 Shift·Alt·Fn 만 눌렀다 떼면 그 키 하나 (또는 Shift+Fn) 로 */
+  keyUp(): void {
+    if (this.waitingKey && this.holdName) this.assign(this.holdName);
+  }
+
+  private assign(name: string): void {
+    if (!this.waitingKey) return;
+    keyBindings.set(this.waitingKey, name);
+    this.waitingKey = null;
+    this.holdName = null;
+    this.assignedAt = performance.now();
+  }
+
   /** 키보드 위·아래·Enter·왼쪽·오른쪽 (원작 메뉴 조작). 단축키 기다리는 중이면 그 키를 배정 */
-  key(k: string): boolean {
+  key(k: string, e: KeyEv = { key: k }): boolean {
     if (!this.menuOpen) return false;
     if (this.waitingKey && k !== 'Escape') {
-      // fn+F1 처럼 누르면 fn 이 먼저 온다 — 다음 키 (F1) 를 기다린다
-      if (UNBINDABLE_KEYS.has(k)) return true;
-      keyBindings.set(this.waitingKey, keyName({ key: k }));
-      this.waitingKey = null;
-      this.assignedAt = performance.now();
+      const b = baseKeyName(e);
+      if (UNBINDABLE_KEYS.has(b)) return true;
+      // Shift·Ctrl·Alt·Fn: 다음 키와 조합을 기다린다 (Shift 누른 채 F1 → 'Shift+F1', Shift 누른 채 Fn → 'Shift+Fn', fn+F1 → 'F1')
+      if (HOLD_KEYS.has(b)) {
+        this.holdName = keyName(e);
+        return true;
+      }
+      this.assign(keyName(e));
       return true;
     }
     const items = SCREENS[this.screen];

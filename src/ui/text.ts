@@ -147,7 +147,8 @@ export class D2Text {
     const c = typeof document === 'undefined' ? null : document.createElement('canvas');
     const g = c?.getContext('2d');
     if (c && g) {
-      const css = `${CJK_PX[font]}px ${CJK_FAMILY}`, ch = String.fromCodePoint(code);
+      // 굵은 원작 글꼴 (Exocet 단추 글자) 은 한글도 굵게
+      const css = `${font.startsWith('fontexocet') ? 'bold ' : ''}${CJK_PX[font]}px ${CJK_FAMILY}`, ch = String.fromCodePoint(code);
       g.font = css;
       const w = Math.ceil(g.measureText(ch).width);
       c.width = w + 1;

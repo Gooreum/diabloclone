@@ -279,8 +279,8 @@ async function boot(): Promise<void> {
   menu.languages = languages;
   menu.lang = lang;
   // 언어를 바꾸면 저장하고 다시 시작 (타이틀 화면이라 잃는 것이 없다)
-  menu.onLanguage = () => {
-    saveLang(languages[(languages.indexOf(lang) + 1) % languages.length]!);
+  menu.onLanguage = (l) => {
+    saveLang(l);
     location.reload();
   };
   window.__menuArtReady = () => menu.ready && shared.art.ready(CURSOR_ART);

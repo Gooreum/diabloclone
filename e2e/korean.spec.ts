@@ -17,7 +17,13 @@ test('언어 단추: 한국어로 바꾸면 원작 한국어 문자열과 한글
   await title(page);
   test.skip((await page.evaluate(() => window.__edition)) !== 'lod', '확장팩 서버에서만');
   expect(await page.evaluate(() => window.__lang)).toBe('eng');
-  await page.click('#btn-language');
+  await expect(page.locator('#btn-lang-eng')).toHaveCount(1);
+  // 지금 언어 단추는 눌러도 그대로 (다시 시작하지 않음)
+  await page.evaluate(() => ((window as unknown as { __mark: number }).__mark = 1));
+  await page.click('#btn-lang-eng');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as unknown as { __mark?: number }).__mark)).toBe(1);
+  await page.click('#btn-lang-kor');
   await page.waitForFunction(() => window.__menuReady === true && window.__lang === 'kor', undefined, { timeout: 90_000 });
   await page.waitForFunction(() => window.__menuArtReady?.() === true, undefined, { timeout: 30_000 });
   await page.locator('#game').screenshot({ path: 'test-results/korean-title.png' });
@@ -43,7 +49,7 @@ test('언어 단추: 한국어로 바꾸면 원작 한국어 문자열과 한글
 
   await title(page);
   expect(await page.evaluate(() => window.__lang)).toBe('kor');
-  await page.click('#btn-language');
+  await page.click('#btn-lang-eng');
   await page.waitForFunction(() => window.__menuReady === true && window.__lang === 'eng', undefined, { timeout: 90_000 });
   expect(await page.evaluate(() => window.__str!('ssd'))).toBe('Short Sword');
   expect(errors).toEqual([]);
@@ -52,6 +58,7 @@ test('언어 단추: 한국어로 바꾸면 원작 한국어 문자열과 한글
 test('클래식 서버: 한국어 표가 없어 언어 단추가 없다', async ({ page }) => {
   await title(page);
   test.skip((await page.evaluate(() => window.__edition)) !== 'classic', '클래식 서버 (D2_EDITION=classic) 에서만');
-  await expect(page.locator('#btn-language')).toHaveCount(0);
+  await expect(page.locator('#btn-lang-kor')).toHaveCount(0);
+  await expect(page.locator('#btn-lang-eng')).toHaveCount(0);
   expect(await page.evaluate(() => window.__lang)).toBe('eng');
 });

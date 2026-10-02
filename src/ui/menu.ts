@@ -24,7 +24,7 @@ import type { Lang } from '../data/lang';
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
 import { HeroStore } from './storage';
-import { drawText } from './text';
+import { drawText, type TextColor } from './text';
 
 export type MenuResult = { kind: 'new'; name: string; cls: ClassName; expansion?: boolean } | { kind: 'load'; name: string; difficulty: Difficulty };
 
@@ -32,8 +32,10 @@ const FE = `${UI}FrontEnd\\`;
 const CS = `${UI}CharSelect\\`;
 const FPS = 25;
 const WIDE = `${FE}WideButtonBlank.dc6`, MED = `${FE}MediumButtonBlank.dc6`;
-/** 타이틀 언어 단추 (Other Multiplayer 와 Exit 사이 빈 자리) */
-const LANG_BTN = { x: 264, y: 450, w: 272, h: 35 } as const;
+/** 타이틀 언어 단추 (Other Multiplayer 와 Exit 사이 빈 자리): 언어마다 Medium 단추 하나, 지금 언어는 눌린 모양·금색 글자 */
+const LANG_Y = 450;
+const LANG_NAME: Record<Lang, string> = { eng: 'ENGLISH', kor: '한국어' };
+const langRect = (i: number): HRect => ({ x: 264 + i * 144, y: LANG_Y, w: 128, h: 35 });
 /** 확장팩 캐릭터 체크 상자 그림 (15×16, 프레임 0 빈 칸 / 1 체크) — d2data FrontEnd */
 const CLICKBOX = `${FE}clickbox.dc6`;
 /** 확장팩 판본 배경 (d2exp): 만들기 화면 · 선택 화면 */
@@ -103,10 +105,10 @@ export class Menu {
    * 클래식 판본은 확장팩 캐릭터를 시작할 수 없다 (원작 클래식 설치와 같다)
    */
   edition: Edition = 'classic';
-  /** 고를 수 있는 표시 언어 (둘 이상이면 타이틀에 언어 단추) · 지금 언어 · 단추를 누르면 (main 이 저장 후 다시 시작) */
+  /** 고를 수 있는 표시 언어 (둘 이상이면 타이틀에 언어 단추) · 지금 언어 · 다른 언어 단추를 누르면 (main 이 저장 후 다시 시작) */
   languages: Lang[] = ['eng'];
   lang: Lang = 'eng';
-  onLanguage: (() => void) | null = null;
+  onLanguage: ((l: Lang) => void) | null = null;
   /** 만들기 화면 체크 상태 */
   private expansionChecked = true;
   /** 선택 화면 알림 (클래식 판본에서 확장팩 캐릭터를 골랐을 때) */
@@ -186,7 +188,10 @@ export class Menu {
       this.btn('bnet', { x: 264, y: 330, w: 272, h: 35 }, () => undefined, 'btn-battlenet', 'Battle.net');
       this.btn('multi', { x: 264, y: 370, w: 272, h: 35 }, () => undefined, 'btn-multiplayer', 'Other Multiplayer');
       // 근사(원작 미확인): 원작은 설치 언어가 고정 — 언어 단추·위치는 이 클론 것
-      if (this.languages.length > 1) this.btn('lang', LANG_BTN, () => this.onLanguage?.(), 'btn-language', 'Language');
+      if (this.languages.length > 1)
+        this.languages.forEach((l, i) => this.btn(`lang:${l}`, langRect(i), () => {
+          if (l !== this.lang) this.onLanguage?.(l);
+        }, `btn-lang-${l}`, LANG_NAME[l]));
       this.btn('exit', { x: 264, y: 500, w: 272, h: 35 }, () => undefined, 'btn-exit-d2', 'Exit Diablo II');
     } else if (screen === 'select') {
       this.confirmDelete = false;
@@ -379,10 +384,10 @@ export class Menu {
 
   // ---------------------------------------------------------------- 그리기
 
-  private button(art: UiArt, path: string, r: HRect, label: string, font: 'fontexocet10' = 'fontexocet10'): void {
-    const pressed = false;
+  /** pressed = 눌린 모양 (원작 단추 그림 다음 프레임: Wide 는 2칸 다음, Medium 은 1) — 고른 언어 표시에 쓴다 */
+  private button(art: UiArt, path: string, r: HRect, label: string, font: 'fontexocet10' = 'fontexocet10', pressed = false, color: TextColor = 'black'): void {
     art.drawTiles(this.ctx, path, path === WIDE ? 2 : 1, r.x, r.y, pressed ? (path === WIDE ? 2 : 1) : 0, path === WIDE ? 2 : 1);
-    drawText(this.ctx, label.toUpperCase(), r.x + r.w / 2, r.y + 10, { font, align: 'center', color: 'black' });
+    drawText(this.ctx, label.toUpperCase(), r.x + r.w / 2, r.y + 10, { font, align: 'center', color });
   }
 
   private draw(now: number): void {
@@ -404,7 +409,24 @@ export class Menu {
       this.button(a, WIDE, { x: 264, y: 290, w: 272, h: 35 }, 'Single Player');
       this.button(a, WIDE, { x: 264, y: 330, w: 272, h: 35 }, 'Battle.net');
       this.button(a, WIDE, { x: 264, y: 370, w: 272, h: 35 }, 'Other Multiplayer');
-      if (this.languages.length > 1) this.button(a, WIDE, LANG_BTN, this.lang === 'kor' ? '한국어' : 'English');
+      if (this.languages.length > 1) {
+        drawText(ctx, 'LANGUAGE / 언어', 400, LANG_Y - 20, { font: 'font16', align: 'center', color: 'gold' });
+        // 고른 언어: 눌린 모양 + 금색 테두리, 다른 언어: 어둡게
+        this.languages.forEach((l, i) => {
+          const r = langRect(i), on = l === this.lang;
+          this.button(a, MED, r, LANG_NAME[l], 'fontexocet10', on);
+          ctx.save();
+          if (on) {
+            ctx.strokeStyle = '#e8c860';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+          } else {
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillRect(r.x, r.y, r.w, r.h);
+          }
+          ctx.restore();
+        });
+      }
       this.button(a, WIDE, { x: 264, y: 500, w: 272, h: 35 }, 'Exit Diablo II');
       drawText(ctx, 'v 1.14d', 20, 575, { font: 'font8', color: 'white' });
     } else if (this.screen === 'select') {

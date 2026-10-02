@@ -1989,6 +1989,41 @@ export class Game {
     return 'usable';
   }
 
+  /** 마지막으로 막기 동작을 시작한 틱 (원작 STAT_LASTBLOCKFRAME) */
+  private lastBlockFrame = Number.NEGATIVE_INFINITY;
+
+  /**
+   * 피격·막기 동작이 지금 플레이어 동작을 끊을 수 있나.
+   * 출처: D2MOO PlrModes.cpp sub_6FC81890 (피격·막기·죽는 중엔 불가, S1 은 아마존·S3 는 드루이드면 불가, 공격·시전·던지기는 가능),
+   *       D2GAME_PLRMODES_First_6FC7F340 (STATE_UNINTERRUPTABLE 불가, 쓰는 스킬에 interrupt 가 없으면 불가,
+   *       Concentration 오라는 skill_concentration % 로 · Concentrate 상태는 항상 안 끊김)
+   * 근사(원작 미확인): 이동이 딸린 동작(Whirlwind·Charge·Leap)은 중간 상태를 버릴 수 없어 끊지 않는다 (Whirlwind·Charge 는 원작도 interrupt 0)
+   */
+  private canInterruptPlayer(): boolean {
+    const p = this.player;
+    if (p.mode === 'DT' || p.mode === 'DD') return false;
+    if ((p.mode === 'GH' || p.mode === 'BL') && this.tickCount < p.modeEnd) return false;
+    if (p.states.has('uninterruptable')) return false;
+    const cast = p.cast;
+    if (!cast) return true;
+    if (cast.whirl || cast.charge || cast.leap) return false;
+    const cls = this.character?.cls;
+    if ((p.mode === 'S1' && cls === 'Amazon') || (p.mode === 'S3' && cls === 'Druid')) return false;
+    if (!cast.skill.interrupt) return false;
+    if (p.states.has('concentrate')) return false;
+    const conc = p.states.get('concentration')?.stats.skill_concentration ?? 0;
+    if (conc > 0 && this.rng.pick(100) < conc) return false;
+    return true;
+  }
+
+  /** 진행 중인 스킬 동작을 끊는다 (피격·막기). 마나는 이미 썼고 아직 안 나간 효과는 나가지 않는다 */
+  private abortCast(): void {
+    const p = this.player, cast = p.cast;
+    if (!cast) return;
+    p.cast = null;
+    if (cast.skill.auraState && (cast.skill.srvDoFunc === 2 || cast.skill.srvStFunc === 32)) p.states.remove(cast.skill.auraState);
+  }
+
   /** 플레이어가 아무 행동도 하지 않는 중 (입력: 버튼을 누른 채 대상이 죽으면 커서 아래를 다시 본다) */
   get playerIdle(): boolean {
     const p = this.player;
@@ -8955,13 +8990,15 @@ export class Game {
     }
     // 피격 사건 (damagedinmelee / damagedbymissile, GETHIT 결과): 공격자에게 (출처: SKILLITEM_EventFunc21)
     if (total > 0) this.procItemSkills('item_skillongethit', attacker, attacker ?? p);
-    // 출처: Maxroll — Breakpoints & Animations: 최대 생명의 1/12 이상 피해 시 피격 경직 (공격·시전 중에는 무시)
+    // 피격 경직: 기절 상태이거나 원본 규칙(히트클래스별 제수 8/16/32/64, 그 아래 구간은 50%·25% 로 건너뜀)에 걸리면,
+    // 그리고 지금 동작을 끊을 수 있을 때만. 출처: D2MOO SUnitDmg.cpp:2029 (STATE_STUNNED || !sub_6FCC1870) → sub_6FC817D0(GETHIT)
+    // 근사(원작 미확인): D2MOO 는 1.10 기준 — 1.14d 에서 수치가 바뀌었는지는 확인하지 못함 (이전 구현은 웹 자료의 1/12 규칙)
     // 피격 애니 속도 50 + EFHR %. 출처: D2MOO Units.cpp:1540 (item_fastergethitrate)
-    if (total * 12 >= this.maxLife() && !p.cast) {
+    if ((p.states.has('stunned') || rollGetHit(total, this.maxLife(), hitClass, this.rng)) && this.canInterruptPlayer()) {
+      this.abortCast();
       p.path = [];
       this.setPlayerMode('GH', 50 + effectiveRate(dv?.stat('item_fastergethitrate') ?? 0));
     }
-    void hitClass;
   }
 
   /**
@@ -8980,7 +9017,13 @@ export class Game {
   /** 막기 애니: 속도 50 (Holy Shield 100) + EFBR %. 출처: D2MOO Units.cpp 막기 애니 속도 (item_fasterblockrate) */
   private playerBlockAnim(): void {
     const p = this.player;
-    if (p.cast) return;
+    // 막기 동작은 마지막 막기 동작에서 15 + FBR/8 프레임이 지나야 다시 한다 (막는 판정은 그대로 — 맞을 때마다 동작에 갇히지 않게).
+    // 출처: D2MOO SUnitDmg.cpp:2005 — dwGameFrame − STAT_LASTBLOCKFRAME > STAT_ITEM_FASTERBLOCKRATE / 8 + 15 (성공 여부와 상관없이 프레임 기록)
+    const fbr = this.derived()?.stat('item_fasterblockrate') ?? 0;
+    if (this.tickCount - this.lastBlockFrame <= 15 + Math.trunc(fbr / 8)) return;
+    this.lastBlockFrame = this.tickCount;
+    if (!this.canInterruptPlayer()) return;
+    this.abortCast();
     p.path = [];
     this.setPlayerMode('BL', (p.states.has('holyshield') ? 100 : 50) + effectiveRate(this.derived()?.stat('item_fasterblockrate') ?? 0));
   }

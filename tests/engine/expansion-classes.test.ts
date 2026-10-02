@@ -143,7 +143,8 @@ describe.skipIf(!hasLod)('3단계 — 손톱·직업 전용 장착·무기 막�
           blocked++;
           expect(inner.player.mode).toBe('BL');
         }
-        for (let k = 0; k < 15; k++) g.tick();
+        // 막기 동작은 15 프레임 간격이 지나야 다시 한다 (원작 STAT_LASTBLOCKFRAME) — 16 프레임 뒤에 다시 맞는다
+        for (let k = 0; k < 16; k++) g.tick();
       }
       return blocked;
     };

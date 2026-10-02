@@ -39,6 +39,8 @@ export interface SkillRecord {
   /** 아이템 효과 (skills.txt ItemEffect · ItemTarget 1 자신 / 2 무작위 지점 / 3 시체 / 4 마지막 공격자 · ItemTgtDo · ItemCheckStart) */
   itemEffect: number; itemTarget: number; itemTgtDo: boolean; itemCheckStart: boolean;
   targetableOnly: boolean; searchEnemyXY: boolean; searchEnemyNear: boolean; targetCorpse: boolean;
+  /** 맞으면(피격·막기 동작) 끊기는 스킬 (skills.txt interrupt) */
+  interrupt: boolean;
   attackNoMana: boolean; useAttackRate: boolean; durability: boolean; decQuant: boolean; lob: boolean;
   delay: CalcNode | null;
   /** 소환: monstats Id, pettype, petmax 공식, 소환수 스킬 레벨 공식 (sumsk1calc) */
@@ -99,7 +101,7 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     leftSkill: flag(r.leftskill), inTown: flag(r.InTown), passive: flag(r.passive), aura: flag(r.aura),
     itemEffect: n(r.ItemEffect), itemTarget: n(r.ItemTarget), itemTgtDo: flag(r.ItemTgtDo), itemCheckStart: flag(r.ItemCheckStart),
     targetableOnly: flag(r.TargetableOnly), searchEnemyXY: flag(r.SearchEnemyXY), searchEnemyNear: flag(r.SearchEnemyNear), targetCorpse: flag(r.TargetCorpse),
-    attackNoMana: flag(r.AttackNoMana), useAttackRate: flag(r.UseAttackRate), durability: flag(r.durability), decQuant: flag(r.decquant), lob: flag(r.lob),
+    interrupt: flag(r.interrupt), attackNoMana: flag(r.AttackNoMana), useAttackRate: flag(r.UseAttackRate), durability: flag(r.durability), decQuant: flag(r.decquant), lob: flag(r.lob),
     delay: calc(r.delay), perDelay: calc(r.perdelay), immediate: flag(r.immediate),
     summon: r.summon ?? '', petType: r.pettype ?? '', petMax: calc(r.petmax), sumSkill1: r.sumskill1 ?? '', sumSk1Calc: calc(r.sumsk1calc),
     minMana: n(r.minmana), manaShift: n(r.manashift), mana: n(r.mana), lvlMana: n(r.lvlmana), startMana: n(r.startmana), repeat: flag(r.repeat),

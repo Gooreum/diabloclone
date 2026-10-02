@@ -239,3 +239,74 @@ describe.skipIf(!hasGameData)('마을 NPC 가 계속 앞을 막아도 결국 지
     expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 20.5)).toBeLessThan(1.5);
   });
 });
+
+interface HitInner extends Inner {
+  hitPlayer(atk: { min: number; max: number; toHit: number }, lvl: number, hitClass: number, missile: boolean, attacker?: unknown, elem?: unknown, alwaysHit?: boolean): void;
+  playerBlockAnim(): void;
+  maxLife(): number;
+}
+
+describe.skipIf(!hasGameData)('맞을 때 반응: 막기 쿨타임 · 원본 피격 규칙 · 끊기 (D2MOO SUnitDmg.cpp / PlrModes.cpp)', () => {
+  const hit = (inner: HitInner, dmg: number) => inner.hitPlayer({ min: dmg, max: dmg, toHit: 0 }, 1, 0, false, undefined, undefined, true);
+  it('막기 동작은 마지막 막기 동작에서 15 프레임이 지나야 다시 한다 (FBR 0)', () => {
+    const { game, inner } = setup('Paladin', { rarm: item('ssd'), larm: item('buc') });
+    const h = inner as HitInner;
+    h.playerBlockAnim();
+    expect(inner.player.mode).toBe('BL');
+    const t0 = inner.tickCount;
+    // 막기 동작이 끝난 직후(15 프레임 안)에 또 막아도 동작은 안 한다
+    while (inner.player.mode === 'BL') run(game, 1);
+    expect(inner.tickCount - t0).toBeLessThanOrEqual(15);
+    h.playerBlockAnim();
+    expect(inner.player.mode).not.toBe('BL');
+    // 16 프레임째부터는 다시
+    while (inner.tickCount - t0 <= 15) run(game, 1);
+    h.playerBlockAnim();
+    expect(inner.player.mode).toBe('BL');
+  });
+  it('피격 경직: 최대 생명의 1/16 미만 피해는 없고, 1/4 이상은 항상 (hitClass 기본 제수 16)', () => {
+    const { ch, inner } = setup('Barbarian');
+    const h = inner as HitInner;
+    ch.life = ch.maxLife = 1600;
+    const max = h.maxLife();
+    hit(h, Math.floor(max / 16) - 2);
+    expect(inner.player.mode).not.toBe('GH');
+    hit(h, Math.ceil(max / 4) + 1);
+    expect(inner.player.mode).toBe('GH');
+  });
+  it('interrupt 1 스킬(Fire Ball) 시전 중 큰 피해: 시전이 끊기고 미사일이 안 나간다', () => {
+    const { game, ch, inner } = setup('Sorceress');
+    const h = inner as HitInner;
+    expect(S('Fire Ball').interrupt).toBe(true);
+    game.enqueue({ type: 'useSkill', skill: S('Fire Ball').id, hand: 'right', x: 30.5, y: 20.5 });
+    run(game, 2);
+    expect(inner.player.cast).not.toBeNull();
+    hit(h, ch.maxLife / 2);
+    expect(inner.player.cast).toBeNull();
+    expect(inner.player.mode).toBe('GH');
+    run(game, 30);
+    expect(inner.missiles.some((m) => m.def.name === 'fireball')).toBe(false);
+  });
+  it('interrupt 없는 스킬(Zeal) 중에는 맞아도 안 끊긴다', () => {
+    const { game, ch, inner } = setup('Paladin', { rarm: item('ssd') });
+    const h = inner as HitInner;
+    expect(S('Zeal').interrupt).toBe(false);
+    const m = dummy(game);
+    game.enqueue({ type: 'useSkill', skill: S('Zeal').id, hand: 'right', x: m.x, y: m.y, targetId: m.id });
+    run(game, 2);
+    expect(inner.player.cast).not.toBeNull();
+    hit(h, ch.maxLife / 2);
+    expect(inner.player.cast).not.toBeNull();
+    expect(inner.player.mode).not.toBe('GH');
+  });
+  it('피격·막기 동작 중에는 다시 걸리지 않는다', () => {
+    const { ch, inner } = setup('Barbarian');
+    const h = inner as HitInner;
+    ch.life = ch.maxLife = 1e6;
+    hit(h, 5e5);
+    expect(inner.player.mode).toBe('GH');
+    const end = (inner.player as unknown as { modeEnd: number }).modeEnd;
+    hit(h, 3e5);
+    expect((inner.player as unknown as { modeEnd: number }).modeEnd).toBe(end);
+  });
+});

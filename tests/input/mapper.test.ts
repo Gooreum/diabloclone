@@ -30,6 +30,10 @@ describe('우클릭·Shift 좌클릭 → 스킬', () => {
     expect(mapRightClick({ worldX: 0, worldY: 0, shift: false, hover: { kind: 'item', id: 5 }, run: false, rightSkill: 43 })).not.toHaveProperty('targetId');
   });
   it('Shift + 바닥 좌클릭: 왼쪽 스킬이 Attack 이 아니면 그 지점에 사용', () => {
-    expect(mapLeftClick({ worldX: 1, worldY: 2, shift: true, hover: null, run: false, leftSkill: 132 })).toEqual({ type: 'useSkill', skill: 132, hand: 'left', x: 1, y: 2 });
+    expect(mapLeftClick({ worldX: 1, worldY: 2, shift: true, hover: null, run: false, leftSkill: 132 })).toEqual({ type: 'useSkill', skill: 132, hand: 'left', x: 1, y: 2, standStill: true });
+  });
+  it('오른쪽 클릭: Shift 없으면 근접 스킬이 대상에게 걸어가고(standStill 없음), Shift 면 제자리', () => {
+    expect(mapRightClick({ worldX: 1, worldY: 2, shift: false, hover: { kind: 'monster', id: 7 }, run: false, rightSkill: 126 })).toEqual({ type: 'useSkill', skill: 126, hand: 'right', x: 1, y: 2, targetId: 7 });
+    expect(mapRightClick({ worldX: 1, worldY: 2, shift: true, hover: { kind: 'monster', id: 7 }, run: false, rightSkill: 126 })).toEqual({ type: 'useSkill', skill: 126, hand: 'right', x: 1, y: 2, standStill: true, targetId: 7 });
   });
 });

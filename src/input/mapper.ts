@@ -24,13 +24,14 @@ export function mapLeftClick(p: PointerInput): Command | null {
   // 원작: NPC 를 클릭하면 걸어가서 말을 건다 (메뉴)
   if (p.hover?.kind === 'npc') return { type: 'interact', unitId: p.hover.id };
   // Shift + 바닥: 왼쪽 스킬을 그 지점에 (Attack 이면 아무 일 없음)
-  if (p.shift) return p.leftSkill ? { type: 'useSkill', skill: p.leftSkill, hand: 'left', x: p.worldX, y: p.worldY } : null;
+  if (p.shift) return p.leftSkill ? { type: 'useSkill', skill: p.leftSkill, hand: 'left', x: p.worldX, y: p.worldY, standStill: true } : null;
   return { type: 'move', x: p.worldX, y: p.worldY, run: p.run };
 }
 
 /** 우클릭 = 오른쪽 스킬을 커서 위치(몬스터·시체 위면 그 대상, 바닥 아이템 위면 아이템 — Telekinesis)에 */
 export function mapRightClick(p: PointerInput & { rightSkill: number }): Command {
-  const base = { type: 'useSkill' as const, skill: p.rightSkill, hand: 'right' as const, x: p.worldX, y: p.worldY };
+  // Shift + 오른쪽 클릭 = 제자리에서 (근접 스킬이 대상에게 걸어가지 않는다)
+  const base = { type: 'useSkill' as const, skill: p.rightSkill, hand: 'right' as const, x: p.worldX, y: p.worldY, ...(p.shift ? { standStill: true } : {}) };
   if (p.hover?.kind === 'item') return { ...base, targetItem: p.hover.id };
   return p.hover ? { ...base, targetId: p.hover.id } : base;
 }

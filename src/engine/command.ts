@@ -18,7 +18,8 @@ export type Command =
   /** 마우스 버튼을 뗌: 왼쪽이면 반복 공격을 지금 동작까지만 (원작: 누르고 있는 동안만 클라이언트가 공격을 다시 보낸다) */
   | { type: 'release'; button: 'left' | 'right' }
   | { type: 'attack'; targetId: number; standStill: boolean }
-  | { type: 'useSkill'; skill: number; hand: 'left' | 'right'; x: number; y: number; targetId?: number; targetItem?: number }
+  /** standStill: Shift 를 누른 채 (근접 스킬도 다가가지 않고 제자리에서) — 없으면 근접 스킬은 대상에게 걸어가서 쓴다 */
+  | { type: 'useSkill'; skill: number; hand: 'left' | 'right'; x: number; y: number; targetId?: number; targetItem?: number; standStill?: boolean }
   | { type: 'pickup'; itemId: number }
   /** 오브젝트 조작 (걸어가서 연다: 상자·문·신전·우물·웨이포인트·포털) */
   | { type: 'interact'; unitId: number }

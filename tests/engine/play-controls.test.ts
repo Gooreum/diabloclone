@@ -414,3 +414,25 @@ describe.skipIf(!hasGameData)('공격·시전 속도: 원본 공식 (Units.cpp) 
     expect(castTicks(game, inner, 0, m)).toBeGreaterThan(normal);
   });
 });
+
+describe.skipIf(!hasGameData)('오른쪽 클릭 근접 스킬: 대상이 멀면 걸어가서 친다 (Shift 면 제자리)', () => {
+  const playerHits = (ev: GameEvent[]) => ev.filter((e) => (e.type === 'monsterHit' && e.source === 'player') || e.type === 'miss').length;
+  for (const [cls, skill, gear] of [['Barbarian', 'Bash', { rarm: 'axe' }], ['Paladin', 'Zeal', { rarm: 'ssd' }], ['Amazon', 'Jab', { rarm: 'jav' }]] as const) {
+    it(`${cls} ${skill}: 6칸 떨어진 몬스터를 누르면 다가가서 맞히거나 빗맞힌다`, () => {
+      const { game, inner } = setup(cls, { rarm: item(gear.rarm, 50) });
+      const m = dummy(game, 'zombie1', 26.5, 20.5);
+      game.enqueue({ type: 'useSkill', skill: S(skill).id, hand: 'right', x: m.x, y: m.y, targetId: m.id });
+      const ev = run(game, 120);
+      expect(Math.hypot(inner.player.x - m.x, inner.player.y - m.y), '다가갔다').toBeLessThan(4);
+      expect(playerHits(ev), '타격 판정').toBeGreaterThan(0);
+    });
+  }
+  it('Shift(standStill): 다가가지 않고 제자리에서 휘두른다', () => {
+    const { game, inner } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game, 'zombie1', 26.5, 20.5);
+    game.enqueue({ type: 'useSkill', skill: S('Bash').id, hand: 'right', x: m.x, y: m.y, targetId: m.id, standStill: true });
+    const ev = run(game, 60);
+    expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 20.5)).toBeLessThan(0.1);
+    expect(ev.some((e) => e.type === 'skillStart')).toBe(true);
+  });
+});

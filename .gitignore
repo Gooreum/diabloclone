@@ -7,3 +7,4 @@ game-data/
 *.mpq
 *.MPQ
 .ai-bouncer-tasks/
+e2e-reports/

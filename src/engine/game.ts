@@ -1723,7 +1723,8 @@ export class Game {
         p.holdUntil = this.tickCount + 8;
         p.pending = null;
         p.moveGoal = null;
-        p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, targetItem: cmd.targetItem, x: cmd.x, y: cmd.y, standStill: true, repeat: false };
+        // 원작: 오른쪽 클릭 근접 스킬도 대상이 멀면 걸어가서 쓴다 (Shift 를 누르면 제자리)
+        p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, targetItem: cmd.targetItem, x: cmd.x, y: cmd.y, standStill: cmd.standStill === true, repeat: false };
         return;
       }
       case 'pickup': {
@@ -2131,7 +2132,7 @@ export class Game {
   /**
    * 애니메이션 토큰·모드·무기 클래스: 변신 중이면 몬스터 COF (모드는 원작 표로 바꾸고 없으면 대체, 무기 클래스 = monstats2 BaseW).
    * 출처: D2COMMON_11013_ConvertMode / D2Common_11014_ConvertShapeShiftedMode
-   * 근사(원작 미확인): 변신 공격 속도는 원작 wereform 공식 대신 몬스터 AnimData 속도 × 공격 속도 %
+   * 변신 중 동작 속도는 skillAnimSpeed (원작 변신 공식 — animspeed.ts wereformBaseSpeed)
    */
   private animLook(mode: string, wclass: string = this.weaponWclass()): { token: string; mode: string; wclass: string } {
     const t = this.shapeType();

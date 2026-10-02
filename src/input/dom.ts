@@ -3,8 +3,9 @@ import type { Command } from '../engine/command';
 import { fromCanvas, type Camera } from '../render/iso';
 import { mapLeftClick, mapRightClick, type Hover } from './mapper';
 import { keyBindings } from '../ui/keys';
+import { pickAt, type PickBox } from './pick';
 
-export interface PickBox { kind: 'monster' | 'item' | 'corpse' | 'body' | 'object' | 'npc'; id: number; x: number; y: number; w: number; h: number }
+export type { PickBox } from './pick';
 
 /** 현재 버튼 스킬 (Game 캐릭터에서 읽음) */
 export interface SkillButtons { left: number; right: number }
@@ -59,12 +60,9 @@ export class InputController {
     return { x: ((e.clientX - r.left) * this.canvas.width) / r.width, y: ((e.clientY - r.top) * this.canvas.height) / r.height };
   }
 
+  /** 가리킨 유닛 (정확히 가리킨 상자, 없으면 가까운 몬스터 — 조준 보조) */
   hoverAt(x: number, y: number): Hover {
-    for (let i = this.pickBoxes.length - 1; i >= 0; i--) {
-      const b = this.pickBoxes[i] as PickBox;
-      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return { kind: b.kind, id: b.id };
-    }
-    return null;
+    return pickAt(this.pickBoxes, x, y);
   }
 
   private onDown(e: MouseEvent): void {

@@ -268,7 +268,8 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - [x] 확장팩(Lord of Destruction): Act 5, 드루이드·어쌔신, 룬워드·주얼·참·제작, 용병 장비
 - [x] 한국어 표시 (원작 한국어 문자열 표)
 - [x] 타격감: 맞는 소리(HitClass), 피 튀김, 미사일 폭발 그림, 냉기·독 색, 시전 섬광, 얼어 죽으면 부서짐
-- [ ] 원작 대비 남은 것: [docs/fidelity-audit.md](docs/fidelity-audit.md) (비밀 소 레벨, `/players`, 하드코어 등)
+- [x] 조작·전투 반응을 원본 코드(D2MOO) 기준으로: 클릭 대상 규칙, 공격 중 이동, 유닛 충돌·NPC 회피, 막기·피격 규칙, 공격·시전 속도, 투창 자동 장착 — 7직업 184개 스킬 실제 클릭 검사
+- [ ] 원작 대비 남은 것: [docs/fidelity-audit.md](docs/fidelity-audit.md) (짐작으로 맞춘 곳 목록, 비밀 소 레벨, `/players`, 하드코어 등)
 - [ ] 오픈소스 공개 정리 (라이선스·출처 표기)
 
 ---

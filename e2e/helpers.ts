@@ -1,13 +1,15 @@
 import { expect, type Page } from '@playwright/test';
 
 /** 메인메뉴 → Single Player → Create New Character → 클래스 고르기 → 이름 → OK → 게임 시작 (원작 프런트엔드 순서) */
-export async function newHero(page: Page, name: string, cls = 'barbarian'): Promise<void> {
+/** classic: 확장팩 서버에서도 클래식 캐릭터로 (만들기 화면의 Expansion Character 체크를 끈다 — 기본은 켜짐) */
+export async function newHero(page: Page, name: string, cls = 'barbarian', opts: { classic?: boolean } = {}): Promise<void> {
   await page.goto('/');
   await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
   await page.click('#btn-single');
   await page.click('#btn-create');
   await page.click(`#btn-${cls}`);
   await page.fill('#hero-name', name);
+  if (opts.classic && (await page.locator('#chk-expansion').isVisible())) await page.click('#chk-expansion');
   await page.click('#btn-ok');
   await chooseDifficulty(page);
   await page.waitForFunction(() => window.__game?.ready === true, undefined, { timeout: 150_000 });

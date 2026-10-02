@@ -108,7 +108,8 @@ test('전체 흐름: Andariel → Warriv → Duriel → Jerhyn·Meshif → Mephi
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const name = uniqueName('Full');
-  await newHero(page, name, 'barbarian');
+  // 클래식 캐릭터: 디아블로를 잡으면 다음 난이도가 열린다 (확장팩 캐릭터는 바알까지 — e2e/act5.spec.ts)
+  await newHero(page, name, 'barbarian', { classic: true });
   await page.evaluate(() => {
     const c = window.__game!.game.character!;
     c.maxLife = c.life = 100000;

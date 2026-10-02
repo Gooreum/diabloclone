@@ -1,6 +1,6 @@
-# 개발용 프리셋 캐릭터 (99레벨, 클래식)
+# 개발용 프리셋 캐릭터 (99레벨, 클래식 5 + 확장팩 2)
 
-`npx tsx scripts/gen-presets.ts` 가 원작 표에서 만든다. 개발 서버에서 `?preset=<직업>` 으로 Hell Act 1 마을에서 바로 시작, `?preset=all` 은 캐릭터 목록에 5개를 넣는다.
+`npx tsx scripts/gen-presets.ts` 가 원작 표에서 만든다. 개발 서버에서 `?preset=<직업>` 으로 Hell Act 1 마을에서 바로 시작, `?preset=all` 은 캐릭터 목록에 7개를 넣는다. 어쌔신·드루이드는 확장팩 캐릭터라 확장팩 MPQ 를 넣었을 때만 보인다.
 
 ## Amazon — Lightning Javazon (`?preset=amazon`, Preset-Amazon)
 
@@ -95,3 +95,42 @@
   - neck: **Angelic Wings** (Set amulet) — item_lightradius 3, item_damagetomana 20
 - 사양과 다른 점:
   - Bonesnap → Steeldriver: Bonesnap 은 확장팩 전용(클래식 uniqueitems 에 없음). 사용자: 레어보다 좋은 유니크로 (공속 40·대미지 +250%·요구치 −50%)
+
+## Assassin — Lightning Trapsin (`?preset=assassin`, Preset-Assa)
+
+- 스탯: 힘 1000 · 민첩 1000 · 활력 1000 · 에너지 1000 (투자: 힘 +980, 민첩 +980, 활력 +980)
+- 장비 포함: 생명 3477 · 마나 3506 · 저항 불/냉/번/독 70/70/70/75 (Normal 기준) · 막기 75%
+- 스킬: Fire Trauma 20, Claw Mastery 20, Psychic Hammer 20, Tiger Strike 20, Dragon Talon 20, Shock Field 20, Blade Sentinel 20, Quickness 20, Fists of Fire 20, Dragon Claw 20, Charged Bolt Sentry 20, Wake of Fire Sentry 20, Weapon Block 20, Cloak of Shadows 20, Cobra Strike 20, Blade Fury 20, Fade 20, Shadow Warrior 20, Claws of Thunder 20, Dragon Tail 20, Lightning Sentry 20, Inferno Sentry 20, Mind Blast 20, Blades of Ice 20, Dragon Flight 20, Death Sentry 20, Blade Shield 20, Venom 20, Shadow Master 20, Royal Strike 20; 나머지 1씩: 
+- 장비:
+  - rarm: **Heart of the Oak** (Runeword Flail) — item_fastercastrate 40, item_charged_skill(14468) 6425, item_maxmana_percent 15, item_allskills 3, hpregen 20, fireresist 40, lightresist 40, coldresist 40, poisonresist 40, item_charged_skill(14158) 15420
+  - larm: **Lidless Wall** (Unique Grim Shield) — item_lightradius 1, item_allskills 1, item_fastercastrate 20, item_manaafterkill 5, item_armor_percent 130, energy 10, item_maxmana_percent 10
+  - head: **Harlequin Crest** (Unique Shako) — item_allskills 2, item_hp_perlevel(12) 12, item_mana_perlevel(12) 12, item_magicbonus 50, damageresist 10, strength 2, dexterity 2, vitality 2, energy 2
+  - tors: **Enigma** (Runeword Mage Plate) — armorclass 775, item_healafterkill 14, item_fastermovevelocity 45, item_strength_perlevel(6) 6, item_allskills 2, item_find_magic_perlevel(8) 8, item_nonclassskill(54) 1
+  - glov: **Magefist** (Unique Light Gauntlets) — item_fastercastrate 20, manarecoverybonus 25, item_elemskill(1) 1, firemindam 1, firemaxdam 6, armorclass 10, item_armor_percent 30
+  - belt: **Arachnid Mesh** (Unique Spiderweb Sash) — item_armor_percent 120, item_fastercastrate 20, item_charged_skill(17795) 2827, item_allskills 1, item_slow 10, item_maxmana_percent 5
+  - feet: **Sandstorm Trek** (Unique Scarabshell Boots) — item_armor_percent 170, item_fastermovevelocity 20, item_fastergethitrate 20, item_stamina_perlevel(8) 8, item_staminadrainpct 50, poisonresist 70, item_replenish_durability(5) 5, strength 15, vitality 15
+  - rrin: **The Stone of Jordan** (Unique ring) — maxmana 20, item_maxmana_percent 25, lightmindam 1, item_allskills 1, lightmaxdam 12
+  - lrin: **The Stone of Jordan** (Unique ring) — maxmana 20, item_maxmana_percent 25, lightmindam 1, item_allskills 1, lightmaxdam 12
+  - neck: **Mara's Kaleidoscope** (Unique amulet) — item_allskills 2, fireresist 30, lightresist 30, coldresist 30, poisonresist 30, strength 5, dexterity 5, vitality 5, energy 5
+- 사양과 다른 점:
+  - 래더 전용 룬워드(Spirit·Infinity 등, runes.txt server=1)는 싱글에서 나오지 않아 Heart of the Oak·Enigma 로
+  - Enigma 는 소켓 3 이 최대인 Mage Plate (힘 요구치가 가장 낮다)
+
+## Druid — Wind (Tornado/Hurricane) (`?preset=druid`, Preset-Druid)
+
+- 스탯: 힘 1000 · 민첩 1000 · 활력 1000 · 에너지 1000 (투자: 힘 +985, 민첩 +980, 활력 +975)
+- 장비 포함: 생명 2364 · 마나 4114 · 저항 불/냉/번/독 75/75/75/75 (Normal 기준) · 막기 75%
+- 스킬: Raven 20, Plague Poppy 20, Wearwolf 20, Shape Shifting 20, Firestorm 20, Oak Sage 20, Summon Spirit Wolf 20, Wearbear 20, Molten Boulder 20, Arctic Blast 20, Cycle of Life 20, Feral Rage 20, Maul 20, Eruption 20, Cyclone Armor 20, Heart of Wolverine 20, Summon Fenris 20, Rabies 20, Fire Claws 20, Twister 20, Vines 20, Hunger 20, Shock Wave 20, Volcano 20, Tornado 20, Spirit of Barbs 20, Summon Grizzly 20, Fury 20, Armageddon 20, Hurricane 20; 나머지 1씩: 
+- 장비:
+  - rarm: **Heart of the Oak** (Runeword Flail) — item_fastercastrate 40, item_charged_skill(14468) 6425, item_maxmana_percent 15, item_allskills 3, hpregen 20, fireresist 40, lightresist 40, coldresist 40, poisonresist 40, item_charged_skill(14158) 15420
+  - larm: **Lidless Wall** (Unique Grim Shield) — item_lightradius 1, item_allskills 1, item_fastercastrate 20, item_manaafterkill 5, item_armor_percent 130, energy 10, item_maxmana_percent 10
+  - head: **Jalal's Mane** (Unique Totemic Mask) — item_addclassskills(5) 2, item_addskill_tab(16) 2, item_armor_percent 200, item_fastergethitrate 30, item_tohit_percent 20, strength 20, energy 20, item_manaafterkill 5, fireresist 30, lightresist 30, coldresist 30, poisonresist 30
+  - tors: **Enigma** (Runeword Mage Plate) — armorclass 775, item_healafterkill 14, item_fastermovevelocity 45, item_strength_perlevel(6) 6, item_allskills 2, item_find_magic_perlevel(8) 8, item_nonclassskill(54) 1
+  - glov: **Magefist** (Unique Light Gauntlets) — item_fastercastrate 20, manarecoverybonus 25, item_elemskill(1) 1, firemindam 1, firemaxdam 6, armorclass 10, item_armor_percent 30
+  - belt: **Arachnid Mesh** (Unique Spiderweb Sash) — item_armor_percent 120, item_fastercastrate 20, item_charged_skill(17795) 2827, item_allskills 1, item_slow 10, item_maxmana_percent 5
+  - feet: **Sandstorm Trek** (Unique Scarabshell Boots) — item_armor_percent 170, item_fastermovevelocity 20, item_fastergethitrate 20, item_stamina_perlevel(8) 8, item_staminadrainpct 50, poisonresist 70, item_replenish_durability(5) 5, strength 15, vitality 15
+  - rrin: **The Stone of Jordan** (Unique ring) — maxmana 20, item_maxmana_percent 25, lightmindam 1, item_allskills 1, lightmaxdam 12
+  - lrin: **The Stone of Jordan** (Unique ring) — maxmana 20, item_maxmana_percent 25, lightmindam 1, item_allskills 1, lightmaxdam 12
+  - neck: **Mara's Kaleidoscope** (Unique amulet) — item_allskills 2, fireresist 30, lightresist 30, coldresist 30, poisonresist 30, strength 5, dexterity 5, vitality 5, energy 5
+- 사양과 다른 점:
+  - 래더 전용 룬워드(Spirit·Infinity 등, runes.txt server=1)는 싱글에서 나오지 않아 Heart of the Oak·Enigma 로

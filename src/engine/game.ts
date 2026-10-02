@@ -113,6 +113,8 @@ export interface GameData {
   stateOverlays?: Map<string, StateOverlayDef[]>;
   /** states.txt colorpri/colorshift (상태 색 — 냉기 파랑, 독 초록) */
   stateColors?: Map<string, StateColor>;
+  /** states.txt shatter (이 상태로 죽으면 부서져 시체 없음 — freeze) */
+  stateShatter?: Set<string>;
   /** states.txt group (같은 group 상태는 서로 지운다 — Fade·Burst of Speed, 아머 3종) */
   stateGroups?: Map<string, number>;
   /** states.txt 주기 함수·변신 정보 */
@@ -1043,7 +1045,7 @@ export class Game {
         leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
       // Phase 5: 굴 속·물속에 가만히 있는 몬스터 (hidden + NU) 는 그리지 않는다
-      monsters: [...this.monsters.filter((m) => !(m.hidden && m.mode === 'NU')), ...this.pets, ...this.level.npcs].map((m) => {
+      monsters: [...this.monsters.filter((m) => !(m.hidden && m.mode === 'NU') && !m.shattered), ...this.pets, ...this.level.npcs].map((m) => {
         const anim = this.monsterSeqAnim(m);
         const ut = this.uniqueTrans(m);
         return {
@@ -4865,8 +4867,10 @@ export class Game {
    * 근사(원작 미확인): 클라이언트 처리(pCltHitFunc)의 위치 흩뿌림·방향은 반영하지 않고 부딪힌 자리에 그대로
    */
   private clientExplode(ms: Missile): void {
-    for (const name of [ms.def.explosionMissile, ...(ms.def.cltHitSub ?? [])]) {
-      const def = name ? this.data?.missiles.get(name) : undefined;
+    const server = new Set([ms.def.name, ...(ms.def.hitSubs ?? [])]);
+    for (const name of new Set([ms.def.explosionMissile, ...(ms.def.cltHitSub ?? [])])) {
+      // 서버 미사일과 같은 이름(자기 자신 · HitSubMissile)이면 이미 그려진다
+      const def = name && !server.has(name) ? this.data?.missiles.get(name) : undefined;
       if (def) this.spawnVisual(name, ms.x, ms.y, { life: Math.max(1, def.range || def.animLen) });
     }
   }
@@ -5196,11 +5200,17 @@ export class Game {
     this.player.y = cast.leap.ty;
   }
 
-  /** 밀쳐내기: 착지 지점 반대 방향으로 밀고 경직. 근사(원작 미확인): 거리 2 서브타일 */
-  private knockBack(m: MonsterUnit): void {
-    const p = this.player;
-    const d = Math.hypot(m.x - p.x, m.y - p.y) || 1;
-    const nx = m.x + ((m.x - p.x) / d) * 2, ny = m.y + ((m.y - p.y) / d) * 2;
+  /** 때린 유닛 자리 (용병·소환수·몬스터, 모르면 플레이어) */
+  private attackerPos(id: number | undefined): Pt {
+    if (id === undefined) return this.player;
+    return this.pets.find((u) => u.id === id) ?? this.monsters.find((u) => u.id === id) ?? this.player;
+  }
+
+  /** 밀쳐내기: 때린 쪽 반대 방향으로 밀고 경직. 근사(원작 미확인): 거리 2 서브타일 */
+  private knockBack(m: MonsterUnit, from: Pt = this.player): void {
+    // 때린 쪽(플레이어·용병·소환수, 굴러온 바위는 굴러온 방향)의 반대로 민다
+    const d = Math.hypot(m.x - from.x, m.y - from.y) || 1;
+    const nx = m.x + ((m.x - from.x) / d) * 2, ny = m.y + ((m.y - from.y) / d) * 2;
     if (this.map.walkable(Math.floor(nx), Math.floor(ny))) {
       m.x = nx;
       m.y = ny;
@@ -5420,12 +5430,12 @@ export class Game {
     const stunned = m.states.has('stunned') || m.states.has('freeze');
     // 밀쳐내기 (결과 플래그 8): 경직 판정 대신 밀려난다 (출처: SUnitDmg.cpp:2070 — KNOCKBACK 모드가 없으면 GETHIT)
     if (knock && !stunned) {
-      this.knockBack(m);
+      this.knockBack(m, this.attackerPos(attackerId));
       return;
     }
     if (!stunned && m.type.modes.has('GH') && rollGetHit(total / 256, m.stats.maxHp, d.hitClass, m.rng)) {
       // Phase 5: Sand Leaper 는 경직되면 밀려난다 (출처: MonsterMode.cpp sub_6FC62DF0 — GETHIT 이고 빙결이 아니면 결과 플래그 8 = 밀쳐내기)
-      if (m.type.baseId === 'sandleaper1' && source !== 'other') this.knockBack(m);
+      if (m.type.baseId === 'sandleaper1' && source !== 'other') this.knockBack(m, this.attackerPos(attackerId));
       else this.startMonsterMode(m, 'GH');
     }
   }
@@ -5603,6 +5613,9 @@ export class Game {
     m.path = [];
     // 출처: SkillDruid.cpp sub_6FD01B00 — 임신 상태가 풀릴 때 죽어 있으면 Pain Worm (skills.txt Impregnate summon) 이 나온다
     const brood = m.states.has('pregnant') ? m.pregnantWith : undefined;
+    // 얼어 있으면(states.txt shatter 1 — freeze) 부서져 시체가 없다: 얼음 조각 그림 + 맞는 소리 impact_shatter
+    // 근사(원작 미확인): 조각 크기를 SizeX 로 고른다 (1 small · 2 medium · 3 이상 large), 연기 icebreaksmoke 를 함께
+    const shatter = [...m.states.names()].some((n) => this.data?.stateShatter?.has(n));
     m.states.clear();
     if (brood && this.data?.monsters.types.has(brood)) {
       const w2 = this.spawnMonMinion(m, brood, m.x, m.y, 'NU', { noTc: true });
@@ -5611,6 +5624,14 @@ export class Game {
     m.cast = undefined;
     this.startMonsterMode(m, 'DT');
     m.deathFrame = this.tickCount;
+    if (shatter) {
+      m.shattered = true;
+      m.corpseUsed = true;
+      const size = m.type.sizeX >= 3 ? 'large' : m.type.sizeX === 2 ? 'medium' : 'small';
+      this.spawnVisual(`icebreak${size}`, m.x, m.y, { life: this.data?.missiles.get(`icebreak${size}`)?.animLen });
+      this.spawnVisual('icebreaksmoke', m.x, m.y, { life: this.data?.missiles.get('icebreaksmoke')?.animLen });
+      this.events.push({ type: 'monsterShattered', targetId: m.id });
+    }
     this.events.push({ type: 'monsterKilled', targetId: m.id, typeId: m.type.id, flags: m.flags, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}) });
     m.hidden = false;
     m.dash = undefined;
@@ -11232,7 +11253,7 @@ export class Game {
     // Molten Boulder: 몬스터 크기에 따른 확률로 넉백 (출처: MISSMODE_SrvDmg14_MoltenBoulder — wResultFlags |= 8)
     if (ms.def.srvDmgFunc === 14 && m.mode !== 'DT' && m.mode !== 'DD') {
       const chance = boulderKnockChance(ms.def.dmgParams[0] ?? 0, ms.def.dmgParams[1] ?? 0, m.type);
-      if (chance > 0 && this.rng.pick(100) < chance) this.knockBack(m);
+      if (chance > 0 && this.rng.pick(100) < chance) this.knockBack(m, { x: m.x - ms.dx, y: m.y - ms.dy });
     }
   }
 

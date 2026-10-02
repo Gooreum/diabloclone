@@ -74,6 +74,8 @@ export interface MonsterUnit {
   states: StateList;
   /** 시체에 Find Potion / Find Item 을 이미 사용함 (원작 STATE_CORPSE_NOSELECT) */
   corpseUsed: boolean;
+  /** 얼어 죽어 부서짐 (states.txt shatter) — 시체를 남기지 않는다 */
+  shattered?: boolean;
   /** 플레이어 소환수면 소환 정보 (스켈레톤·골렘·뼈벽) */
   pet?: PetInfo;
   /** 이번 판단의 공격 대상 유닛 Id (undefined = 플레이어) */

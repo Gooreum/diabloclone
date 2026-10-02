@@ -35,6 +35,8 @@ export interface MissileDef {
   explosionMissile: string; subMissile1: string; hitSubMissile1: string;
   /** 맞을 때 그림만 띄우는 클라이언트 미사일 (CltHitSubMissile1~4) */
   cltHitSub?: string[];
+  /** 서버가 띄우는 맞을 때 미사일 (HitSubMissile1~4) — 같은 이름의 클라이언트 그림은 겹치지 않게 뺀다 */
+  hitSubs?: string[];
   /** 미사일 자체 원소 피해 시너지 % (EDmgSymPerCalc — Immolation Arrow 불길, Meteor 불 …) */
   eDmgSymPerCalc: CalcNode | null;
   /** 서버 적중 공식 (SHitCalc1 — Immolation Arrow 불길 지속 등) */
@@ -74,6 +76,7 @@ export function parseMissiles(rows: TxtRow[]): Map<string, MissileDef> {
       eMinLev: [1, 2, 3, 4, 5].map((i) => n(r[`MinELev${i}`])), eMaxLev: [1, 2, 3, 4, 5].map((i) => n(r[`MaxELev${i}`])), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])),
       explosionMissile: r.ExplosionMissile ?? '', subMissile1: r.SubMissile1 ?? '', hitSubMissile1: r.HitSubMissile1 ?? '',
       cltHitSub: [1, 2, 3, 4].map((i) => r[`CltHitSubMissile${i}`] ?? '').filter(Boolean),
+      hitSubs: [1, 2, 3, 4].map((i) => r[`HitSubMissile${i}`] ?? '').filter(Boolean),
       eDmgSymPerCalc: parseCalc(r.EDmgSymPerCalc), sHitCalc: parseCalc(r.SHitCalc1), applyMastery: n(r.ApplyMastery) === 1, returnFire: n(r.ReturnFire) === 1,
       srcDamagePct: src < 0 ? 0 : src,
       trans: n(r.Trans),

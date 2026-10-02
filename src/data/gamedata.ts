@@ -57,6 +57,7 @@ export function buildGameData(src: AssetSource, tables = new GameTables(src), op
     stateGroups: parseStateGroups(tables.table('States')),
     stateInfo: parseStateInfo(tables.table('States')),
     stateColors: parseStateColors(tables.table('States')),
+    stateShatter: new Set(tables.table('States').filter((r) => r.shatter === '1' && r.state).map((r) => r.state as string)),
     overlays: parseOverlays(tables.table('Overlay')),
     monEquip: tables.table('MonEquip'),
     uniques: new UniqueDb(monsters, {

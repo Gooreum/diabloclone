@@ -204,3 +204,40 @@ describe.skipIf(!hasGameData)('Pal.PL2 색 바꾸기 표 (상태 색)', () => {
     expect(g2).toBeGreaterThan(b2);
   });
 });
+
+interface KillInner { killMonster(m: unknown, source?: string): void; knockBack(m: unknown, from?: { x: number; y: number }): void }
+
+describe.skipIf(!hasGameData)('몬스터 반응 — 밀쳐내기 방향 · 얼어 죽음', () => {
+  it('밀쳐내기는 때린 쪽 반대로: 오른쪽(x 30)에서 때리면 왼쪽(x 감소)으로', () => {
+    const { game } = setup();
+    const m = dummy(game, 'zombie1', 26.5, 20.5);
+    (game as unknown as KillInner).knockBack(m, { x: 30.5, y: 20.5 });
+    expect(m.x).toBeLessThan(26.5);
+  });
+  it('기본값(때린 쪽 모름)은 플레이어 반대: 플레이어 x 20.5 → 몬스터는 오른쪽으로', () => {
+    const { game } = setup();
+    const m = dummy(game, 'zombie1', 26.5, 20.5);
+    (game as unknown as KillInner).knockBack(m);
+    expect(m.x).toBeGreaterThan(26.5);
+  });
+  it('빙결(freeze) 상태로 죽으면 부서진다: 시체 없음 · icebreak 그림 · monsterShattered', () => {
+    const { game } = setup();
+    const m = dummy(game);
+    m.states.set('freeze', game.snapshot().tick + 100, {});
+    (game as unknown as KillInner).killMonster(m);
+    const evs = game.tick();
+    expect(m.shattered).toBe(true);
+    expect(m.corpseUsed).toBe(true);
+    expect(game.snapshot().monsters.some((x) => x.id === m.id)).toBe(false);
+    expect(visuals(game).some((n) => n.startsWith('icebreak'))).toBe(true);
+    void evs;
+  });
+  it('빙결 아니면 시체가 남는다', () => {
+    const { game } = setup();
+    const m = dummy(game);
+    (game as unknown as KillInner).killMonster(m);
+    for (let i = 0; i < 80; i++) game.tick();
+    expect(m.shattered).toBeUndefined();
+    expect(game.snapshot().monsters.find((x) => x.id === m.id)?.mode).toBe('DD');
+  });
+});

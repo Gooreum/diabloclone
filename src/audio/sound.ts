@@ -636,6 +636,11 @@ class GameListener {
         if (ev.melee) for (const n of impactSounds(Number(ev.hitClass ?? 0))) void s.play(n, at ? { at } : {});
         break;
       }
+      case 'monsterShattered': {
+        const at = this.at(ev.targetId);
+        void s.play('impact_shatter_1', at ? { at } : {});
+        break;
+      }
       case 'monsterKilled': {
         const ms = t.mon.of(String(ev.typeId));
         const at = this.at(ev.targetId);

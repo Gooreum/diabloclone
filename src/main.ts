@@ -978,7 +978,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       else if (act === 'skillpick') hud.skillMenu = hud.skillMenu ? null : 'right';
     };
     // 컨트롤 패널 동작 (클릭)
-    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand, charge) => game.canSelectSkill(s, hand, charge), itemSkills: () => game.itemSkillEntries(), mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str, true) });
+    hudState = () => ({ snap: game.snapshot(), ch, exp: table, dead: game.isDead, run: input.run, store: game.store, str, canSelect: (s, hand, charge) => game.canSelectSkill(s, hand, charge), itemSkills: () => game.itemSkillEntries(), usable: (id, charge) => game.skillUseState(id, charge) === 'usable', mouse: input.mouse, hotkeyLabel: (i) => keyBindings.label(keyBindings.map[SKILL_SLOTS[i]!], str, true) });
     onHud = (a: HudAction, button: number, cur: ItemInstance | null) => {
       if (a.kind === 'run') input.run = !input.run;
       else if (a.kind === 'minipanel') hud.miniOpen = !hud.miniOpen;

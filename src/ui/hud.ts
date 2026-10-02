@@ -119,6 +119,8 @@ export interface HudState {
   mouse: { x: number; y: number } | null;
   /** 스킬 단축키 칸(0~7)의 지금 키 이름 (옵션에서 바꾼 키) */
   hotkeyLabel?: (slot: number) => string;
+  /** 지금 쓸 수 있는 스킬인가 (원작 SKILLS_GetUseState — 아니면 아이콘을 빨갛게). 없으면 늘 쓸 수 있음 */
+  usable?: (skill: number, charge?: boolean) => boolean;
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
@@ -154,7 +156,7 @@ export class ControlPanel {
     void art.preload(this.lod ? [...HUD_ART, CTRL800] : HUD_ART);
   }
 
-  private skillIcon(ctx: CanvasRenderingContext2D, id: number, x: number, y: number, pressed = false): void {
+  private skillIcon(ctx: CanvasRenderingContext2D, id: number, x: number, y: number, pressed = false, red = false): void {
     const s = this.skills?.byId.get(id);
     const path = skillIconPath(s?.charclass ?? '');
     const f = this.art.frame(path, (s?.iconCel ?? 0) + (pressed ? 1 : 0));
@@ -162,6 +164,15 @@ export class ControlPanel {
     else {
       ctx.fillStyle = '#111';
       ctx.fillRect(x, y, 48, 48);
+    }
+    // 지금 쓸 수 없는 스킬은 빨갛게 (원작: SKILLS_GetUseState 가 USABLE·AURA 가 아니면 붉은 색으로 그린다).
+    // 근사(원작 미확인): 원작 팔레트 색 바꾸기 대신 붉은색 곱하기 섞기
+    if (red) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = '#ff2a1a';
+      ctx.fillRect(x, y, 48, 48);
+      ctx.restore();
     }
   }
 
@@ -369,8 +380,9 @@ export class ControlPanel {
     // 미니 패널 버튼 (0 닫힘, 2 열림)
     a.draw(ctx, MENUBTN, this.miniOpen ? 2 : 0, this.L.menuBtn.x, this.L.menuBtn.y);
     // 스킬 버튼
-    this.skillIcon(ctx, ch.leftSkill, this.L.lskill.x, this.L.lskill.y, this.skillMenu === 'left');
-    this.skillIcon(ctx, ch.rightSkill, this.L.rskill.x, this.L.rskill.y, this.skillMenu === 'right');
+    const unusable = (id: number, charge?: boolean) => !!st.usable && !st.usable(id, charge);
+    this.skillIcon(ctx, ch.leftSkill, this.L.lskill.x, this.L.lskill.y, this.skillMenu === 'left', unusable(ch.leftSkill, ch.chargeSkills?.[ch.leftSkill] !== undefined));
+    this.skillIcon(ctx, ch.rightSkill, this.L.rskill.x, this.L.rskill.y, this.skillMenu === 'right', unusable(ch.rightSkill, ch.chargeSkills?.[ch.rightSkill] !== undefined));
     // 벨트 아래 줄 4칸
     for (let i = 0; i < 4; i++) {
       const it = st.store.belt[i];
@@ -413,7 +425,7 @@ export class ControlPanel {
     // 스킬 고르기 목록
     this.layoutMenu(st);
     for (const m of this.menuRects) {
-      this.skillIcon(ctx, m.id, m.r.x, m.r.y);
+      this.skillIcon(ctx, m.id, m.r.x, m.r.y, false, !!st.usable && !st.usable(m.id, m.charge));
       // 충전 수 (근사(원작 미확인): 위치 = 아이콘 왼쪽 아래, 글꼴 font16)
       if (m.charge) drawText(ctx, `${m.cur ?? 0}`, m.r.x + 3, m.r.y + 30, { font: 'font16', color: 'white' });
       // 등록된 단축키 이름 (근사(원작 미확인): 위치 = 아이콘 오른쪽 아래, 글꼴 font16)

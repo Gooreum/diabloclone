@@ -372,6 +372,8 @@ interface PlayerState {
    * 근사(원작 미확인): 한 번만 누른 클릭도 기억하는 것은 원작 클라이언트 소스가 없어 확인하지 못함 (사용자 요청 동작)
    */
   pending?: Command | null;
+  /** 이동 클릭의 목표 (가다가 유닛에 막히면 다시 길을 찾는다) */
+  moveGoal?: { x: number; y: number; run: boolean; tries: number; retryAt?: number; /** 길을 거듭 못 찾아 마을 NPC 를 지나가는 중 */ passNpc?: boolean } | null;
   /** Blaze: 마지막으로 불을 놓은 위치 */
   lastBlaze?: Pt;
 }
@@ -458,6 +460,29 @@ const missileStep = (vel: number): number => (vel / 32) * SUBTILES_PER_YARD;
 /** 피 미사일 (Missiles.txt 18~21) */
 const BLOOD_SMALL = ['blood1', 'blood2'] as const;
 const BLOOD_BIG = ['blood1', 'blood2', 'bigblood1', 'bigblood2'] as const;
+
+/** 유닛이 NO_PATH 를 적는 범위로 본 플레이어 접근 한계 (맨해튼 거리): 작은 유닛 1, 큰 유닛(크기 3 이상) 2 */
+function unitNoPathReach(sizeX: number): number {
+  return sizeX >= 3 ? 2 : 1;
+}
+
+/** 목표 둘레(반경 radius 칸)에서 걸을 수 있는 칸 중 from 에 가장 가까운 칸의 중심 (없으면 null) */
+function nearestFreeToward(map: WalkMap, goal: Pt, from: Pt, radius: number): Pt | null {
+  const gx = Math.floor(goal.x), gy = Math.floor(goal.y);
+  let best: Pt | null = null, bd = Infinity;
+  for (let r = 1; r <= radius && !best; r++) {
+    for (let y = gy - r; y <= gy + r; y++)
+      for (let x = gx - r; x <= gx + r; x++) {
+        if (Math.abs(x - gx) + Math.abs(y - gy) !== r || !map.walkable(x, y)) continue;
+        const d = Math.hypot(x + 0.5 - from.x, y + 0.5 - from.y);
+        if (d < bd) {
+          bd = d;
+          best = { x: x + 0.5, y: y + 0.5 };
+        }
+      }
+  }
+  return best;
+}
 
 export class Game {
   readonly rng: Rng;
@@ -1670,7 +1695,9 @@ export class Game {
         p.action = null;
         this.closeTalk();
         const warp = this.warpClickTarget(cmd.x, cmd.y);
-        this.pathPlayerTo(warp ? warp.x : cmd.x, warp ? warp.y : cmd.y, cmd.run);
+        const gx = warp ? warp.x : cmd.x, gy = warp ? warp.y : cmd.y;
+        p.moveGoal = null;
+        p.moveGoal = this.pathPlayerTo(gx, gy, cmd.run) ? { x: gx, y: gy, run: cmd.run, tries: 0 } : null;
         return;
       }
       case 'attack': {
@@ -1678,7 +1705,8 @@ export class Game {
         if (!m) return;
         this.closeTalk();
         p.pending = null;
-        // 원작: 몬스터 왼쪽 클릭 = 왼쪽 스킬 (기본 Attack). 누르고 있는 동안 반복
+        p.moveGoal = null;
+        // 원작: 몬스터 왼쪽 클릭 = 왼쪽 스킬 (기본 Attack). 누르고 있는 동안 반복 (떼면 release)
         p.action = { kind: 'skill', skillId: c?.leftSkill ?? SKILL_ATTACK, targetId: m.id, x: m.x, y: m.y, standStill: cmd.standStill, repeat: true };
         return;
       }
@@ -1693,12 +1721,14 @@ export class Game {
         }
         p.holdUntil = this.tickCount + 8;
         p.pending = null;
+        p.moveGoal = null;
         p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, targetItem: cmd.targetItem, x: cmd.x, y: cmd.y, standStill: true, repeat: false };
         return;
       }
       case 'pickup': {
         if (!this.ground.some((g) => g.item.id === cmd.itemId)) return;
         p.pending = null;
+        p.moveGoal = null;
         p.action = { kind: 'pickup', itemId: cmd.itemId };
         return;
       }
@@ -1771,6 +1801,7 @@ export class Game {
           return;
         }
         p.pending = null;
+        p.moveGoal = null;
         const n = this.level.npcs.find((x) => x.id === cmd.unitId && x.npc?.interact);
         if (n) {
           this.closeTalk();
@@ -1973,8 +2004,11 @@ export class Game {
     const p = this.player;
     const target = nearestWalkable(this.map, { x, y });
     const goal = target ? { x: target.x + 0.5, y: target.y + 0.5 } : null;
-    // 살아있는 몬스터가 차지한 칸을 피해 돌아간다 (길이 없으면 지형만 보고 탐색)
-    const path = goal ? (findPath(this.unitAwareMap(), p, goal, 6000) ?? findPath(this.map, p, goal)) : null;
+    // 유닛(몬스터·NPC)이 차지한 칸을 피해 돌아간다. 목표 칸이 유닛 자리면 그 둘레의 빈칸 중 플레이어에게 가장 가까운 칸으로.
+    // 길이 없으면 지형만 보고 탐색 (가다가 막히면 멈춘다)
+    const aware = this.unitAwareMap();
+    const free = goal && !aware.walkable(Math.floor(goal.x), Math.floor(goal.y)) ? nearestFreeToward(aware, goal, p, 4) : goal;
+    const path = goal ? ((free ? findPath(aware, p, free, 6000) : null) ?? findPath(this.map, p, goal)) : null;
     if (!path) {
       this.events.push({ type: 'moveBlocked' });
       return false;
@@ -1986,17 +2020,33 @@ export class Game {
   }
 
   /**
-   * 유닛 점유를 덧씌운 이동 맵: 살아있는 몬스터 중심에서 (몬스터 크기 + 플레이어 크기)/2 − 0.25 안의 칸은 막힘 (blockedByUnit 과 같은 기준).
-   * 근사(원작 미확인): 원작은 유닛 충돌 패턴을 충돌 맵에 직접 기록한다 (COLLISION_SetMaskWithPattern).
+   * 플레이어 길을 막는 유닛: 살아 있는 몬스터 + 말을 걸 수 있는 마을 NPC.
+   * 원작은 이런 유닛이 충돌 지도에 COLLIDE_NO_PATH 를 적고, 플레이어 이동 검사(COLLIDE_MASK_PLAYER_PATH)가 그 비트를 본다.
+   * 소환수·말을 걸 수 없는 마을 유닛은 COLLIDE_PET 만 적어 플레이어가 지나간다 (PET_PRESENCE 패턴).
+   * 출처: D2MOO D2Collision.cpp COLLISION_SetMaskWithPattern, Path.cpp D2Common_11281_CollisionPatternFromSize / PATH_AllocDynamicPath
+   */
+  private playerBlockers(): MonsterUnit[] {
+    const p = this.player, px = Math.floor(p.x), py = Math.floor(p.y);
+    const out: MonsterUnit[] = [];
+    // 이미 같은 칸에 겹쳐 있는 유닛은 막는 유닛에서 뺀다 (겹친 채로는 어느 쪽으로도 못 나가므로 — 원작은 유닛이 같은 칸에 설 수 없다)
+    const overlap = (m: MonsterUnit) => Math.floor(m.x) === px && Math.floor(m.y) === py;
+    for (const m of this.monsters) if (m.mode !== 'DT' && m.mode !== 'DD' && !m.hidden && !overlap(m)) out.push(m);
+    // 원작과 다름(사용자 요청 — 마을에서 NPC 때문에 멈추지 않게): 돌아갈 길을 거듭 못 찾으면(moveGoal.passNpc) NPC 를 지나간다
+    if (!p.moveGoal?.passNpc) for (const m of this.level.npcs) if (m.npc?.interact && !overlap(m)) out.push(m);
+    return out;
+  }
+
+  /**
+   * 유닛 자리를 덧씌운 이동 맵 (플레이어 길찾기용): 작은 유닛(크기 1·2)은 가운데 칸, 큰 유닛(크기 3)은 십자 5칸이 NO_PATH.
+   * 플레이어(크기 2)는 자기 칸 + 사방 4칸으로 검사하므로 작은 유닛은 맨해튼 거리 1 이하, 큰 유닛은 2 이하인 칸에 못 들어간다.
+   * 출처: D2MOO D2Collision.cpp COLLISION_SetMaskWithPattern / COLLISION_CheckMaskWithPattern (SMALL = 십자, BIG = 3×3), Path.cpp gaCollisionPatternsFromSize
    */
   private unitAwareMap(): WalkMap {
     const map = this.map, p = this.player;
     const occ = new Set<number>();
-    for (const m of this.monsters) {
-      if (m.mode === 'DT' || m.mode === 'DD') continue;
-      const r = (m.type.sizeX + PLAYER_SIZE) / 2 - 0.25;
-      for (let y = Math.floor(m.y - r); y <= Math.floor(m.y + r); y++)
-        for (let x = Math.floor(m.x - r); x <= Math.floor(m.x + r); x++) if (Math.hypot(x + 0.5 - m.x, y + 0.5 - m.y) < r) occ.add(y * map.width + x);
+    for (const m of this.playerBlockers()) {
+      const ux = Math.floor(m.x), uy = Math.floor(m.y), r = unitNoPathReach(m.type.sizeX);
+      for (let dy = -r; dy <= r; dy++) for (let dx = -(r - Math.abs(dy)); dx <= r - Math.abs(dy); dx++) occ.add((uy + dy) * map.width + ux + dx);
     }
     occ.delete(Math.floor(p.y) * map.width + Math.floor(p.x));
     return { width: map.width, height: map.height, walkable: (x, y) => map.walkable(x, y) && !occ.has(y * map.width + x) };
@@ -2327,6 +2377,7 @@ export class Game {
     p.mode = mode;
     p.modeStart = this.tickCount;
     if (mode === 'GH' || mode === 'BL' || mode === 'DT') {
+      p.moveGoal = null;
       if (!this.data) p.modeEnd = this.tickCount + 10;
       // 피격·막기는 프레임 수 − 1 (원작 breakpoint: 바바리안 GH 5 프레임 × 50% = 9 프레임)
       else {
@@ -2416,6 +2467,17 @@ export class Game {
 
   private movePlayer(): void {
     const p = this.player;
+    // 이동 목표는 순수한 이동 클릭에만 (다른 행동이 길을 쓰는 중이면 버린다)
+    if (p.moveGoal && p.action) p.moveGoal = null;
+    const goal = p.moveGoal;
+    if (p.path.length === 0 && goal?.retryAt !== undefined) {
+      // 가던 길이 유닛에 막혔다: 잠깐 뒤 길을 다시 찾는다 (최대 3번). 원작도 막히면 경로를 다시 계산한다
+      if (this.tickCount < goal.retryAt) return;
+      goal.retryAt = undefined;
+      // 세 번째부터는 NPC 를 지나가는 길로 (따라오는 NPC 가 계속 앞을 막는 경우). 몬스터에 막힌 것이면 네 번 만에 포기
+      if (++goal.tries >= 3) goal.passNpc = true;
+      if (goal.tries > 4 || !this.pathPlayerTo(goal.x, goal.y, goal.run) || p.path.length === 0) p.moveGoal = null;
+    }
     if (p.path.length === 0) {
       if (p.mode === 'WL' || p.mode === 'RN') {
         p.mode = 'NU';
@@ -2429,7 +2491,13 @@ export class Game {
       p.mode = moving;
       p.modeStart = this.tickCount;
     }
+    const last = p.path[p.path.length - 1] as Pt;
     this.advance(p, this.stepLength(), (d) => (p.dir = d));
+    if (p.moveGoal && p.path.length === 0) {
+      // 끝까지 갔으면 끝, 중간에 유닛에 막혀 끊겼으면 5틱 뒤 다시 찾기
+      if (Math.hypot(p.x - last.x, p.y - last.y) < 0.01) p.moveGoal = null;
+      else p.moveGoal.retryAt = this.tickCount + 5;
+    }
     this.dropBlaze();
     this.drainStamina();
   }
@@ -2455,6 +2523,13 @@ export class Game {
   private blockedByUnit(self: object, x: number, y: number, size: number): boolean {
     const r = size / 2;
     const p = this.player;
+    if (self === p) {
+      // 플레이어: 원작처럼 칸 단위 — 새 칸으로 들어갈 때만 검사하고, 유닛의 NO_PATH 칸과 겹치면 막힌다 (unitAwareMap 과 같은 기준)
+      const cx = Math.floor(x), cy = Math.floor(y);
+      if (cx === Math.floor(p.x) && cy === Math.floor(p.y)) return false;
+      for (const m of this.playerBlockers()) if (Math.abs(cx - Math.floor(m.x)) + Math.abs(cy - Math.floor(m.y)) <= unitNoPathReach(m.type.sizeX)) return true;
+      return false;
+    }
     if (self !== p && p.mode !== 'DT' && p.mode !== 'DD' && Math.hypot(p.x - x, p.y - y) < r + PLAYER_SIZE / 2 - 0.25) return true;
     for (const m of this.monsters) {
       if (m === self || m.mode === 'DT' || m.mode === 'DD' || m.hidden) continue;

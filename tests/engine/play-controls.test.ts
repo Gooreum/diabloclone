@@ -161,3 +161,81 @@ describe.skipIf(!hasGameData)('공격은 누르고 있는 동안만 · 바쁠 �
     expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 20.5)).toBeLessThan(0.1);
   });
 });
+
+describe.skipIf(!hasGameData)('유닛 회피: NPC·몬스터 자리를 돌아서 간다 (원작 COLLIDE_NO_PATH 발자국)', () => {
+  const dist = (inner: Inner, x: number, y: number) => Math.hypot(inner.player.x - x, inner.player.y - y);
+  it('NPC 를 사이에 둔 직선 이동: 멈추지 않고 돌아서 도착', () => {
+    const { game, inner } = setup('Barbarian');
+    const npc = game.spawnNpc('charsi', 24.5, 20.5)!;
+    expect(npc).not.toBeNull();
+    game.enqueue({ type: 'move', x: 28.5, y: 20.5, run: true });
+    run(game, 100);
+    expect(dist(inner, 28.5, 20.5)).toBeLessThan(1);
+  });
+  it('목표가 NPC 자리면 가장 가까운 빈칸(플레이어 쪽)까지', () => {
+    const { game, inner } = setup('Barbarian');
+    game.spawnNpc('charsi', 26.5, 20.5);
+    game.enqueue({ type: 'move', x: 26.5, y: 20.5, run: true });
+    run(game, 100);
+    // 작은 유닛: 맨해튼 거리 1 이하 칸은 못 들어간다 → 2칸 떨어진 곳, 플레이어가 온 쪽
+    expect(Math.abs(Math.floor(inner.player.x) - 26) + Math.abs(Math.floor(inner.player.y) - 20)).toBe(2);
+    expect(inner.player.x).toBeLessThan(26);
+  });
+  it('작은 유닛 옆(대각선)은 지나갈 수 있다: 원작은 가운데 칸만 막는다', () => {
+    const { game, inner } = setup('Barbarian');
+    const m = dummy(game, 'zombie1', 24.5, 20.5);
+    // 좀비 바로 대각선 칸 (맨해튼 2) 으로 이동
+    game.enqueue({ type: 'move', x: 25.5, y: 21.5, run: true });
+    run(game, 100);
+    expect(dist(inner, 25.5, 21.5)).toBeLessThan(0.6);
+    void m;
+  });
+  it('가는 길에 유닛이 끼어들어 막히면 길을 다시 찾아 도착', () => {
+    const { game, inner } = setup('Barbarian');
+    game.enqueue({ type: 'move', x: 34.5, y: 20.5, run: false });
+    run(game, 10);
+    // 진행 방향 앞에 갑자기 NPC (길을 찾은 뒤에 생김)
+    game.spawnNpc('charsi', Math.floor(inner.player.x) + 3.5, 20.5);
+    run(game, 250);
+    expect(dist(inner, 34.5, 20.5)).toBeLessThan(1);
+  });
+  it('몬스터에게 붙어 있다가도 반대쪽으로는 빠져나온다', () => {
+    const { game, inner } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game, 'zombie1', 21.5, 20.5);
+    game.enqueue({ type: 'move', x: 14.5, y: 20.5, run: true });
+    run(game, 80);
+    expect(dist(inner, 14.5, 20.5)).toBeLessThan(1);
+    void m;
+  });
+});
+
+describe.skipIf(!hasGameData)('마을 NPC 가 계속 앞을 막아도 결국 지나간다 (사용자 요청: 마을에서 절대 안 멈춤)', () => {
+  it('NPC 가 따라오며 계속 진행 방향 2칸 앞에 서도 목표에 도착', () => {
+    const { game, inner } = setup('Barbarian');
+    const npc = game.spawnNpc('charsi', 23.5, 20.5)!;
+    npc.nextThink = Number.POSITIVE_INFINITY;
+    game.enqueue({ type: 'move', x: 34.5, y: 20.5, run: true });
+    for (let i = 0; i < 400; i++) {
+      // 최악의 경우: 매 틱 플레이어 바로 앞(동쪽 2칸)으로 옮겨 선다
+      npc.x = Math.floor(inner.player.x) + 2.5;
+      npc.y = Math.floor(inner.player.y) + 0.5;
+      game.tick();
+    }
+    expect(Math.hypot(inner.player.x - 34.5, inner.player.y - 20.5)).toBeLessThan(1.5);
+  });
+  it('유닛과 같은 칸에 겹쳐 있어도 걸어 나올 수 있다', () => {
+    const { game, inner } = setup('Barbarian');
+    dummy(game, 'zombie1', 20.5, 20.5);
+    game.enqueue({ type: 'move', x: 26.5, y: 20.5, run: true });
+    run(game, 100);
+    expect(Math.hypot(inner.player.x - 26.5, inner.player.y - 20.5)).toBeLessThan(1);
+  });
+  it('필드 몬스터는 통과하지 않는다: 사방이 막히면 그대로 멈춘다', () => {
+    const { game, inner } = setup('Barbarian');
+    // 플레이어(20,20) 둘레를 몬스터로 둘러쌈 (맨해튼 2 인 칸 전부)
+    for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) dummy(game, 'zombie1', 20.5 + dx, 20.5 + dy);
+    game.enqueue({ type: 'move', x: 30.5, y: 20.5, run: true });
+    run(game, 150);
+    expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 20.5)).toBeLessThan(1.5);
+  });
+});

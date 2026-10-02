@@ -266,6 +266,8 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - [x] 야외 낮·밤 주기(원작 D2Environment 규칙, 밤 배경음, 오염된 태양 일식)와 비
 - [x] 확장팩(Lord of Destruction): Act 5, 드루이드·어쌔신, 룬워드·주얼·참·제작, 용병 장비
 - [x] 한국어 표시 (원작 한국어 문자열 표)
+- [x] 타격감: 맞는 소리(HitClass), 피 튀김, 미사일 폭발 그림, 냉기·독 색, 시전 섬광, 얼어 죽으면 부서짐
+- [ ] 원작 대비 남은 것: [docs/fidelity-audit.md](docs/fidelity-audit.md) (비밀 소 레벨, `/players`, 하드코어 등)
 - [ ] 오픈소스 공개 정리 (라이선스·출처 표기)
 
 ---

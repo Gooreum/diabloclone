@@ -5408,7 +5408,7 @@ export class Game {
     if (bleed > 0 && total > 0) {
       const pool = bleed >= 2 ? BLOOD_BIG : BLOOD_SMALL;
       // 게임 난수를 쓰지 않는다 (그림만 — 전투 난수 순서를 바꾸지 않게)
-      this.spawnVisual(pool[(this.tickCount + m.id) % pool.length]!, m.x, m.y, { life: this.data?.missiles.get(pool[0]!)?.animLen });
+      this.spawnVisual(pool[(this.tickCount + m.id + Math.floor(total / 256)) % pool.length]!, m.x, m.y, { life: this.data?.missiles.get(pool[0]!)?.animLen });
     }
     this.events.push({ type: 'monsterHit', targetId: m.id, damage: Math.floor(total / 256), crit: d.crit, hitClass: d.hitClass, source, melee: proc === 'melee' });
     if (d.stunLen > 0) m.states.set('stunned', this.tickCount + Math.min(d.stunLen, 250));

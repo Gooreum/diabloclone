@@ -228,6 +228,23 @@ d('상태 물약 (misc.txt vps / yps / wms)', () => {
     g.tick();
     expect(g.playerState('staminapot')!.until).toBe(t0 + 1500);
   });
+
+  // 구슬에 그리는 회복 예정량: 스냅숏 lifePot·manaPot = 상태가 끝날 때까지 실제로 차는 양
+  it.each([['hp1', 'life', 'lifePot'], ['mp1', 'mana', 'manaPot']] as const)('%s: 스냅숏 남은 회복량 = 실제로 찬 양', (code, key, pot) => {
+    const { g, pot: it2 } = potionGame(code);
+    const c = g.character!;
+    expect(g.snapshot().player[pot]).toBe(0);
+    c[key] = 1;
+    g.enqueue({ type: 'useItem', itemId: it2.id });
+    g.tick();
+    const left = g.snapshot().player[pot], from = c[key];
+    expect(left).toBeGreaterThan(0);
+    // 최대치에 막히기 전 20 프레임: 예정량이 줄어든 만큼 실제로 찬다 (자연 회복 오차 0.5 미만)
+    for (let i = 0; i < 20; i++) g.tick();
+    expect(Math.abs(c[key] - from - (left - g.snapshot().player[pot]))).toBeLessThan(0.5);
+    for (let i = 0; i < 400; i++) g.tick();
+    expect(g.snapshot().player[pot]).toBe(0);
+  });
 });
 
 d('레벨업 (PLAYERSTATS_LevelUp)', () => {

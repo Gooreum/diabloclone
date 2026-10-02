@@ -241,6 +241,8 @@ export interface PlayerSnapshot {
   /** 스태미나 (장비·Increased Stamina·신전 포함 최대치). 달리기 중(running) — 스태미나가 다하면 false 로 바뀐다 */
   stamina: number; maxStamina: number; running: boolean;
   states: string[];
+  /** 물약으로 앞으로 더 찰 생명·마나 (healthpot·manapot 남은 프레임 × 프레임당 양) */
+  lifePot: number; manaPot: number;
   leftSkill: number; rightSkill: number;
 }
 export interface MonsterSnapshot {
@@ -1002,6 +1004,12 @@ export class Game {
     return this.events;
   }
 
+  /** 물약 상태로 앞으로 더 찰 양 (남은 프레임 × potion / 256) */
+  private potionLeft(name: string): number {
+    const s = this.player.states.get(name);
+    return s && Number.isFinite(s.until) ? (Math.max(0, s.until - this.tickCount) * (s.stats.potion ?? 0)) / 256 : 0;
+  }
+
   snapshot(): Readonly<WorldSnapshot> {
     const p = this.player, c = this.character;
     const cp = this.corpse;
@@ -1014,7 +1022,8 @@ export class Game {
         life: c?.life ?? 0, maxLife: this.maxLife(), mana: c?.mana ?? 0, maxMana: this.maxMana(),
         stamina: Math.min(c?.stamina ?? 0, this.maxStamina()), maxStamina: this.maxStamina(), running: p.running,
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
-        states: p.states.names(), leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
+        states: p.states.names(), lifePot: this.potionLeft('healthpot'), manaPot: this.potionLeft('manapot'),
+        leftSkill: c?.leftSkill ?? 0, rightSkill: c?.rightSkill ?? 0,
       },
       // Phase 5: 굴 속·물속에 가만히 있는 몬스터 (hidden + NU) 는 그리지 않는다
       monsters: [...this.monsters.filter((m) => !(m.hidden && m.mode === 'NU')), ...this.pets, ...this.level.npcs].map((m) => {

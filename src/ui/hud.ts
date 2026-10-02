@@ -20,6 +20,7 @@ import type { ItemIcons } from './invpanel';
 import type { Edition } from '../assets/edition';
 import { UI, type UiArt } from './art';
 import { d2text, drawText } from './text';
+import { makeCanvas, type Drawable } from '../render/sprites';
 
 export const PANEL = `${UI}PANEL\\`;
 const CTRL = `${PANEL}ctrlpnl7.dc6`;
@@ -136,6 +137,8 @@ export class ControlPanel {
   private readonly icons: ItemIcons;
   private readonly skills: SkillDb | undefined;
   private menuRects: { id: number; r: Rect; charge?: boolean; cur?: number; max?: number }[] = [];
+  /** 빈 구슬 유리 (hlthmana 프레임 3 을 회색으로 바꾼 것, 처음 그릴 때 만든다) */
+  private glassImg: Drawable | null = null;
 
   /** 확장팩 설치면 원작 800 조작판 (원작 LoD 는 800×600 에서 클래식 캐릭터도 이 판을 쓴다) */
   private readonly lod: boolean;
@@ -278,12 +281,39 @@ export class ControlPanel {
     return null;
   }
 
-  private globe(ctx: CanvasRenderingContext2D, frame: number, x: number, y: number, frac: number): void {
+  /** 구체 그림을 아래에서부터 from~to 높이(0~1) 구간만 (원작: 비율만큼 아래부터 보인다) */
+  private globe(ctx: CanvasRenderingContext2D, frame: number, x: number, y: number, from: number, to: number, alpha = 1): void {
     const f = this.art.frame(GLOBE, frame);
     if (!f) return;
-    // 원작: 구체 그림을 아래에서부터 비율만큼만 보인다
-    const h = Math.round(80 * Math.max(0, Math.min(1, frac)));
-    if (h > 0) ctx.drawImage(f.img as CanvasImageSource, 0, 80 - h, 80, h, x, y + 80 - h, 80, h);
+    const lo = Math.round(80 * Math.max(0, Math.min(1, from))), hi = Math.round(80 * Math.max(0, Math.min(1, to)));
+    if (hi <= lo) return;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(f.img as CanvasImageSource, 0, 80 - hi, 80, hi - lo, x, y + 80 - hi, 80, hi - lo);
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * 빈 구슬 유리: 원작 프레임 3 은 보라 유리라, 회색으로 바꾸고 어둡게(× 0.55), 불투명도 80 %.
+   * 근사(원작 미확인): 사용자 요청 — 빈 부분이 보라로 보이지 않고, 뒤 화면이 살짝 비치되 찬 부분과 구분되게
+   */
+  private glass(): Drawable | null {
+    if (this.glassImg) return this.glassImg;
+    const f = this.art.frame(GLOBE, 3);
+    if (!f) return null;
+    const c = makeCanvas(f.w, f.h);
+    const g = c.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    if (!g) return null;
+    g.drawImage(f.img as CanvasImageSource, 0, 0);
+    const img = g.getImageData(0, 0, f.w, f.h), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (!d[i + 3]) continue;
+      const v = Math.round((0.3 * d[i]! + 0.59 * d[i + 1]! + 0.11 * d[i + 2]!) * 0.55);
+      d[i] = d[i + 1] = d[i + 2] = v;
+      d[i + 3] = 205;
+    }
+    g.putImageData(img, 0, 0);
+    this.glassImg = c;
+    return c;
   }
 
   draw(ctx: CanvasRenderingContext2D, st: HudState): void {
@@ -307,14 +337,18 @@ export class ControlPanel {
     }
     // 생명·마나 구체 (독에 걸리면 초록 구체 — hlthmana 프레임 2)
     const poisoned = p.states.includes('poison');
-    // 빈 구체 (hlthmana 프레임 3, 어두운 유리) 를 먼저 곱하기 혼합으로 — 근사(원작 미확인): 원작 혼합 방식
-    ctx.save();
-    ctx.globalCompositeOperation = 'multiply';
-    a.draw(ctx, GLOBE, 3, this.L.lifeGlobe.x, this.L.lifeGlobe.y);
-    a.draw(ctx, GLOBE, 3, this.L.manaGlobe.x, this.L.manaGlobe.y);
-    ctx.restore();
-    this.globe(ctx, poisoned ? 2 : 0, this.L.lifeGlobe.x, this.L.lifeGlobe.y, p.maxLife ? p.life / p.maxLife : 0);
-    this.globe(ctx, 1, this.L.manaGlobe.x, this.L.manaGlobe.y, p.maxMana ? p.mana / p.maxMana : 0);
+    const glass = this.glass();
+    if (glass) {
+      ctx.drawImage(glass as CanvasImageSource, this.L.lifeGlobe.x, this.L.lifeGlobe.y);
+      ctx.drawImage(glass as CanvasImageSource, this.L.manaGlobe.x, this.L.manaGlobe.y);
+    }
+    // 물약으로 찰 구간: 지금 높이 위에 같은 구체를 반투명으로 (근사(원작 미확인): 사용자 요청)
+    const lf = p.maxLife ? p.life / p.maxLife : 0, mf = p.maxMana ? p.mana / p.maxMana : 0;
+    const lifeFrame = poisoned ? 2 : 0;
+    if (p.maxLife && p.lifePot > 0) this.globe(ctx, lifeFrame, this.L.lifeGlobe.x, this.L.lifeGlobe.y, lf, lf + p.lifePot / p.maxLife, 0.45);
+    if (p.maxMana && p.manaPot > 0) this.globe(ctx, 1, this.L.manaGlobe.x, this.L.manaGlobe.y, mf, mf + p.manaPot / p.maxMana, 0.45);
+    this.globe(ctx, lifeFrame, this.L.lifeGlobe.x, this.L.lifeGlobe.y, 0, lf);
+    this.globe(ctx, 1, this.L.manaGlobe.x, this.L.manaGlobe.y, 0, mf);
     a.draw(ctx, OVERLAP, 0, this.L.lifeGlobe.x - 1, this.L.lifeGlobe.y);
     a.draw(ctx, OVERLAP, 1, this.L.manaGlobe.x, this.L.manaGlobe.y);
     // 경험치 막대: 이번 레벨 구간 진행률

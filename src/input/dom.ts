@@ -17,7 +17,12 @@ export class InputController {
   /** UI(인벤토리 패널·커서 아이템)가 먼저 클릭을 처리하면 true (월드 명령을 보내지 않음) */
   intercept: ((x: number, y: number, button: number, shift: boolean) => boolean) | null = null;
   private holding = false;
-  private holdCommand: 'move' | 'skill' | null = null;
+  private holdCommand: 'move' | 'skill' | 'attack' | null = null;
+  /** 누르고 있는 버튼 (0 왼쪽 · 2 오른쪽) */
+  private holdButton = 0;
+  private holdShift = false;
+  /** 플레이어가 아무 행동도 하지 않는 중인가 (왼쪽 버튼을 누른 채 대상이 죽으면 커서 아래를 다시 본다) */
+  idle: (() => boolean) | null = null;
   private lastRepeat = 0;
   pickBoxes: PickBox[] = [];
 
@@ -38,9 +43,14 @@ export class InputController {
       this.off.push(() => t.removeEventListener(type, fn as EventListener));
     };
     on(canvas, 'mousedown', (e) => this.enabled && this.onDown(e));
-    on(window, 'mouseup', () => {
-      this.holding = false;
-      this.holdCommand = null;
+    on(window, 'mouseup', (e) => {
+      if (e.button !== 0 && e.button !== 2) return;
+      if (e.button === this.holdButton) {
+        this.holding = false;
+        this.holdCommand = null;
+      }
+      // 원작: 버튼을 누르고 있는 동안만 공격을 되풀이한다 — 뗐다고 엔진에 알린다
+      if (this.enabled) this.send({ type: 'release', button: e.button === 2 ? 'right' : 'left' });
     });
     // 캔버스 위에 겹친 투명 UI 단추 위에서도 마우스 위치를 알도록 창 전체에서 받는다
     on(window, 'mousemove', (e) => (this.mouse = this.local(e)));
@@ -74,7 +84,9 @@ export class InputController {
     if (!cmd) return;
     this.send(cmd);
     this.holding = true;
-    this.holdCommand = cmd.type === 'move' ? 'move' : e.button === 2 ? 'skill' : null;
+    this.holdButton = e.button;
+    this.holdShift = e.shiftKey;
+    this.holdCommand = cmd.type === 'move' ? 'move' : e.button === 2 ? 'skill' : cmd.type === 'attack' ? 'attack' : null;
     this.lastRepeat = performance.now();
   }
 
@@ -87,7 +99,18 @@ export class InputController {
 
   /** 매 렌더 프레임 호출: 버튼을 누르고 있으면 약 200ms 마다 커서 위치로 이동/오른쪽 스킬 명령 재발행 */
   update(now: number): void {
-    if (!this.holding || !this.holdCommand || !this.mouse || now - this.lastRepeat < 200) return;
+    if (!this.holding || !this.mouse || now - this.lastRepeat < 200) return;
+    if (!this.holdCommand) return;
+    if (this.holdCommand === 'attack') {
+      // 왼쪽 버튼을 누른 채 대상이 죽었다: 커서 아래를 다시 보고 다음 몬스터를 치거나 그쪽으로 이동 (줍기·말 걸기는 새로 눌러야)
+      if (!this.idle?.()) return;
+      this.lastRepeat = now;
+      const cmd = this.commandAt(this.mouse, false, this.holdShift);
+      if (cmd?.type !== 'attack' && cmd?.type !== 'move') return;
+      this.send(cmd);
+      if (cmd.type === 'move') this.holdCommand = 'move';
+      return;
+    }
     this.lastRepeat = now;
     const w = fromCanvas(this.camera(), this.mouse.x, this.mouse.y);
     if (this.holdCommand === 'move') this.send({ type: 'move', x: w.x, y: w.y, run: this.run });

@@ -104,3 +104,60 @@ describe.skipIf(!hasGameData)('우클릭 대상 규칙: 살아 있는 몬스터�
     expect(run(game, 12).some((e) => e.type === 'skillStart')).toBe(true);
   });
 });
+
+describe.skipIf(!hasGameData)('공격은 누르고 있는 동안만 · 바쁠 때 온 이동 클릭은 기억했다가 실행', () => {
+  const starts = (ev: GameEvent[]) => ev.filter((e) => e.type === 'skillStart').length;
+  it('버튼을 떼면(release) 지금 휘두르는 것까지만 하고 멈춘다', () => {
+    const { game, inner } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game);
+    game.enqueue({ type: 'attack', targetId: m.id, standStill: false });
+    expect(starts(run(game, 40))).toBeGreaterThanOrEqual(2);
+    game.enqueue({ type: 'release', button: 'left' });
+    const after = run(game, 100);
+    expect(starts(after)).toBe(0);
+    expect(inner.player.action).toBeNull();
+  });
+  it('누르고 있는 동안(release 없음)은 계속 공격', () => {
+    const { game } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game);
+    game.enqueue({ type: 'attack', targetId: m.id, standStill: false });
+    run(game, 40);
+    expect(starts(run(game, 100))).toBeGreaterThanOrEqual(4);
+  });
+  it('바로 뗀 클릭(attack + release): 멀리 있는 몬스터에게 걸어가 한 번 친다', () => {
+    const { game } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game, 'zombie1', 30.5, 20.5);
+    game.enqueue({ type: 'attack', targetId: m.id, standStill: false });
+    game.enqueue({ type: 'release', button: 'left' });
+    expect(starts(run(game, 150))).toBe(1);
+  });
+  it('공격 동작 중에 온 이동 클릭 한 번: 동작이 끝나면 이동한다 (계속 공격하지 않는다)', () => {
+    const { game, inner } = setup('Barbarian', { rarm: item('axe') });
+    const m = dummy(game);
+    game.enqueue({ type: 'attack', targetId: m.id, standStill: false });
+    run(game, 20);
+    expect(inner.player.cast, '공격 동작 중').not.toBeNull();
+    game.enqueue({ type: 'move', x: 40.5, y: 40.5, run: true });
+    const ev = run(game, 150);
+    expect(Math.hypot(inner.player.x - 40.5, inner.player.y - 40.5)).toBeLessThan(1.5);
+    expect(starts(ev)).toBe(0);
+  });
+  it('시전 동작 중에 온 이동 클릭도 시전이 끝나면 실행', () => {
+    const { game, inner } = setup('Sorceress');
+    game.enqueue({ type: 'useSkill', skill: S('Fire Ball').id, hand: 'right', x: 30.5, y: 20.5 });
+    run(game, 3);
+    expect(inner.player.cast).not.toBeNull();
+    game.enqueue({ type: 'move', x: 20.5, y: 35.5, run: true });
+    run(game, 120);
+    expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 35.5)).toBeLessThan(1.5);
+  });
+  it('기억한 이동은 그 뒤에 온 다른 명령(스킬)이 지운다', () => {
+    const { game, inner } = setup('Sorceress');
+    game.enqueue({ type: 'useSkill', skill: S('Fire Ball').id, hand: 'right', x: 30.5, y: 20.5 });
+    run(game, 3);
+    game.enqueue({ type: 'move', x: 20.5, y: 35.5, run: true });
+    game.enqueue({ type: 'useSkill', skill: S('Fire Ball').id, hand: 'right', x: 30.5, y: 20.5 });
+    run(game, 120);
+    expect(Math.hypot(inner.player.x - 20.5, inner.player.y - 20.5)).toBeLessThan(0.1);
+  });
+});

@@ -321,7 +321,7 @@ export interface WorldSnapshot {
 }
 
 type PlayerAction =
-  | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean }
+  | { kind: 'skill'; skillId: number; targetId?: number; targetItem?: number; x: number; y: number; standStill: boolean; repeat: boolean; /** 이 행동으로 스킬을 한 번이라도 시작했다 */ started?: boolean }
   | { kind: 'pickup'; itemId: number }
   | { kind: 'corpse' }
   | { kind: 'object'; id: number }
@@ -366,6 +366,12 @@ interface PlayerState {
   states: StateList;
   /** 반복 스킬 버튼을 누르고 있는 한계 틱 (입력이 약 5틱마다 다시 보낸다) */
   holdUntil: number;
+  /**
+   * 동작(공격·시전·피격·막기) 중에 온 이동·말 걸기 클릭 하나 — 동작이 끝나는 틱에 실행한다.
+   * 원작 서버(D2MOO PlrModes.cpp sub_6FC817D0)는 거절한 요청을 버리지만 클라이언트가 버튼을 누르고 있는 동안 계속 다시 보낸다.
+   * 근사(원작 미확인): 한 번만 누른 클릭도 기억하는 것은 원작 클라이언트 소스가 없어 확인하지 못함 (사용자 요청 동작)
+   */
+  pending?: Command | null;
   /** Blaze: 마지막으로 불을 놓은 위치 */
   lastBlaze?: Pt;
 }
@@ -1648,8 +1654,19 @@ export class Game {
     const p = this.player, c = this.character;
     if (p.mode === 'DT' || p.mode === 'DD') return;
     switch (cmd.type) {
+      case 'release': {
+        // 원작: 왼쪽 버튼을 누르고 있는 동안만 공격을 되풀이한다. 떼면 지금 동작까지만, 아직 걸어가는 중이면 가서 한 번만
+        if (cmd.button === 'left' && p.action?.kind === 'skill' && p.action.repeat) p.action = p.action.started ? null : { ...p.action, repeat: false };
+        return;
+      }
       case 'move': {
-        if (this.isBusy()) return;
+        if (this.isBusy()) {
+          // 동작 중: 되풀이 공격은 여기서 끝내고, 이 이동은 동작이 끝나면 실행
+          p.action = null;
+          p.pending = cmd;
+          return;
+        }
+        p.pending = null;
         p.action = null;
         this.closeTalk();
         const warp = this.warpClickTarget(cmd.x, cmd.y);
@@ -1660,6 +1677,7 @@ export class Game {
         const m = this.monsters.find((x) => x.id === cmd.targetId && x.mode !== 'DT' && x.mode !== 'DD');
         if (!m) return;
         this.closeTalk();
+        p.pending = null;
         // 원작: 몬스터 왼쪽 클릭 = 왼쪽 스킬 (기본 Attack). 누르고 있는 동안 반복
         p.action = { kind: 'skill', skillId: c?.leftSkill ?? SKILL_ATTACK, targetId: m.id, x: m.x, y: m.y, standStill: cmd.standStill, repeat: true };
         return;
@@ -1674,11 +1692,13 @@ export class Game {
           return;
         }
         p.holdUntil = this.tickCount + 8;
+        p.pending = null;
         p.action = { kind: 'skill', skillId: cmd.skill, targetId: cmd.targetId, targetItem: cmd.targetItem, x: cmd.x, y: cmd.y, standStill: true, repeat: false };
         return;
       }
       case 'pickup': {
         if (!this.ground.some((g) => g.item.id === cmd.itemId)) return;
+        p.pending = null;
         p.action = { kind: 'pickup', itemId: cmd.itemId };
         return;
       }
@@ -1745,7 +1765,12 @@ export class Game {
         return;
       }
       case 'interact': {
-        if (this.isBusy()) return;
+        if (this.isBusy()) {
+          p.action = null;
+          p.pending = cmd;
+          return;
+        }
+        p.pending = null;
         const n = this.level.npcs.find((x) => x.id === cmd.unitId && x.npc?.interact);
         if (n) {
           this.closeTalk();
@@ -1931,6 +1956,12 @@ export class Game {
     }
     if (s.delay && this.player.states.has('skilldelay') && (data.skillCalc?.eval(s, s.delay, this.skillLevel(s), this.owner()) ?? 0) > 0) return 'delay';
     return 'usable';
+  }
+
+  /** 플레이어가 아무 행동도 하지 않는 중 (입력: 버튼을 누른 채 대상이 죽으면 커서 아래를 다시 본다) */
+  get playerIdle(): boolean {
+    const p = this.player;
+    return !p.action && !p.cast && !p.pending && p.path.length === 0 && p.mode !== 'GH' && p.mode !== 'BL';
   }
 
   private isBusy(): boolean {
@@ -2326,6 +2357,12 @@ export class Game {
       if (this.tickCount < p.modeEnd) return;
       p.mode = 'NU';
       p.modeStart = this.tickCount;
+    }
+    // 동작 중에 받아 둔 이동·말 걸기 클릭을 지금 실행
+    if (p.pending) {
+      const cmd = p.pending;
+      p.pending = null;
+      this.apply(cmd);
     }
     const act = p.action;
     if (act?.kind === 'skill') {
@@ -2882,7 +2919,7 @@ export class Game {
       }
       if (isInMeleeRange(p.x, p.y, PLAYER_SIZE, 0, alive.x, alive.y, alive.type.sizeX)) {
         p.path = [];
-        this.startCast(s, alive.id, alive.x, alive.y);
+        if (this.startCast(s, alive.id, alive.x, alive.y)) act.started = true;
         if (!act.repeat) p.action = null;
       } else if (act.standStill) {
         this.startCast(s, alive.id, alive.x, alive.y);
@@ -2895,7 +2932,7 @@ export class Game {
     }
     // 원거리·시전·함성: 제자리에서 대상/지점 방향으로
     p.path = [];
-    this.startCast(s, alive?.id, alive ? alive.x : act.x, alive ? alive.y : act.y);
+    if (this.startCast(s, alive?.id, alive ? alive.x : act.x, alive ? alive.y : act.y)) act.started = true;
     if (!act.repeat) p.action = null;
   }
 

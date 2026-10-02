@@ -590,6 +590,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const cam: Camera = { x: world.start.x, y: world.start.y, width: WIDTH, height: HEIGHT };
   const ch = game.character!;
   const input = new InputController(canvas, () => cam, (c) => game.enqueue(c), () => ({ left: ch.leftSkill, right: ch.rightSkill }));
+  input.idle = () => game.playerIdle;
   // 인벤토리 패널·커서 아이템 클릭 처리 (원작: 왼쪽 = 집기/놓기, 오른쪽 = 사용, 패널 밖에 들고 클릭 = 떨어뜨리기)
   let identifyWith: number | null = null;
   // 컨트롤 패널 상태·동작 (아래 게임 루프 준비에서 채운다)

@@ -15,6 +15,8 @@ export type ItemLocation =
 
 export type Command =
   | { type: 'move'; x: number; y: number; run: boolean }
+  /** 마우스 버튼을 뗌: 왼쪽이면 반복 공격을 지금 동작까지만 (원작: 누르고 있는 동안만 클라이언트가 공격을 다시 보낸다) */
+  | { type: 'release'; button: 'left' | 'right' }
   | { type: 'attack'; targetId: number; standStill: boolean }
   | { type: 'useSkill'; skill: number; hand: 'left' | 'right'; x: number; y: number; targetId?: number; targetItem?: number }
   | { type: 'pickup'; itemId: number }

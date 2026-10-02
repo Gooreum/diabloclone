@@ -76,5 +76,14 @@ test('Skill 1 을 Z 로 바꿔 등록·전환, 기본 F2 도 되고 F키로 새�
   await page.keyboard.press('F5');
   await page.waitForTimeout(500);
   expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker)).toBe(7);
+
+  // Skill 1 을 Z 로 바꿔 F1 은 단축키가 없어도 브라우저 동작(도움말 등)을 막는다. F3(찾기)도. F12(개발자 도구)는 그대로
+  await page.evaluate(() => {
+    const w = window as unknown as { __keys: [string, boolean][] };
+    w.__keys = [];
+    addEventListener('keydown', (e) => w.__keys.push([e.key, e.defaultPrevented]));
+  });
+  for (const k of ['F1', 'F3', 'F12']) await page.keyboard.press(k);
+  expect(await page.evaluate(() => (window as unknown as { __keys: [string, boolean][] }).__keys)).toEqual([['F1', true], ['F3', true], ['F12', false]]);
   expect(errors).toEqual([]);
 });

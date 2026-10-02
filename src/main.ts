@@ -884,6 +884,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     };
     const onBlur = () => (altHeld = false);
     const onKey = (e: KeyboardEvent) => {
+      // 게임 중 F1~F10 은 단축키가 없어도 브라우저 동작(도움말·새로고침·찾기 …) 대신 게임으로. F11 전체 화면·F12 개발자 도구는 그대로
+      if (/^F([1-9]|10)$/.test(e.key)) e.preventDefault();
       // 금화 창이 떠 있으면 숫자·Enter·Esc 만
       if (goldPopup.key(e)) return;
       // 게임 메뉴가 열려 있으면 위·아래·Enter·Esc 만 (단축키 바꾸는 중이면 그 키)
@@ -1236,9 +1238,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       }
       hoverMonster = null;
       if (input.mouse) {
-        const mx = input.mouse.x, my = input.mouse.y;
-        // 바닥 이름표를 가리키면 몬스터 이름 막대는 없다 (가리킨 것 하나만)
-        const pick = hoverNow?.kind === 'item' ? undefined : [...input.pickBoxes].reverse().find((b) => (b.kind === 'monster' || b.kind === 'npc') && mx >= b.x && my >= b.y && mx < b.x + b.w && my < b.y + b.h);
+        // 가리킨 유닛 (조준 보조로 잡힌 몬스터 포함). 바닥 이름표를 가리키면 몬스터 이름 막대는 없다 (가리킨 것 하나만)
+        const pick = hoverNow?.kind === 'monster' || hoverNow?.kind === 'npc' ? hoverNow : undefined;
         const hm = pick ? s.monsters.find((x) => x.id === pick.id && x.mode !== 'DT' && x.mode !== 'DD') : undefined;
         if (hm?.npc) {
           // 원작: NPC 위에 마우스를 올리면 이름만 (생명 막대 없음)

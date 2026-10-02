@@ -102,7 +102,11 @@ class SoundFiles {
   }
 }
 
-interface Voice { name: string; priority: number; src: AudioBufferSourceNode; gain: GainNode; channel: Channel; stop: (fade: number) => void }
+interface Voice {
+  name: string; priority: number; src: AudioBufferSourceNode; gain: GainNode; channel: Channel; stop: (fade: number) => void;
+  /** 월드 위치에서 난 소리 (레벨이 바뀌면 끈다), 시작 시각 (AudioContext 초) */
+  positional: boolean; startedAt: number;
+}
 
 interface Tables {
   sounds: SoundTable; env: SoundEnvTable; mon: MonsterSounds; items: ItemSoundTable; skills: SkillSoundTable; missiles: MissileSoundTable;
@@ -251,7 +255,7 @@ export class SoundSystem {
    * 소리 하나 재생. at = 월드 위치(서브타일) → 거리 감쇠·좌우 위치. delay = 초.
    * 반환: 재생 시작 여부 (비동기 — 버퍼 준비 후)
    */
-  play(name: string, opt: { at?: { x: number; y: number }; delay?: number; channel?: Channel; volume?: number } = {}): Promise<Voice | null> {
+  play(name: string, opt: { at?: { x: number; y: number }; delay?: number; channel?: Channel; volume?: number; loop?: boolean } = {}): Promise<Voice | null> {
     const channel = opt.channel ?? 'sfx';
     const hit = this.entry(name);
     if (!hit) {
@@ -279,11 +283,14 @@ export class SoundSystem {
     return this.buffer(path).then((buf) => {
       const c = this.context();
       if (!buf || !c) return null;
-      return this.start(c, buf, e, path, channel, gain, pan, opt.delay ?? 0);
+      // 효과음은 주인이 관리하는 소리(loop: true — 미사일 TravelSound)만 반복한다. 그 밖의 자리(맞는 소리·사건 소리)에서는
+      // sounds.txt Loop 소리도 한 번만 — 끌 주인이 없어 영원히 남기 때문 (원작은 소리가 유닛에 붙어 유닛과 함께 끝난다: SUNIT_AttachSound)
+      const loop = e.loop && (channel !== 'sfx' || opt.loop === true);
+      return this.start(c, buf, e, path, channel, gain, pan, opt.delay ?? 0, loop, !!opt.at);
     });
   }
 
-  private start(c: AudioContext, buf: AudioBuffer, e: SoundEntry, path: string, channel: Channel, gain: number, pan: number, delay: number): Voice | null {
+  private start(c: AudioContext, buf: AudioBuffer, e: SoundEntry, path: string, channel: Channel, gain: number, pan: number, delay: number, loop = e.loop, positional = false): Voice | null {
     if (e.stopInst) for (const v of this.voices.filter((x) => x.name === e.name)) v.stop(0);
     // 동시 재생 수 제한: 우선순위가 가장 낮은 소리를 끊는다 (sounds.txt Priority)
     const oneShots = this.voices.filter((v) => v.channel === 'sfx');
@@ -294,7 +301,7 @@ export class SoundSystem {
     }
     const src = c.createBufferSource();
     src.buffer = buf;
-    src.loop = e.loop;
+    src.loop = loop;
     const g = c.createGain();
     const t0 = c.currentTime + delay;
     const fadeIn = e.fadeIn / ENGINE_FPS;
@@ -312,7 +319,7 @@ export class SoundSystem {
     node.connect(g);
     g.connect(channel === 'music' ? (this.musicBus as GainNode) : (this.sfxBus as GainNode));
     const voice: Voice = {
-      name: e.name, priority: e.priority, src, gain: g, channel,
+      name: e.name, priority: e.priority, src, gain: g, channel, positional, startedAt: c.currentTime,
       stop: (fade: number) => {
         const now = c.currentTime;
         try {
@@ -416,7 +423,17 @@ export class SoundSystem {
     this.speech = null;
   }
 
+  /**
+   * 레벨이 바뀜: 앞 레벨의 월드 소리를 끈다 — 반복 소리는 전부, 한 번 나는 소리는 방금(0.5초 안) 난 것(포털·웨이포인트 소리)만 남긴다.
+   * 근사(원작 미확인): 원작은 유닛이 사라지면 그 유닛에 붙은 소리가 끝난다
+   */
+  stopWorldSounds(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    for (const v of [...this.voices]) if (v.channel === 'sfx' && (v.src.loop || (v.positional && now - v.startedAt > 0.5))) v.stop(0.2);
+  }
+
   stopAll(): void {
+    for (const v of [...this.voices]) if (v.channel === 'sfx') v.stop(0);
     this.setMusic(null);
     this.setAmbience(null);
     this.setWeather(null);
@@ -482,6 +499,8 @@ class GameListener {
   private missiles = new Map<number, { name: string; x: number; y: number }>();
   /** 미사일마다 재생 중인 비행음 — 미사일이 사라지면 멈춘다 (반복 비행음이 계속 울리던 문제) */
   private travelVoices = new Map<number, Promise<Voice | null>>();
+  /** 레벨을 옮긴 뒤 이 틱까지의 스냅숏은 앞 레벨 것 (상태 소리를 내지 않는다) */
+  private staleUntil = -1;
   private levelId = '';
   private env: SoundEnv | undefined;
   /** 지금 밤 배경음인지 */
@@ -511,6 +530,16 @@ class GameListener {
   private enterLevel(): void {
     const t = this.s.table;
     if (!t) return;
+    // 앞 레벨의 소리 정리: 날아가던 미사일의 반복 소리를 끄고, 사라진 미사일을 "맞았다"고 소리 내지 않는다
+    if (this.levelId !== '' && this.levelId !== this.game.levelId) {
+      this.s.stopWorldSounds();
+      this.travelVoices.clear();
+      this.missiles = new Map();
+      this.monModes.clear();
+      this.neutralAt.clear();
+      // 지금 들고 있는 스냅숏은 앞 레벨 것 — 새 스냅숏이 올 때까지 상태 소리를 건너뛴다
+      this.staleUntil = this.snap?.tick ?? -1;
+    }
     this.levelId = this.game.levelId;
     const def = this.game.levelDef(this.levelId);
     this.env = t.env.forLevel(def?.levelNo);
@@ -536,7 +565,7 @@ class GameListener {
     const snap = this.snap;
     if (snap) this.s.setListener(snap.player.x, snap.player.y);
     for (const ev of evs) this.onEvent(ev, t);
-    if (snap) this.onState(snap, t);
+    if (snap && snap.tick > this.staleUntil) this.onState(snap, t);
     this.ambientEvent(t);
   }
 
@@ -791,7 +820,7 @@ class GameListener {
       now.set(m.id, { name: m.name, x: m.x, y: m.y });
       if (!this.missiles.has(m.id)) {
         const ms = t.missiles.of(m.name);
-        if (ms?.travel) this.travelVoices.set(m.id, s.play(ms.travel, { at: { x: m.x, y: m.y } }));
+        if (ms?.travel) this.travelVoices.set(m.id, s.play(ms.travel, { at: { x: m.x, y: m.y }, loop: true }));
       }
     }
     for (const [id, m] of this.missiles) if (!now.has(id)) {

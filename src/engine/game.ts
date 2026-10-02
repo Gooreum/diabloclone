@@ -4834,6 +4834,17 @@ export class Game {
     return this.rules.aiCurseDivisor;
   }
 
+  /**
+   * 미사일이 부딪힌 자리의 그림 (Missiles.txt ExplosionMissile + CltHitSubMissile1~4) — 피해 없음, 서버 HitSubMissile 은 따로.
+   * 근사(원작 미확인): 클라이언트 처리(pCltHitFunc)의 위치 흩뿌림·방향은 반영하지 않고 부딪힌 자리에 그대로
+   */
+  private clientExplode(ms: Missile): void {
+    for (const name of [ms.def.explosionMissile, ...(ms.def.cltHitSub ?? [])]) {
+      const def = name ? this.data?.missiles.get(name) : undefined;
+      if (def) this.spawnVisual(name, ms.x, ms.y, { life: Math.max(1, def.range || def.animLen) });
+    }
+  }
+
   /** 그림만 보이는 미사일 (클라이언트 미사일·오버레이). celFile 이 'overlays\\…' 면 오버레이 폴더 그림 */
   private spawnVisual(name: string, x: number, y: number, o: { celFile?: string; frames?: number; life?: number; to?: Pt } = {}): void {
     const base = this.data?.missiles.get(name) ?? this.data?.missiles.values().next().value;
@@ -10925,8 +10936,12 @@ export class Game {
     for (let k = 0; k < steps; k++) {
       ms.x += ms.dx / steps;
       ms.y += ms.dy / steps;
-      if ((this.map.mask(Math.floor(ms.x), Math.floor(ms.y)) & (0x04 | 0x0800 | 0x0020)) !== 0) return true;
+      if ((this.map.mask(Math.floor(ms.x), Math.floor(ms.y)) & (0x04 | 0x0800 | 0x0020)) !== 0) {
+        this.clientExplode(ms);
+        return true;
+      }
       if (!allied && pAlive && footprintsOverlap(ms.x, ms.y, size, p.x, p.y, PLAYER_SIZE)) {
+        this.clientExplode(ms);
         this.hitPlayer({ min: ms.damage?.min ?? 0, max: ms.damage?.max ?? 0, toHit: ms.toHit ?? 0 }, ms.ownerLevel, ms.hitClass, true, undefined, ms.mpkt, ms.alwaysHit);
         this.chillingArmorReturn(ms);
         return true;
@@ -11019,6 +11034,7 @@ export class Game {
       ? (this.map.mask(Math.floor(ms.x), Math.floor(ms.y)) & (0x04 | 0x0800 | 0x0020)) !== 0
       : !this.map.walkable(Math.floor(ms.x), Math.floor(ms.y));
     if (blocked || ms.left <= 0) {
+      if (blocked || ms.def.alwaysExplode) this.clientExplode(ms);
       this.missileEnd(ms, undefined);
       return true;
     }
@@ -11055,6 +11071,7 @@ export class Game {
       ms.hit.add(m.id);
       ms.group?.add(m.id);
       ms.rehit?.set(m.id, ms.age + Math.max(1, ms.def.nextDelay));
+      this.clientExplode(ms);
       this.onMissileCollide(ms, m);
       if (ms.def.collideKill && !ms.pass?.(m)) {
         if (ms.pierceChance && this.rng.pick(100) < ms.pierceChance) continue;

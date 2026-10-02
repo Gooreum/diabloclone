@@ -121,3 +121,37 @@ describe.skipIf(!hasGameData)('피 튀김 (MonStats2 Bleed)', () => {
     expect(visuals(game).filter((n) => n.includes('blood')).every((n) => ['blood1', 'blood2', 'bigblood1', 'bigblood2'].includes(n))).toBe(true);
   });
 });
+
+describe.skipIf(!hasGameData)('미사일 폭발 그림 (ExplosionMissile · CltHitSubMissile)', () => {
+  const fireBolt = () => data.skills!.byNameOf('Fire Bolt')!;
+  function sorc() {
+    const r = setup('Sorceress');
+    r.ch.skills[fireBolt().id] = 1;
+    r.ch.mana = r.ch.maxMana = 1000;
+    return r;
+  }
+  function castAt(game: Game, x: number, y: number, targetId?: number, ticks = 60): string[] {
+    const seen = new Set<string>();
+    game.enqueue({ type: 'useSkill', skill: fireBolt().id, hand: 'right', x, y, ...(targetId !== undefined ? { targetId } : {}) });
+    for (let i = 0; i < ticks; i++) {
+      game.tick();
+      for (const n of visuals(game)) seen.add(n);
+    }
+    return [...seen];
+  }
+  it('Fire Bolt 이 몬스터에 맞으면 fireexplode', () => {
+    expect(data.missiles.get('firebolt')!.explosionMissile).toBe('fireexplode');
+    const { game } = sorc();
+    const m = dummy(game, 'zombie1', 26.5, 20.5);
+    expect(castAt(game, m.x, m.y, m.id)).toContain('fireexplode');
+  });
+  it('아무것도 안 맞고 사거리가 끝나면 (AlwaysExplode 아님) 폭발 없음', () => {
+    expect(data.missiles.get('firebolt')!.alwaysExplode).toBe(false);
+    const { game } = sorc();
+    expect(castAt(game, 40.5, 20.5)).not.toContain('fireexplode');
+  });
+  it('Fire Ball 은 CltHitSubMissile(fireexplosion2) 도 같이', () => {
+    const fb = data.missiles.get('fireball')!;
+    expect(fb.cltHitSub).toContain('fireexplosion2');
+  });
+});

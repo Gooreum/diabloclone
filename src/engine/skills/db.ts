@@ -62,6 +62,8 @@ export interface SkillRecord {
   /** skills.txt aitype (1 = 스스로 거는 상태 스킬 — 상태가 있으면 AI 가 다시 쓰지 않는다: Frozen Armor) */
   aiType: number;
   /** 무술 차지 (skills.txt progressive · prgstack · srvprgfunc1~3 · prgcalc1~3 · prgdam · prgoverlay · prgsound) */
+  /** 시전할 때 시전자에 한 번 도는 그림 (castoverlay → overlay.txt) */
+  castOverlay: string;
   progressive: boolean; prgStack: boolean; srvPrgFunc: number[]; prgCalc: (CalcNode | null)[]; prgDam: number; prgOverlay: string; prgSound: string;
   /** 대상에게 그리는 오버레이 (skills.txt tgtoverlay) */
   tgtOverlay: string;
@@ -110,7 +112,7 @@ function parseSkill(r: TxtRow, desc: TxtRow | undefined, str: (k: string) => str
     eType: r.EType ?? '', eMin: n(r.EMin), eMinLev: lev('EMinLev'), eMax: n(r.EMax), eMaxLev: lev('EMaxLev'), eDmgSymPerCalc: calc(r.EDmgSymPerCalc),
     eLen: n(r.ELen), eLevLen: [1, 2, 3].map((i) => n(r[`ELevLen${i}`])), eLenSymPerCalc: calc(r.ELenSymPerCalc), aiType: n(r.aitype),
     progressive: flag(r.progressive), prgStack: flag(r.prgstack), srvPrgFunc: [n(r.srvprgfunc1), n(r.srvprgfunc2), n(r.srvprgfunc3)],
-    prgCalc: [calc(r.prgcalc1), calc(r.prgcalc2), calc(r.prgcalc3)], prgDam: n(r.prgdam), prgOverlay: r.prgoverlay ?? '', prgSound: r.prgsound ?? '',
+    prgCalc: [calc(r.prgcalc1), calc(r.prgcalc2), calc(r.prgcalc3)], prgDam: n(r.prgdam), prgOverlay: r.prgoverlay ?? '', prgSound: r.prgsound ?? '', castOverlay: (r.castoverlay ?? '').toLowerCase(),
     tgtOverlay: r.tgtoverlay ?? '',
     restrict: n(r.restrict), states: [r.State1, r.State2, r.State3].map((x) => x ?? ''),
     sumSkill2: r.sumskill2 ?? '', sumSk2Calc: calc(r.sumsk2calc),

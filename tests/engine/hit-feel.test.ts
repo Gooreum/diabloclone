@@ -5,6 +5,7 @@ import { gameChain, hasGameData } from '../support/gamedata';
 import { GameTables } from '../../src/data/tables';
 import { buildGameData } from '../../src/data/gamedata';
 import { impactSounds } from '../../src/data/sounds';
+import { parsePl2Hues } from '../../src/formats/pl2';
 import { Game, type GameData, type GameEvent } from '../../src/engine/game';
 import { CollisionMap } from '../../src/engine/collision';
 import { Rng } from '../../src/engine/rng';
@@ -153,5 +154,53 @@ describe.skipIf(!hasGameData)('미사일 폭발 그림 (ExplosionMissile · CltH
   it('Fire Ball 은 CltHitSubMissile(fireexplosion2) 도 같이', () => {
     const fb = data.missiles.get('fireball')!;
     expect(fb.cltHitSub).toContain('fireexplosion2');
+  });
+});
+
+describe.skipIf(!hasGameData)('상태 색 · 시전 섬광', () => {
+  it('냉기(cold) 걸린 몬스터 스냅샷에 colorshift 108, 독은 104, 아무 상태 없으면 없음', () => {
+    const { game } = setup();
+    const m = dummy(game);
+    const snap = () => game.snapshot().monsters.find((x) => x.id === m.id)!;
+    expect(snap().stateShift).toBeUndefined();
+    m.states.set('poison', game.snapshot().tick + 100, { hpregen: -1 });
+    expect(snap().stateShift).toBe(104);
+    // 냉기(colorpri 100) 가 독(95) 보다 앞선다
+    m.states.set('cold', game.snapshot().tick + 100, {});
+    expect(snap().stateShift).toBe(108);
+  });
+  it('Fire Bolt 시전: castoverlay fire_cast_1 이 시전자 자리에 잠깐', () => {
+    const { game, ch } = setup('Sorceress');
+    const fb = data.skills!.byNameOf('Fire Bolt')!;
+    expect(fb.castOverlay).toBe('fire_cast_1');
+    ch.skills[fb.id] = 1;
+    ch.mana = ch.maxMana = 1000;
+    game.enqueue({ type: 'useSkill', skill: fb.id, hand: 'right', x: 30.5, y: 20.5 });
+    let seen = false;
+    for (let i = 0; i < 10; i++) {
+      game.tick();
+      if (game.snapshot().missiles.some((x) => x.name === 'overlay:fire_cast_1')) seen = true;
+    }
+    expect(seen).toBe(true);
+    for (let i = 0; i < 60; i++) game.tick();
+    expect(game.snapshot().missiles.some((x) => x.name === 'overlay:fire_cast_1')).toBe(false);
+  });
+});
+
+describe.skipIf(!hasGameData)('Pal.PL2 색 바꾸기 표 (상태 색)', () => {
+  it('ACT1 Pal.PL2 의 108 번 표는 파란 쪽, 104 번은 초록 쪽으로 바꾼다', () => {
+    const b = gameChain().read('data\\global\\palette\\ACT1\\Pal.pl2')!;
+    const hues = parsePl2Hues(b);
+    expect(hues.length).toBe(111 * 256);
+    const avg = (t: number) => {
+      const s: [number, number, number] = [0, 0, 0];
+      for (let i = 1; i < 255; i++) for (let k = 0; k < 3; k++) s[k]! += b[hues[t * 256 + i]! * 4 + k]!;
+      return s;
+    };
+    const [r1, g1, b1] = avg(108), [r2, g2, b2] = avg(104);
+    expect(b1).toBeGreaterThan(r1);
+    expect(b1).toBeGreaterThan(g1);
+    expect(g2).toBeGreaterThan(r2);
+    expect(g2).toBeGreaterThan(b2);
   });
 });

@@ -71,6 +71,9 @@ function monsterSpec(d: Pick<SceneDeps, 'units' | 'monsters' | 'shadowLook'>, m:
   // 색: 변종 palshift / 유니크 RandTransforms (불러오는 중이면 한 프레임 쉰다)
   const shift = d.units.monsterShift(t.code, t.transLvl, m.uniqueTrans);
   if (shift === undefined) return undefined;
+  // 상태 색 (냉기·독 …)이 변종·유니크 색보다 앞선다
+  const st = m.stateShift !== undefined ? d.units.stateShift(m.stateShift) : null;
+  if (st) return { root: 'MONSTERS', token: t.code, mode: m.anim?.mode ?? m.mode, wclass: t.baseW, equip, shift: st };
   // 시퀀스(SQ): 엔진이 준 모드·프레임 (monseq.txt)
   return { root: 'MONSTERS', token: t.code, mode: m.anim?.mode ?? m.mode, wclass: t.baseW, equip, shift };
 }
@@ -231,7 +234,8 @@ export function buildScene(s: Readonly<WorldSnapshot>, cam: Camera, d: SceneDeps
   // 원작 캐릭터 죽기(DT)·시체(DD) COF 는 맨손(HTH)만 있다
   // 죽기·시체·발차기(KK) COF 는 맨손(HTH)만 있다
   const wclass = mode === 'DT' || mode === 'DD' || mode === 'KK' ? 'HTH' : d.playerWclass;
-  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass, equip: d.playerEquip }, pm.dir);
+  const st = pm.stateShift !== undefined ? d.units.stateShift(pm.stateShift) : null;
+  const shown = d.units.getFor('player', { root: 'CHARS', token: d.playerToken, mode, wclass, equip: d.playerEquip, ...(st ? { shift: st } : {}) }, pm.dir);
   const looping = ['NU', 'WL', 'RN', 'TN', 'TW'].includes(mode);
   const frame = pm.anim ? pm.anim.frame : animFrame(d.anim, `${d.playerToken}${mode}${wclass}`, pm.modeTick, looping);
   out.push({

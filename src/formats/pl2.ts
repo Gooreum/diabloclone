@@ -35,6 +35,17 @@ export function parsePl2Text(buf: Uint8Array): Pl2Text {
 // 출처: OpenDiablo2 d2fileformats/d2pl2/pl2.go — BasePalette · LightLevelVariations[32]; 원작 ACT1 Pal.PL2 직접 확인 (31번 줄 = 항등)
 export const LIGHT_LEVELS = 32;
 
+// 색 바꾸기 표 (HueVariations 111 × 256): BasePalette 1024 · LightLevel 32×256 · InvColor 16×256 · SelectedUnitShift 256 · AlphaBlend 3×256×256 ·
+// AdditiveBlend 256×256 · MultiplicativeBlend 256×256 바로 뒤 (= 341248 바이트째). states.txt colorshift 가 이 표 번호 (냉기 108 · 독 104).
+// 출처: OpenDiablo2 d2fileformats/d2pl2/pl2.go 구조 순서; 원작 ACT1 Pal.PL2 = 443175 바이트 (끝 TextColorShifts 까지 합이 맞는다)
+export const HUE_OFFSET = 1024 + 32 * 256 + 16 * 256 + 256 + 3 * 256 * 256 + 256 * 256 + 256 * 256;
+export const HUE_COUNT = 111;
+
+export function parsePl2Hues(buf: Uint8Array): Uint8Array {
+  if (buf.length < HUE_OFFSET + HUE_COUNT * 256) throw new Error(`pl2: too short (${buf.length})`);
+  return buf.slice(HUE_OFFSET, HUE_OFFSET + HUE_COUNT * 256);
+}
+
 export function parsePl2Light(buf: Uint8Array): Uint8Array {
   if (buf.length < 1024 + LIGHT_LEVELS * 256) throw new Error(`pl2: too short (${buf.length})`);
   return buf.slice(1024, 1024 + LIGHT_LEVELS * 256);

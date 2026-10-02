@@ -28,7 +28,7 @@ import { GlSink, glStats } from './render/gl/glsink';
 import { buildLightMap, type LightMap } from './render/lightmap';
 import { Rain, weatherKind } from './render/weather';
 import { FULL_LIGHT, LightTables, PLAYER_LIGHT, ambientOf, lightSources } from './engine/lighting';
-import { parsePl2Light } from './formats/pl2';
+import { parsePl2Hues, parsePl2Light } from './formats/pl2';
 import { type Camera } from './render/iso';
 import { gfxBusy, ItemGfx, MissileGfx, UnitGfx, unitGfxStats } from './render/units';
 import { buildScene, warmLevel } from './render/scene';
@@ -439,7 +439,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     }
     const v: ActView = { world: w, pal: apal, units: new UnitGfx(assets), itemGfx: new ItemGfx(assets), missileGfx: new MissileGfx(assets), light: null };
     void assets.load(`data\\global\\palette\\ACT${act + 1}\\Pal.pl2`).then((b) => {
-      if (b) v.light = parsePl2Light(b);
+      if (b) {
+        v.light = parsePl2Light(b);
+        v.units.hues = parsePl2Hues(b);
+      }
     }).catch(() => undefined);
     views.set(act, v);
     return v;

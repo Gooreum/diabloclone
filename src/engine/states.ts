@@ -124,6 +124,25 @@ export function parseStateInfo(states: Record<string, string | undefined>[]): Ma
   return out;
 }
 
+/** states.txt colorpri / colorshift: 상태가 걸린 유닛 색 (Pal.PL2 색 바꾸기 표 번호). 여러 개면 colorpri 가 가장 큰 것 */
+export interface StateColor { pri: number; shift: number }
+
+export function parseStateColors(states: Record<string, string | undefined>[]): Map<string, StateColor> {
+  const out = new Map<string, StateColor>();
+  for (const r of states) if (r.state && Number(r.colorpri)) out.set(r.state, { pri: Number(r.colorpri), shift: Number(r.colorshift) || 0 });
+  return out;
+}
+
+/** 걸린 상태 중 colorpri 가 가장 큰 상태의 colorshift (없으면 undefined) */
+export function stateColorShift(table: Map<string, StateColor> | undefined, names: Iterable<string>): number | undefined {
+  let best: StateColor | undefined;
+  if (table) for (const n of names) {
+    const c = table.get(n);
+    if (c && (!best || c.pri > best.pri)) best = c;
+  }
+  return best?.shift;
+}
+
 export function parseStateGroups(states: Record<string, string | undefined>[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const r of states) if (r.state && Number(r.group)) out.set(r.state, Number(r.group));

@@ -136,6 +136,16 @@ export class UnitGfx {
     return undefined;
   }
 
+  /** 막 팔레트(Pal.PL2)의 색 바꾸기 표 111 × 256 — 상태 색 (states.txt colorshift). 불러오기 전이면 null */
+  hues: Uint8Array | null = null;
+
+  /** 상태 색 표 (냉기 108 파랑 · 독 104 초록 …). 표가 아직 없으면 null */
+  stateShift(index: number): ColorShift | null {
+    const h = this.hues;
+    if (!h || index < 0 || (index + 1) * 256 > h.length) return null;
+    return { key: `hue${index}`, map: h.subarray(index * 256, index * 256 + 256) };
+  }
+
   /**
    * 몬스터 색 바꿈 표. 유니크 = RandTransforms.dat 의 (Utrans − 2) 번째, 아니면 변종 = <토큰>\COF\palshift.dat 의 (TransLvl + 2) 번째.
    * 출처: 원작 파일 data\global\monsters\RandTransforms.dat (30 × 256), <토큰>\COF\palshift.dat (8 × 256), monstats TransLvl, SuperUniques/MonStats2 Utrans

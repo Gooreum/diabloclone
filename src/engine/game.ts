@@ -18,7 +18,7 @@ import { ChaosState, SEAL_IDS, type ChaosAction } from './chaos';
 import { addExperience, spendStat, HOTKEY_SLOTS, type Character, type ClassName, type ClassStats, type ExpTable, type SkillHotkey } from './player';
 import { blockChance, hitChance, playerAttackRating, playerDefense, rollDamage, rollPercent } from './combat';
 import { adjustedExperience } from './experience';
-import { StateList, type StateInfo, type StateOverlayDef } from './states';
+import { StateList, stateColorShift, type StateColor, type StateInfo, type StateOverlayDef } from './states';
 import { ItemStore, WEAPON_SLOTS, type WeaponSlot } from './itemstore';
 import { computeDerived, itemSkillBonus, skillBonusOf, usableCharms, type Derived, type ItemSkillBonus } from './charstats';
 import { gemStats, statOf } from './itemgen';
@@ -111,6 +111,8 @@ export interface GameData {
   gamble?: GambleTable;
   /** states.txt 상태 → overlay.txt 그림 (상태 오버레이). 출처: states.txt overlay1~4, overlay.txt Filename/Frames */
   stateOverlays?: Map<string, StateOverlayDef[]>;
+  /** states.txt colorpri/colorshift (상태 색 — 냉기 파랑, 독 초록) */
+  stateColors?: Map<string, StateColor>;
   /** states.txt group (같은 group 상태는 서로 지운다 — Fade·Burst of Speed, 아머 3종) */
   stateGroups?: Map<string, number>;
   /** states.txt 주기 함수·변신 정보 */
@@ -237,6 +239,8 @@ export interface PlayerSnapshot {
   anim?: { mode: string; frame: number };
   /** 변신 (늑대·곰): 그릴 몬스터 (monstats Id) — states.txt gfxtype 1 · gfxclass */
   shape?: { typeId: string };
+  /** 상태 색 (states.txt colorshift) */
+  stateShift?: number;
   life: number; maxLife: number; mana: number; maxMana: number; level: number; experience: number; gold: number;
   /** 스태미나 (장비·Increased Stamina·신전 포함 최대치). 달리기 중(running) — 스태미나가 다하면 false 로 바뀐다 */
   stamina: number; maxStamina: number; running: boolean;
@@ -255,6 +259,8 @@ export interface MonsterSnapshot {
   components?: Record<string, number>;
   /** 유니크 색 (RandTransforms 번호 + 2, 원작 Utrans 값) — 없으면 undefined */
   uniqueTrans?: number;
+  /** 상태 색 (states.txt colorshift — Pal.PL2 색 바꾸기 표 번호) */
+  stateShift?: number;
   /** 시퀀스(SQ) 모드면 지금 그릴 모드·프레임 */
   anim?: { mode: string; frame: number };
   /** 마을 NPC·장식 (공격 불가), 말을 걸 수 있음, 플레이어의 용병, 퀘스트 이야기가 있음 (원작 QUESTS_ActiveCycler 느낌표) */
@@ -1008,6 +1014,12 @@ export class Game {
     return this.events;
   }
 
+  /** 상태 색 스냅샷 칸 (없으면 빈 객체) */
+  private stateShiftOf(names: Iterable<string>): { stateShift?: number } {
+    const s = stateColorShift(this.data?.stateColors, names);
+    return s === undefined ? {} : { stateShift: s };
+  }
+
   /** 물약 상태로 앞으로 더 찰 양 (남은 프레임 × potion / 256) */
   private potionLeft(name: string): number {
     const s = this.player.states.get(name);
@@ -1023,6 +1035,7 @@ export class Game {
       player: {
         id: p.id, x: p.x, y: p.y, mode: p.mode, dir: p.dir, modeTick: this.tickCount - p.modeStart, anim: this.seqAnim(),
         ...(this.shapeType() ? { shape: { typeId: (this.shapeType() as MonsterType).id } } : {}),
+        ...this.stateShiftOf(p.states.names()),
         life: c?.life ?? 0, maxLife: this.maxLife(), mana: c?.mana ?? 0, maxMana: this.maxMana(),
         stamina: Math.min(c?.stamina ?? 0, this.maxStamina()), maxStamina: this.maxStamina(), running: p.running,
         level: c?.level ?? 1, experience: c?.experience ?? 0, gold: this.gold,
@@ -1038,7 +1051,7 @@ export class Game {
           hp: m.hp, maxHp: m.stats.maxHp, states: m.states.names(), ...(m.pet ? { ally: true } : {}),
           ...(m.npc ? { npc: true, interact: m.npc.interact, ...(m.npc.interact && this.questControl.npcHasQuest(m.type.id) ? { quest: true } : {}) } : {}), ...(m.pet?.hireling ? { merc: true } : {}),
           flags: m.flags, umods: [...m.umods], nameSeed: m.nameSeed, ...(m.superUnique !== undefined ? { superUnique: m.superUnique } : {}),
-          ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...(anim ? { anim } : {}),
+          ...(m.components ? { components: m.components } : {}), ...(ut !== undefined ? { uniqueTrans: ut } : {}), ...this.stateShiftOf(m.states.names()), ...(anim ? { anim } : {}),
           ...(m.hidden ? { untargetable: true } : {}),
           ...(m.pet?.shadow ? { shadow: { cls: m.pet.shadow.cls, equipment: m.pet.shadow.equipment } } : {}),
         };
@@ -1079,6 +1092,12 @@ export class Game {
       if (o) out.push({ id: -(p.id * 64 + 40 + i + 1), name: `overlay:${c.s.prgOverlay}`, x: p.x, y: p.y, dir: 0, celFile: `overlays\\${o.file}`, frame: this.tickCount % o.frames, ...(o.trans ? { blend: o.trans } : {}) });
     });
     for (const m of [...this.monsters, ...this.pets]) if (m.mode !== 'DD' && m.mode !== 'DT') add(m.id, m.x, m.y, m.states.names());
+    // 시전 섬광: 프레임을 다 돈 것은 그리지 않는다 (근사(원작 미확인): overlay.txt AnimRate 대신 프레임당 1 틱)
+    this.castFx.filter((f) => this.tickCount - f.start < f.frames).forEach((f, i) => {
+      const o = this.data?.overlays?.get(f.name);
+      if (!o || f.unitId !== p.id) return;
+      out.push({ id: -(p.id * 64 + 50 + i), name: `overlay:${f.name}`, x: p.x, y: p.y, dir: 0, celFile: `overlays\\${o.file}`, frame: this.tickCount - f.start, ...(o.trans ? { blend: o.trans } : {}) });
+    });
     return out;
   }
 
@@ -2965,6 +2984,10 @@ export class Game {
       p.states.set(s.auraState, cast.end, stats);
     }
     p.cast = cast;
+    // 시전 섬광 (skills.txt castoverlay): 시전자 자리에서 overlay.txt 프레임 수만큼 한 번
+    const co = s.castOverlay ? this.data?.overlays?.get(s.castOverlay) : undefined;
+    this.castFx = this.castFx.filter((f) => this.tickCount - f.start < f.frames);
+    if (co) this.castFx.push({ unitId: p.id, name: s.castOverlay, start: this.tickCount, frames: co.frames });
     // hitTick: 시작부터 첫 판정 프레임까지 (휘두름 소리를 타격 순간에)
     this.events.push({ type: 'skillStart', skill: s.id, level: lvl, hitTick: cast.hitTicks[0] ?? 0 });
     return true;
@@ -4058,6 +4081,9 @@ export class Game {
   }
 
   /** 무술 차지 상태 목록 (states.txt progressive_*): 상태, 스킬, 레벨 (= 건 레벨과 지금 레벨 중 큰 쪽), 차지 수 */
+  /** 진행 중인 시전 섬광 (castoverlay) */
+  private castFx: { unitId: number; name: string; start: number; frames: number }[] = [];
+
   private chargeStates(): { state: string; s: SkillRecord; lvl: number; n: number }[] {
     const out: { state: string; s: SkillRecord; lvl: number; n: number }[] = [];
     for (const state of PROGRESSIVE_STATES) {

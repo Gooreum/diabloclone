@@ -213,6 +213,8 @@ export interface LevelDef {
   monsterPool?: string[];
   /** 마을 포털이 열리는 자리 (원작 타일 정보 11 — DUNGEON_FindActSpawnLocationEx(…, 11, …)) */
   portalSpot?: { x: number; y: number };
+  /** LvlPrest AutoMap=1 (마을): 만들 때 자동 지도를 전부 드러낸다 (출처: DRLGPRESET pfAutomap/pfTownAutomap) */
+  automapAll?: boolean;
   /** DS1 프리셋 몬스터 (MonPreset 번호, 서브타일, DS1 경로 — 점마다 원작 경로 동작) · code = 하드코딩 프리셋 (Flavie 'navi') */
   presetMonsters?: { id: number; x: number; y: number; path?: (Pt & { action?: number })[]; code?: string; mon?: string }[];
   /** 레벨 몬스터 정보: levels.txt 풀·고른 목록·보스 후보·MonLvlEx·막·WarpDist */
@@ -717,10 +719,9 @@ export class Game {
     if (have) return have;
     const levels = new Map<string, LevelState>();
     for (const d of w.levels) {
-      levels.set(d.id, {
-        def: d, monsters: [], ground: [], missiles: [], populated: false, npcs: [], objects: [], region: null, variants: new Map(),
-        automap: new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5)),
-      });
+      const automap = new AutomapReveal(Math.ceil(d.map.width / 5), Math.ceil(d.map.height / 5));
+      if (d.automapAll) automap.revealAll();
+      levels.set(d.id, { def: d, monsters: [], ground: [], missiles: [], populated: false, npcs: [], objects: [], region: null, variants: new Map(), automap });
     }
     const st: ActState = { act, levels, start: { x: w.start.x, y: w.start.y } };
     this.acts.set(act, st);

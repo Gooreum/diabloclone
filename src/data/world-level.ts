@@ -185,6 +185,8 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     // 마을 포털 자리: 원작 D2GAME_CreateLinkPortal → DUNGEON_FindActSpawnLocationEx(…, 11, …) = 타일 정보 11 (+ 서브타일 3, sub_6FD788D0 규칙)
     const ti = lv.layout.tileInfo.find((t) => t.index === 11);
     if (ti) def.portalSpot = { x: ti.x * 5 + 3, y: ti.y * 5 + 3 };
+    // LvlPrest AutoMap=1 (마을 5곳) → 자동 지도 전부 드러냄. 출처: DRLGPRESET — pfAutomap 을 모든 방에 (1·3막) / pfTownAutomap 그림 (2·4·5막)
+    if (tables.table('LvlPrest').some((r) => Number(r.LevelId) === lv.id && Number(r.AutoMap) === 1)) def.automapAll = true;
     const warpKey = tables.table('Levels').find((r) => Number(r.Id) === lv.id)?.LevelWarp ?? '';
     levels.push({
       key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(rec.levelType), warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,

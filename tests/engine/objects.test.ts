@@ -431,6 +431,22 @@ describe('자동 지도 탐험 (AutomapReveal)', () => {
     expect(r.count()).toBeGreaterThan(113);
   });
 
+  it('revealAll: 전부 드러남 (LvlPrest AutoMap=1 마을) — 격자 밖은 여전히 false', () => {
+    const r = new AutomapReveal(20, 30);
+    r.revealAll();
+    expect(r.count()).toBe(600);
+    expect(r.isSeen(0, 0) && r.isSeen(19, 29) && r.isSeen(7, 13)).toBe(true);
+    expect(r.isSeen(20, 0) || r.isSeen(0, 30) || r.isSeen(-1, 0)).toBe(false);
+  });
+
+  it('LevelDef.automapAll 이면 레벨을 만들 때부터 자동 지도가 전부 드러나 있다', () => {
+    if (!hasGameData) return;
+    const map = openMap(100, 100);
+    const g = makeGame([{ id: 'bloodmoor', map, inTown: false, exits: [], levelNo: 2, automapAll: true }], 3, { x: 20.5, y: 20.5 });
+    expect(g.automapOf('bloodmoor')!.count()).toBe(20 * 20);
+    expect(g.automapOf('bloodmoor')!.isSeen(19, 19)).toBe(true);
+  });
+
   it('AutoMap.txt: Act 1 황야 바닥(스타일 0, 1~47) = 셀 0~3, 웨이포인트 바닥(54) = 셀 307', () => {
     if (!hasGameData) return;
     const t = new AutomapTable(new GameTables(gameChain()).table('AutoMap'));

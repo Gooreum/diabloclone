@@ -105,6 +105,11 @@ export class AutomapReveal {
     return added;
   }
 
+  /** 전부 드러냄 — 출처: DRLGPRESET (LvlPrest AutoMap=1 마을) 는 레벨의 모든 방에 pfAutomap 을 부른다 */
+  revealAll(): void {
+    this.seen.fill(1);
+  }
+
   isSeen(tx: number, ty: number): boolean {
     return tx >= 0 && ty >= 0 && tx < this.widthTiles && ty < this.heightTiles && this.seen[ty * this.widthTiles + tx] === 1;
   }

@@ -285,6 +285,11 @@ async function boot(): Promise<void> {
     saveLang(l);
     location.reload();
   };
+  // 배포판: 보관한 원작 파일에 확장팩·소리 파일을 더하거나 바꾼다 — 고르기 화면을 다시 띄우고 시작을 누르면 새 파일로 다시 시작
+  if (src.local) menu.onFiles = () => {
+    menu.hide();
+    void ensureLocalMpqs(host, true).then(() => location.reload());
+  };
   window.__menuArtReady = () => menu.ready && shared.art.ready(CURSOR_ART);
   menu.overlay = (c, m, now) => cursor.draw(c, shared.art, m, cursor.pick({ holding: false }), now);
   if (import.meta.env.DEV) {

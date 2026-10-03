@@ -106,6 +106,8 @@ declare global {
         merc: MercPanel; hireConfirm: ConfirmBox;
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
+        /** e2e: 지붕 — 지난 프레임 숨긴 지붕 타일 수, 서브타일 위 지붕 묶음 번호 (0 = 지붕 없음) */
+        roof: { hidden: () => number; groupAt: (x: number, y: number) => number };
       };
       /** e2e·진단: 다음 프레임의 화면 (WebGL 월드 + UI 합성) */
       capture?: () => Promise<ImageData>;
@@ -1070,6 +1072,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
           store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, itemText, quest: questPanel, rain,
           hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel, merc: mercPanel, hireConfirm,
           gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
+          roof: { hidden: () => (renderers[game.levelId] as WorldRenderer).roofsHidden, groupAt: (x, y) => (renderers[game.levelId] as WorldRenderer).roofGroupAt(x, y) },
         },
       };
     }
@@ -1222,6 +1225,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         worldSink,
         cam,
         buildScene(s, cam, { units: view.units, items: view.itemGfx, missiles: view.missileGfx, anim, monsters: data.monsters, itemDb: data.items, playerToken: token, playerWclass: wclass, playerEquip: equip, corpseLook, inTown: game.inTown, objectDb: data.objects, hover: hoverNow, shadowOf, shadowLook }, input.pickBoxes),
+        s.player,
       );
       // 화면 캡처 요청: WebGL 화면은 그린 직후에만 읽을 수 있다
       const worldPx = captureWaiters.length ? readWorld() : null;

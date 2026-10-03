@@ -46,10 +46,22 @@ export class WorldRenderer {
   private readonly images: ({ img: TileImage; image: IndexedImage } | null)[];
   private readonly id = newSpriteId();
   private readonly level: PresetLevel;
+  /** 셀별 지붕 묶음 번호 (roofGroups) */
+  private readonly roofs: Int32Array;
+  /** 지난 render 에서 숨긴 지붕 타일 수 (e2e·진단) */
+  roofsHidden = 0;
 
   constructor(level: PresetLevel) {
     this.level = level;
     this.images = level.tiles.map(() => null);
+    this.roofs = roofGroups(level);
+  }
+
+  /** 서브타일 (x,y) 위 지붕 묶음 번호 (0 = 지붕 없음) */
+  roofGroupAt(x: number, y: number): number {
+    const tx = Math.floor(x / 5), ty = Math.floor(y / 5);
+    if (tx < 0 || ty < 0 || tx >= this.level.widthTiles || ty >= this.level.heightTiles) return 0;
+    return this.roofs[ty * this.level.widthTiles + tx] ?? 0;
   }
 
   private tile(i: number): { img: TileImage; image: IndexedImage } {
@@ -73,7 +85,8 @@ export class WorldRenderer {
     return o.x + 160 >= 0 && o.x <= cam.width && o.y + top + h >= -80 && o.y + top <= cam.height + 200;
   }
 
-  render(sink: SpriteSink, cam: Camera, sprites: DepthSprite[] = []): void {
+  /** viewer = 플레이어 서브타일 좌표. 그가 선 건물의 지붕은 그리지 않는다 (원작: 건물 안에 들어가면 지붕이 사라진다) */
+  render(sink: SpriteSink, cam: Camera, sprites: DepthSprite[] = [], viewer?: { x: number; y: number }): void {
     sink.begin(cam.width, cam.height);
     // 바닥·그림자 타일은 픽셀마다 빛을 재고, 벽·지붕은 타일 가운데 바닥 한 점에서 (벽 위쪽이 먼 바닥 빛을 받지 않게)
     const draw = (i: number, tx: number, ty: number, dy: number, wall = false) => {
@@ -98,8 +111,14 @@ export class WorldRenderer {
     }
     items.sort((a, b) => a.depth - b.depth);
     for (const it of items) it.draw(sink, cam);
+    const hide = viewer ? this.roofGroupAt(viewer.x, viewer.y) : 0;
+    this.roofsHidden = 0;
     for (const w of this.level.walls) {
       if (w.orientation !== 15) continue;
+      if (hide && this.roofs[w.y * this.level.widthTiles + w.x] === hide) {
+        this.roofsHidden++;
+        continue;
+      }
       const t = this.level.tiles[w.tileIndex];
       draw(w.tileIndex, w.x, w.y, -(t?.roofHeight ?? 0), true);
     }

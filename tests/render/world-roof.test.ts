@@ -44,3 +44,45 @@ describe('지붕 묶음', () => {
     expect(g.every((v) => v === 0)).toBe(true);
   });
 });
+
+describe('지붕 숨김', () => {
+  const roofCells: [number, number][] = [[1, 1], [2, 1], [1, 2], [4, 4]];
+  const roofDraws = (drawn: { id: string }[]) => drawn.filter((d) => d.id.endsWith(':1')).length;
+
+  it('viewer 없음·지붕 없는 셀 위 → 지붕 4장 전부 그리고 roofsHidden 0', () => {
+    const r = new WorldRenderer(level(roofCells));
+    const a = fakeSink();
+    r.render(a.sink, cam);
+    expect(roofDraws(a.drawn)).toBe(4);
+    expect(r.roofsHidden).toBe(0);
+    const b = fakeSink();
+    r.render(b.sink, cam, [], { x: 0.5, y: 0.5 });
+    expect(roofDraws(b.drawn)).toBe(4);
+    expect(r.roofsHidden).toBe(0);
+  });
+
+  it('지붕 아래(셀 (1,1) 의 서브타일 7.5,7.5) → 그 건물 3장 건너뛰고 다른 건물 1장은 그린다', () => {
+    const r = new WorldRenderer(level(roofCells));
+    const a = fakeSink();
+    r.render(a.sink, cam, [], { x: 7.5, y: 7.5 });
+    expect(roofDraws(a.drawn)).toBe(1);
+    expect(r.roofsHidden).toBe(3);
+    // 다른 건물 (4,4) 아래로 가면 그쪽만 숨김
+    const b = fakeSink();
+    r.render(b.sink, cam, [], { x: 22, y: 22 });
+    expect(roofDraws(b.drawn)).toBe(3);
+    expect(r.roofsHidden).toBe(1);
+    // 바닥은 그대로 전부 그린다 (36장)
+    expect(b.drawn.filter((d) => d.id.endsWith(':0')).length).toBe(36);
+  });
+
+  it('roofGroupAt: 서브타일 → 셀 (÷5), 범위 밖은 0', () => {
+    const r = new WorldRenderer(level(roofCells));
+    expect(r.roofGroupAt(7, 7)).toBe(1);
+    expect(r.roofGroupAt(14.9, 5)).toBe(1);
+    expect(r.roofGroupAt(22, 22)).toBe(2);
+    expect(r.roofGroupAt(0, 0)).toBe(0);
+    expect(r.roofGroupAt(-1, 0)).toBe(0);
+    expect(r.roofGroupAt(30, 30)).toBe(0);
+  });
+});

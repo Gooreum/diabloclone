@@ -13,8 +13,8 @@ test('루트 골레인: 집 안에 서면 그 건물 지붕이 사라지고, 밖
   await page.waitForFunction(() => window.__game!.game.levelId === 'lutgholein', undefined, { timeout: 10_000 });
   await page.waitForTimeout(400);
   // 시작 위치(광장)는 지붕 밖
-  expect(await page.evaluate(() => window.__game!.ui!.roof.groupAt(window.__game!.game.snapshot().player.x, window.__game!.game.snapshot().player.y))).toBe(0);
-  expect(await page.evaluate(() => window.__game!.ui!.roof.hidden())).toBe(0);
+  expect(await page.evaluate(() => window.__game!.ui!.cover.groupAt(window.__game!.game.snapshot().player.x, window.__game!.game.snapshot().player.y))).toBe(0);
+  expect(await page.evaluate(() => window.__game!.ui!.cover.roofsHidden())).toBe(0);
   await page.locator('#game').screenshot({ path: 'test-results/roof-outside.png' });
 
   // 지붕 아래의 걷기 가능한 서브타일로 옮긴다 (레벨 안 첫 번째 건물)
@@ -22,15 +22,15 @@ test('루트 골레인: 집 안에 서면 그 건물 지붕이 사라지고, 밖
     const g = window.__game!.game, ui = window.__game!.ui!, m = g.map;
     for (let y = 0; y < m.height; y++)
       for (let x = 0; x < m.width; x++)
-        if (m.walkable(x, y) && ui.roof.groupAt(x, y) > 0) {
+        if (m.walkable(x, y) && ui.cover.groupAt(x, y) > 0) {
           g.changeLevel('lutgholein', x + 0.5, y + 0.5);
-          return { x, y, group: ui.roof.groupAt(x, y) };
+          return { x, y, group: ui.cover.groupAt(x, y) };
         }
     return null;
   });
   expect(inside).not.toBeNull();
   await page.waitForTimeout(400);
-  const hidden = await page.evaluate(() => window.__game!.ui!.roof.hidden());
+  const hidden = await page.evaluate(() => window.__game!.ui!.cover.roofsHidden());
   expect(hidden).toBeGreaterThan(0);
   // 다른 건물 지붕은 그대로 (루트 골레인 지붕 189장 중 일부만 숨긴다)
   expect(hidden).toBeLessThan(189);
@@ -41,7 +41,7 @@ test('루트 골레인: 집 안에 서면 그 건물 지붕이 사라지고, 밖
     const g = window.__game!.game, ui = window.__game!.ui!, m = g.map;
     for (let y = 0; y < m.height; y++)
       for (let x = 0; x < m.width; x++)
-        if (m.walkable(x, y) && ui.roof.groupAt(x, y) === 0) {
+        if (m.walkable(x, y) && ui.cover.groupAt(x, y) === 0) {
           g.changeLevel('lutgholein', x + 0.5, y + 0.5);
           return true;
         }
@@ -49,6 +49,6 @@ test('루트 골레인: 집 안에 서면 그 건물 지붕이 사라지고, 밖
   });
   expect(outside).toBe(true);
   await page.waitForTimeout(400);
-  expect(await page.evaluate(() => window.__game!.ui!.roof.hidden())).toBe(0);
+  expect(await page.evaluate(() => window.__game!.ui!.cover.roofsHidden())).toBe(0);
   expect(errors).toEqual([]);
 });

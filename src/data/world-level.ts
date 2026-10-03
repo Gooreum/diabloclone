@@ -110,7 +110,7 @@ export interface WorldLevel {
   key: string;
   id: number;
   name: string;
-  /** AutoMap.txt LevelName (LvlTypes 이름 "Act 1 - Wilderness" → "1 Wilderness") */
+  /** AutoMap.txt LevelName (LvlTypes Id 고정 표 — "Act 5 - Ice Caves"(33) → "5 Ice") */
   automapName: string;
   /** levels.txt LevelWarp 문자열 ("To The Cold Plains") — 자동 지도 출구 표시 */
   warpLabel: string;
@@ -185,10 +185,9 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     // 마을 포털 자리: 원작 D2GAME_CreateLinkPortal → DUNGEON_FindActSpawnLocationEx(…, 11, …) = 타일 정보 11 (+ 서브타일 3, sub_6FD788D0 규칙)
     const ti = lv.layout.tileInfo.find((t) => t.index === 11);
     if (ti) def.portalSpot = { x: ti.x * 5 + 3, y: ti.y * 5 + 3 };
-    const lvlTypeName = tables.table('LvlTypes').find((r) => Number(r.Id) === rec.levelType)?.Name ?? '';
     const warpKey = tables.table('Levels').find((r) => Number(r.Id) === lv.id)?.LevelWarp ?? '';
     levels.push({
-      key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(lvlTypeName), warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,
+      key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(rec.levelType), warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,
     });
   }
   const byKey = new Map(levels.map((l) => [l.key, l]));

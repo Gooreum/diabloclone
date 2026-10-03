@@ -434,7 +434,7 @@ describe('자동 지도 탐험 (AutomapReveal)', () => {
   it('AutoMap.txt: Act 1 황야 바닥(스타일 0, 1~47) = 셀 0~3, 웨이포인트 바닥(54) = 셀 307', () => {
     if (!hasGameData) return;
     const t = new AutomapTable(new GameTables(gameChain()).table('AutoMap'));
-    expect(AutomapTable.levelName('Act 1 - Wilderness')).toBe('1 Wilderness');
+    expect(AutomapTable.levelName(2)).toBe('1 Wilderness'); // LvlTypes Id 2 = Act 1 - Wilderness
     expect(t.cels('1 Wilderness', 0, 0, 10)).toEqual([0, 1, 2, 3]);
     expect(t.cels('1 Wilderness', 0, 0, 54)).toEqual([307]);
     // 오른쪽 벽(wr) 스타일 0 시퀀스 0~3 = "WR A" 20

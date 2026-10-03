@@ -4,11 +4,25 @@
 import type { TxtRow } from '../formats/txt';
 
 /**
- * AutoMap.txt TileName → DT1 방향(orientation).
- * 근사(원작 미확인): 약어 순서를 DT1 방향 번호(0 바닥, 1 왼벽, 2 오른벽, 3/4 북쪽 모서리, 5 동쪽, 6 서쪽, 7 남쪽 모서리,
- *   8/9 문 벽, 10/11 특수(출구) 벽, 12 기둥, 14 나무)에 맞춰 대응시켰다 (Paul Siramy DT1 문서의 방향 표)
+ * AutoMap.txt TileName → DT1 방향(orientation). 배열 인덱스 = 방향 번호.
+ * 출처: D2MOO LevelsTbls.cpp gszAutomapTileNames (DATATBLS_LoadAutomapTxt 가 strcmp 로 찾은 인덱스를 dwAutomapTileType 으로 쓴다)
  */
-export const AUTOMAP_TILE: Record<string, number> = { fl: 0, wl: 1, wr: 2, wtlr: 3, wtll: 4, wtr: 5, wbl: 6, wbr: 7, wld: 8, wrd: 9, wle: 10, wre: 11, co: 12, tr: 14 };
+const AUTOMAP_TILE_NAMES = ['fl', 'wl', 'wr', 'wtlr', 'wtll', 'wtr', 'wbl', 'wbr', 'wld', 'wrd', 'wle', 'wre', 'co', 'sh', 'tr', 'rf', 'ld', 'rd', 'fd', 'fi'] as const;
+export const AUTOMAP_TILE: Record<string, number> = Object.fromEntries(AUTOMAP_TILE_NAMES.map((name, i) => [name, i]));
+
+/**
+ * AutoMap.txt LevelName 고정 표. 배열 인덱스 = LvlTypes Id (0 None … 35 "5 Lava").
+ * 출처: D2MOO LevelsTbls.cpp gszAutomapLevelNames — 원작은 LvlTypes 이름을 가공하지 않고 이 표를 strcmp 로 찾아 인덱스(= 레벨 타입)를 쓴다.
+ *   그래서 "Act 5 - Ice Caves"(Id 33) 의 자동 지도 행은 "5 Ice" 다. "5 Town"(하로가스) 은 AutoMap.txt 에 행이 없어 원작도 빈 지도.
+ */
+export const AUTOMAP_LEVEL_NAMES: readonly string[] = [
+  'None',
+  '1 Town', '1 Wilderness', '1 Cave', '1 Crypt', '1 Monestary', '1 Courtyard', '1 Barracks', '1 Jail', '1 Cathedral', '1 Catacombs', '1 Tristram',
+  '2 Town', '2 Sewer', '2 Harem', '2 Basement', '2 Desert', '2 Tomb', '2 Lair', '2 Arcane',
+  '3 Town', '3 Jungle', '3 Kurast', '3 Spider', '3 Dungeon', '3 Sewer',
+  '4 Town', '4 Mesa', '4 Lava',
+  '5 Town', '5 Siege', '5 Barricade', '5 Temple', '5 Ice', '5 Baal', '5 Lava',
+];
 
 interface Entry { orientation: number; style: number; from: number; to: number; cels: number[] }
 
@@ -30,10 +44,9 @@ export class AutomapTable {
     }
   }
 
-  /** LvlTypes 이름 "Act 1 - Town" → AutoMap.txt LevelName "1 Town" */
-  static levelName(lvlTypeName: string): string {
-    const m = /^Act (\d) - (.+)$/.exec(lvlTypeName);
-    return m ? `${m[1]} ${m[2]}` : lvlTypeName;
+  /** LvlTypes Id → AutoMap.txt LevelName (모르는 Id 는 '' — 행 없음과 같게 빈 지도) */
+  static levelName(lvlTypeId: number): string {
+    return AUTOMAP_LEVEL_NAMES[lvlTypeId] ?? '';
   }
 
   /**

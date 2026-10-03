@@ -270,9 +270,14 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - [x] 타격감: 맞는 소리(HitClass), 피 튀김, 미사일 폭발 그림, 냉기·독 색, 시전 섬광, 얼어 죽으면 부서짐
 - [x] 조작·전투 반응을 원본 코드(D2MOO) 기준으로: 클릭 대상 규칙, 공격 중 이동, 유닛 충돌·NPC 회피, 막기·피격 규칙, 공격·시전 속도, 투창 자동 장착 — 7직업 184개 스킬 실제 클릭 검사
 - [ ] 원작 대비 남은 것: [docs/fidelity-audit.md](docs/fidelity-audit.md) (짐작으로 맞춘 곳 목록, 비밀 소 레벨, `/players`, 하드코어 등)
-- [ ] 오픈소스 공개 정리 (라이선스·출처 표기)
+- [x] 오픈소스 공개 정리 (GPL-3.0, 제3자 표기 `THIRD_PARTY_NOTICES.md`)
 
 ---
+
+## 라이선스
+- 이 프로젝트의 코드는 **GPL-3.0** 입니다 (`LICENSE`). Copyright (c) 2026 Gooreum.
+- OpenDiablo2(GPL-3.0) 코드를 옮겨 왔기 때문에 같은 라이선스를 씁니다. D2MOO(MIT) 등 제3자 표기는 `THIRD_PARTY_NOTICES.md` 에 있습니다.
+- 원작 게임 파일(MPQ)은 이 라이선스와 무관하며 Blizzard 의 저작물입니다.
 
 ## 참고 자료·감사
 - [D2MOO](https://github.com/ThePhrozenKeep/D2MOO) — Diablo II 1.10 재구성 소스 (DRLG·AI·스킬·퀘스트 규칙 참고)

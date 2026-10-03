@@ -155,6 +155,20 @@ test('마을 포털 두루마리 → 마을 → 포털로 같은 자리 복귀 (
 
 test('Tab 자동 지도 (전체·미니)', async ({ page }) => {
   await newHero(page, uniqueName('Amap'));
+  // 마을(LvlPrest AutoMap=1)은 들어가자마자 전부 드러나 있다 — 원작 DRLGPRESET 이 모든 방에 pfAutomap
+  const town = await page.evaluate(() => {
+    const g = window.__game!.game;
+    const a = g.automapOf('town')!;
+    return { seen: a.count(), all: Math.ceil(g.map.width / 5) * Math.ceil(g.map.height / 5) };
+  });
+  expect(town.seen).toBe(town.all);
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => window.__game!.ui!.automap() === 'full' && window.__game!.ui!.automapReady(), undefined, { timeout: 10_000 });
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: 'test-results/automap-town.png' });
+  expect(await page.evaluate(() => window.__game!.ui!.automapDrawn())).toBeGreaterThan(50);
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => window.__game!.ui!.automap() === 'off', undefined, { timeout: 5000 });
   await walkToBloodMoor(page);
   // Blood Moor 안쪽 여러 곳을 들러 탐험 (걷기 가능한 칸으로 옮겨 가며 틱마다 주변 타일이 드러난다)
   for (let k = 0; k < 8; k++) {

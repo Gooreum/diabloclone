@@ -9,6 +9,7 @@ import { GameTables } from '../../src/data/tables';
 import { makeDrlgData } from '../../src/data/drlg-data';
 import { buildGameData } from '../../src/data/gamedata';
 import { buildActWorld } from '../../src/data/world';
+import { ACT2MAP_PLACEHOLDERS } from '../../src/data/world-level';
 import { MpqArchive, MpqChain } from '../../src/formats/mpq';
 import { parseDc6 } from '../../src/formats/dc6';
 import { AUTOMAP_LEVEL_NAMES, AUTOMAP_TILE, AutomapTable } from '../../src/engine/automap';
@@ -141,5 +142,18 @@ d('마을 자동 지도 (LvlPrest AutoMap, 마을 그림 DC6)', () => {
     expectDc6('Act4MapS', 4, 68, 45);
     expectDc6('ExTnMap', 6, 180, 170);
     expectDc6('ExTnMapS', 6, 90, 85);
+  });
+
+  it('Act2Map 의 X 자리 표시 조각: 팔레트 98·155·91·102 만 쓰고, 다른 조각은 그 색을 안 쓴다', () => {
+    const dc6 = parseDc6(chain.read('data\\global\\ui\\automap\\Act2Map.dc6')!);
+    const X = new Set([98, 155, 91, 102]);
+    dc6.frames.forEach((f, i) => {
+      let x = 0, other = 0;
+      for (const p of f.pixels) if (p) X.has(p) ? x++ : other++;
+      if (ACT2MAP_PLACEHOLDERS.includes(i)) expect([x > 1000, other], `frame ${i}`).toEqual([true, 0]);
+      else expect(x <= 2, `frame ${i}`).toBe(true);
+    });
+    const w = buildActWorld(chain, tables, gameData, 777, 1);
+    expect(w.byKey.get('lutgholein')!.townMap?.skip).toBe(ACT2MAP_PLACEHOLDERS);
   });
 });

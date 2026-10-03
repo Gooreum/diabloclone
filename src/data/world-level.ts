@@ -106,14 +106,23 @@ function warpRect(map: LevelDef['map'], x: number, y: number): { x: number; y: n
   return { x: x - 1, y: y - 1, w: 3, h: 3 };
 }
 
-/** 미리 그려진 마을 자동 지도: 조각 DC6 (전체 지도 file, 미니맵 file+'S') 를 cols×rows 행 우선으로 이어 붙인다. variant = 묶음 번호 (조각 cols*rows 개씩) */
-export interface TownMap { file: string; cols: number; rows: number; variant: number }
+/**
+ * 미리 그려진 마을 자동 지도: 조각 DC6 (전체 지도 file, 미니맵 file+'S') 를 cols×rows 행 우선으로 이어 붙인다. variant = 묶음 번호 (조각 cols*rows 개씩).
+ * skip = 그리지 않는 조각 (프레임 번호) — Act2Map 의 빈 귀퉁이에 든 큰 X 표시 (팔레트 98·155·91·102 만 쓰는 자리 표시 조각).
+ * 근사(원작 미확인): 원작 클라이언트가 이 X 조각을 그리는지 못 봤다 — 자리 표시로 보고 건너뛴다
+ */
+export interface TownMap { file: string; cols: number; rows: number; variant: number; skip?: readonly number[] }
+
+/** Act2Map.dc6 의 X 자리 표시 조각 (서쪽 판 0·10·15·16·19, 북쪽 판 20·25·30·35·36·39) — 원작 파일 픽셀 조사 */
+export const ACT2MAP_PLACEHOLDERS: readonly number[] = [0, 10, 15, 16, 19, 20, 25, 30, 35, 36, 39];
 
 /**
  * levels.txt Id → 마을 그림. 출처: D2MOO DrlgPreset.cpp (LUTGHOLEIN·THEPANDEMONIUMFORTRESS·HARROGATH 만 pfTownAutomap)
  *   + 원작 MPQ 파일 조사: Act2Map 160×100 ×40 (변형 LutW/LutN 20개씩), Act4Map 136×90 ×4, ExTnMap 180×170 ×6 — 행 우선 격자로 이어 붙이면 마을 그림
  */
-const TOWN_MAPS: Record<number, Omit<TownMap, 'variant'>> = { 40: { file: 'Act2Map', cols: 5, rows: 4 }, 103: { file: 'Act4Map', cols: 2, rows: 2 }, 109: { file: 'ExTnMap', cols: 3, rows: 2 } };
+const TOWN_MAPS: Record<number, Omit<TownMap, 'variant'>> = {
+  40: { file: 'Act2Map', cols: 5, rows: 4, skip: ACT2MAP_PLACEHOLDERS }, 103: { file: 'Act4Map', cols: 2, rows: 2 }, 109: { file: 'ExTnMap', cols: 3, rows: 2 },
+};
 
 export interface WorldLevel {
   key: string;

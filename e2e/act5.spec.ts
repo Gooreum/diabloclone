@@ -67,6 +67,15 @@ test('Act 5: Tyrael → Harrogath (NPC), 5 탭, Bloody Foothills 몬스터, Worl
   await page.locator('#game').screenshot({ path: 'test-results/act5-harrogath.png' });
   expect(await litRatio(page)).toBeGreaterThan(0.25);
 
+  // 하로가스 자동 지도: 원작 ExTnMap.dc6 조각 6개(3×2)를 레벨 중심에 붙여 그린다 (DRLGPRESET pfTownAutomap)
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => window.__game!.ui!.automap() === 'full' && window.__game!.ui!.automapReady() && window.__game!.ui!.automapDrawn() >= 6, undefined, { timeout: 15_000 });
+  await page.waitForTimeout(300);
+  await page.locator('#game').screenshot({ path: 'test-results/act5-automap-harrogath.png' });
+  expect(await page.evaluate(() => window.__game!.ui!.automapDrawn())).toBeGreaterThanOrEqual(6);
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => window.__game!.ui!.automap() === 'off', undefined, { timeout: 5000 });
+
   // Bloody Foothills: Act 5 몬스터가 놓인다
   await visit(page, 'bloodyfoothills');
   const mons = await page.evaluate(() => window.__game!.game.monsters.filter((m) => !m.npc).map((m) => m.type.id));

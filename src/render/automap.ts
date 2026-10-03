@@ -51,14 +51,18 @@ export class AutomapRenderer {
     return !!this.dc6;
   }
 
+  /** 셀 그림(MaxiMap.dc6) 읽기 시작 — 지도를 처음 켤 때 (셀이 없는 마을 그림 레벨에서도 ready 가 되도록) */
+  private ensureCells(): void {
+    if (this.dc6 || this.loading) return;
+    this.loading = true;
+    void this.assets.load(CELL_PATH).then((b) => {
+      if (b) this.dc6 = parseDc6(b);
+    });
+  }
+
   private cel(i: number): Drawable | null {
     if (!this.dc6) {
-      if (!this.loading) {
-        this.loading = true;
-        void this.assets.load(CELL_PATH).then((b) => {
-          if (b) this.dc6 = parseDc6(b);
-        });
-      }
+      this.ensureCells();
       return null;
     }
     let c = this.cels.get(i);
@@ -97,6 +101,7 @@ export class AutomapRenderer {
     for (let r = 0; r < town.rows; r++)
       for (let c = 0; c < town.cols; c++) {
         const i = base + r * town.cols + c;
+        if (town.skip?.includes(i)) continue;
         const key = `${name}:${i}`;
         let img = this.townCels.get(key);
         if (!img) {
@@ -121,6 +126,7 @@ export class AutomapRenderer {
   /** alpha = 옵션 FADE (원작 Fade Automap — 근사(원작 미확인): 투명도 0.5) */
   draw(ctx: CanvasRenderingContext2D, mode: AutomapMode, level: PresetLevel, levelName: string, town: TownMap | null, reveal: AutomapReveal, mk: AutomapMarkers, width: number, height: number, alpha = 1): number {
     if (mode === 'off') return 0;
+    this.ensureCells();
     const scale = mode === 'mini' ? 0.5 : 1;
     const box = mode === 'mini' ? { x: width - 200, y: 8, w: 192, h: 150 } : { x: 0, y: 0, w: width, h: height };
     const cx = box.x + box.w / 2, cy = box.y + box.h / 2;

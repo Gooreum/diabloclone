@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { CollisionMap } from '../../src/engine/collision';
 import type { PlacedTile, PresetLevel } from '../../src/engine/drlg/preset';
 import type { Dt1Tile } from '../../src/formats/dt1';
-import type { IndexedImage, SpriteSink } from '../../src/render/sink';
-import { WorldRenderer, roofGroups } from '../../src/render/world';
+import type { DrawOpts, IndexedImage, SpriteSink } from '../../src/render/sink';
+import { WALL_FADE_BLEND, WorldRenderer, roofGroups } from '../../src/render/world';
 
 const tile = (orientation: number, roofHeight = 80): Dt1Tile => ({
   direction: 0, roofHeight, soundIndex: 0, animated: false, height: 80, width: 160, orientation, mainIndex: 0, subIndex: 0, rarity: 0, subTileFlags: new Uint8Array(25), blocks: [],
@@ -19,8 +19,8 @@ function level(roofCells: [number, number][], W = 6, H = 6, extraWalls: PlacedTi
 }
 
 function fakeSink() {
-  const drawn: { id: string; x: number; y: number }[] = [];
-  const sink: SpriteSink = { begin() {}, end() {}, setPalette() {}, draw: (img: IndexedImage, x: number, y: number) => { drawn.push({ id: img.id, x, y }); } };
+  const drawn: { id: string; x: number; y: number; blend?: number }[] = [];
+  const sink: SpriteSink = { begin() {}, end() {}, setPalette() {}, draw: (img: IndexedImage, x: number, y: number, o?: DrawOpts) => { drawn.push({ id: img.id, x, y, ...(o?.blend !== undefined ? { blend: o.blend } : {}) }); } };
   return { sink, drawn };
 }
 const cam = { x: 15, y: 15, width: 800, height: 600 };
@@ -74,6 +74,47 @@ describe('지붕 숨김', () => {
     expect(r.roofsHidden).toBe(1);
     // 바닥은 그대로 전부 그린다 (36장)
     expect(b.drawn.filter((d) => d.id.endsWith(':0')).length).toBe(36);
+  });
+
+  it('벽 반투명: 플레이어보다 앞이고 플레이어 상자와 겹치는 벽만 blend 1', () => {
+    // 벽 타일(tiles[2], 방향 1): RLE 블록 하나, y=-160 → 그림 top -160, 높이 192 (32줄). 셀 (3,3)
+    const wall = tile(1);
+    wall.blocks = [{ x: 0, y: -160, gridX: 0, gridY: 0, format: 0, data: new Uint8Array([1, 1, 5, 0, 0]) }];
+    const lv = level([], 6, 6, [{ x: 3, y: 3, orientation: 1, tileIndex: 2 }]);
+    lv.tiles[2] = wall;
+    const r = new WorldRenderer(lv);
+    const wallDraw = (d: { id: string; blend?: number }[]) => d.find((x) => x.id.endsWith(':2'));
+    // 셀 (2,2) 중앙: 벽 깊이 34.9 > 25, 벽 그림이 발밑 위에 걸림 → 반투명
+    const a = fakeSink();
+    r.render(a.sink, { x: 12.5, y: 12.5, width: 800, height: 600 }, [], { x: 12.5, y: 12.5 });
+    expect(wallDraw(a.drawn)?.blend).toBe(WALL_FADE_BLEND);
+    expect(r.wallsFaded).toBe(1);
+    // 셀 (4,4): 벽이 플레이어 뒤 (깊이 34.9 < 45) → 불투명
+    const b = fakeSink();
+    r.render(b.sink, { x: 22.5, y: 22.5, width: 800, height: 600 }, [], { x: 22.5, y: 22.5 });
+    expect(wallDraw(b.drawn)?.blend).toBeUndefined();
+    expect(r.wallsFaded).toBe(0);
+    // viewer 없음 → 불투명
+    const c = fakeSink();
+    r.render(c.sink, { x: 12.5, y: 12.5, width: 800, height: 600 });
+    expect(wallDraw(c.drawn)?.blend).toBeUndefined();
+    expect(r.wallsFaded).toBe(0);
+    expect(r.wallsFadedAt(12.5, 12.5, 800, 600)).toBe(1);
+    expect(r.wallsFadedAt(22.5, 22.5, 800, 600)).toBe(0);
+  });
+
+  it('벽 반투명: 앞에 있어도 화면에서 멀리(가로 240px) 떨어진 벽은 불투명', () => {
+    const wall = tile(1);
+    wall.blocks = [{ x: 0, y: -160, gridX: 0, gridY: 0, format: 0, data: new Uint8Array([1, 1, 5, 0, 0]) }];
+    // 셀 (3,0): 깊이 19.9 → 플레이어 (0.5,2.5) 깊이 3 보다 앞. 화면 x 차 = (3-0)*80 - (0-2)*... = 셀 (0,0) 기준 +240px
+    const lv = level([], 6, 6, [{ x: 3, y: 0, orientation: 1, tileIndex: 2 }]);
+    lv.tiles[2] = wall;
+    const r = new WorldRenderer(lv);
+    const a = fakeSink();
+    r.render(a.sink, { x: 2.5, y: 2.5, width: 800, height: 600 }, [], { x: 2.5, y: 2.5 });
+    expect(a.drawn.find((x) => x.id.endsWith(':2'))?.blend).toBeUndefined();
+    expect(r.wallsFaded).toBe(0);
+    expect(r.wallsFadedAt(2.5, 2.5, 800, 600)).toBe(0);
   });
 
   it('roofGroupAt: 서브타일 → 셀 (÷5), 범위 밖은 0', () => {

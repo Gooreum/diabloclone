@@ -2,13 +2,22 @@
 // 벽(방향 1~14)은 타일 기준점에서 +80 아래에 기준, 지붕(15)은 roofHeight 만큼 위.
 // 출처: Paul Siramy — DT1/DS1 문서 (방향 0 바닥, 13 그림자, 15 지붕, 3/4 코너 쌍)
 // 지붕: 플레이어가 선 셀의 지붕 묶음(이어진 지붕 = 한 건물)은 건너뛴다 (원작: 건물 안에 들어가면 지붕이 사라진다)
-import type { PresetLevel } from '../engine/drlg/preset';
+// 벽: 플레이어보다 앞에 그려지면서 플레이어 상자와 겹치는 벽 타일은 반투명 (원작: 벽 뒤에 서면 벽이 비친다)
+import type { PlacedTile, PresetLevel } from '../engine/drlg/preset';
 import { renderTile, type TileImage } from '../formats/dt1';
 import { toCanvas, type Camera } from './iso';
 import type { IndexedImage, SpriteSink } from './sink';
 import { newSpriteId } from './sprites';
 
 export interface DepthSprite { depth: number; draw: (sink: SpriteSink, cam: Camera) => void }
+
+/** 근사(원작 미확인): 플레이어를 가리는 벽의 불투명도 (DrawOpts.blend 1 = 50%) 와 가림 판정 상자 (발밑 화면점 기준 px) */
+export const WALL_FADE_BLEND = 1;
+export const WALL_FADE_BOX = { left: 80, right: 80, up: 128, down: 8 } as const;
+
+/** 벽 타일의 깊이 (타일 x+y 대각선, 서브타일 기준) 와 그림 기준 y 오프셋 (방향 1~14 는 +80 아래) */
+const wallDepth = (w: PlacedTile): number => (w.x + w.y) * 5 + (w.orientation >= 16 ? 0 : 4.9);
+const wallDy = (w: PlacedTile): number => (w.orientation >= 1 && w.orientation <= 14 ? 80 : 0);
 
 /**
  * 셀마다 지붕 묶음 번호 (0 = 지붕 없음, 1부터 = 건물). 상하좌우로 이어진 지붕 셀(방향 15)은 같은 번호.
@@ -50,6 +59,8 @@ export class WorldRenderer {
   private readonly roofs: Int32Array;
   /** 지난 render 에서 숨긴 지붕 타일 수 (e2e·진단) */
   roofsHidden = 0;
+  /** 지난 render 에서 반투명으로 그린 벽 타일 수 (e2e·진단) */
+  wallsFaded = 0;
 
   constructor(level: PresetLevel) {
     this.level = level;
@@ -81,6 +92,22 @@ export class WorldRenderer {
     return { x: p.x - 80, y: p.y };
   }
 
+  /** 벽 타일 그림 사각형이 발밑 화면점 p 의 가림 상자와 겹치는가 */
+  private coversPoint(cam: Camera, w: PlacedTile, p: { x: number; y: number }): boolean {
+    const t = this.tile(w.tileIndex);
+    const o = this.tileOrigin(cam, w.x, w.y);
+    const x0 = o.x, x1 = o.x + t.img.width, y0 = o.y + t.img.top + wallDy(w), y1 = y0 + t.img.height;
+    return x1 > p.x - WALL_FADE_BOX.left && x0 < p.x + WALL_FADE_BOX.right && y1 > p.y - WALL_FADE_BOX.up && y0 < p.y + WALL_FADE_BOX.down;
+  }
+
+  /** 서브타일 (x,y) 에 서면 반투명이 될 벽 타일 수 (e2e: 자리 고르기. 카메라는 그 자리 중심) */
+  wallsFadedAt(x: number, y: number, width: number, height: number): number {
+    const cam = { x, y, width, height }, p = toCanvas(cam, x, y), pd = x + y;
+    let n = 0;
+    for (const w of this.level.walls) if (w.orientation !== 15 && wallDepth(w) > pd && this.coversPoint(cam, w, p)) n++;
+    return n;
+  }
+
   private visible(cam: Camera, o: { x: number; y: number }, h: number, top: number): boolean {
     return o.x + 160 >= 0 && o.x <= cam.width && o.y + top + h >= -80 && o.y + top <= cam.height + 200;
   }
@@ -89,23 +116,29 @@ export class WorldRenderer {
   render(sink: SpriteSink, cam: Camera, sprites: DepthSprite[] = [], viewer?: { x: number; y: number }): void {
     sink.begin(cam.width, cam.height);
     // 바닥·그림자 타일은 픽셀마다 빛을 재고, 벽·지붕은 타일 가운데 바닥 한 점에서 (벽 위쪽이 먼 바닥 빛을 받지 않게)
-    const draw = (i: number, tx: number, ty: number, dy: number, wall = false) => {
+    const draw = (i: number, tx: number, ty: number, dy: number, wall = false, fade = false) => {
       const t = this.tile(i);
       const o = this.tileOrigin(cam, tx, ty);
       if (!this.visible(cam, o, t.img.height, t.img.top + dy)) return;
-      sink.draw(t.image, o.x, o.y + t.img.top + dy, wall ? { lightAt: toCanvas(cam, tx * 5 + 2.5, ty * 5 + 2.5) } : undefined);
+      sink.draw(t.image, o.x, o.y + t.img.top + dy, wall ? { lightAt: toCanvas(cam, tx * 5 + 2.5, ty * 5 + 2.5), ...(fade ? { blend: WALL_FADE_BLEND } : {}) } : undefined);
     };
     for (const f of this.level.floors) draw(f.tileIndex, f.x, f.y, 0);
     for (const s of this.level.shadows) draw(s.tileIndex, s.x, s.y, 0);
     // 벽과 유닛을 깊이(타일 x+y 대각선, 서브타일 기준)로 섞어 그린다
+    // 플레이어를 가리는 벽: 플레이어보다 앞(깊이 큼)이고 그림 사각형이 플레이어 상자와 겹치면 반투명
+    const pd = viewer ? viewer.x + viewer.y : Infinity;
+    const pp = viewer ? toCanvas(cam, viewer.x, viewer.y) : null;
+    this.wallsFaded = 0;
     const items: DepthSprite[] = [...sprites];
     for (const w of this.level.walls) {
       if (w.orientation === 15) continue;
-      const lower = w.orientation >= 16;
+      const depth = wallDepth(w);
       items.push({
-        depth: (w.x + w.y) * 5 + (lower ? 0 : 4.9),
+        depth,
         draw: () => {
-          draw(w.tileIndex, w.x, w.y, w.orientation >= 1 && w.orientation <= 14 ? 80 : 0, true);
+          const fade = !!pp && depth > pd && this.coversPoint(cam, w, pp);
+          if (fade) this.wallsFaded++;
+          draw(w.tileIndex, w.x, w.y, wallDy(w), true, fade);
         },
       });
     }

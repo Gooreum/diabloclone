@@ -66,3 +66,36 @@ test('배포판 흐름: 클래식 파일만 고르면 클래식, 확장팩 폴�
   await enterTown(page, 'edition-local-lod-town');
   expect(errors).toEqual([]);
 });
+
+// 클래식으로 한 번 시작한 뒤에도 메인 메뉴 "Game Files" 로 고르기 화면을 다시 열어 확장팩 파일을 더할 수 있다
+test('클래식으로 시작한 뒤 메뉴 Game Files 에서 확장팩 파일을 더하면 확장팩으로 다시 시작', async ({ page }) => {
+  test.setTimeout(600_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/?local');
+  await expect(page.locator('#mpq-setup')).toBeVisible();
+  const pick = async (paths: string[]) => {
+    await page.locator('#mpq-setup [data-input="files"]').setInputFiles(paths.map((p) => resolve('game-data', p)));
+    await expect(page.locator('#mpq-setup .status')).not.toContainText('저장 중', { timeout: 120_000 });
+  };
+  await pick(['patch_d2.mpq', 'd2char.mpq', 'd2data.mpq']);
+  await page.click('#mpq-setup [data-start]');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  expect(await page.evaluate(() => window.__edition)).toBe('classic');
+
+  // 메뉴 → Game Files: 보관된 3개가 ✓, 확장팩 파일을 더하면 확장팩 → 시작하면 다시 떠서 확장팩
+  await page.click('#btn-files');
+  await expect(page.locator('#mpq-setup')).toBeVisible();
+  await expect(page.locator('#mpq-setup li.ok')).toHaveCount(3);
+  await expect(page.locator('#mpq-setup [data-clear]')).toBeVisible();
+  await expect(page.locator('#mpq-setup .edition')).toContainText('클래식으로 시작');
+  await page.screenshot({ path: 'test-results/edition-files-reopen.png' });
+  await pick(['lod/patch_d2.mpq', 'lod/d2char.mpq', 'd2exp.mpq']);
+  await expect(page.locator('#mpq-setup .edition')).toContainText('확장팩');
+  await page.click('#mpq-setup [data-start]');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 90_000 });
+  expect(await page.evaluate(() => window.__edition)).toBe('lod');
+  await expect(page.locator('#btn-files')).toBeVisible();
+  await enterTown(page, 'edition-files-lod-town');
+  expect(errors).toEqual([]);
+});

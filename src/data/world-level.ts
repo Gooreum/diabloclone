@@ -106,12 +106,23 @@ function warpRect(map: LevelDef['map'], x: number, y: number): { x: number; y: n
   return { x: x - 1, y: y - 1, w: 3, h: 3 };
 }
 
+/** 미리 그려진 마을 자동 지도: 조각 DC6 (전체 지도 file, 미니맵 file+'S') 를 cols×rows 행 우선으로 이어 붙인다. variant = 묶음 번호 (조각 cols*rows 개씩) */
+export interface TownMap { file: string; cols: number; rows: number; variant: number }
+
+/**
+ * levels.txt Id → 마을 그림. 출처: D2MOO DrlgPreset.cpp (LUTGHOLEIN·THEPANDEMONIUMFORTRESS·HARROGATH 만 pfTownAutomap)
+ *   + 원작 MPQ 파일 조사: Act2Map 160×100 ×40 (변형 LutW/LutN 20개씩), Act4Map 136×90 ×4, ExTnMap 180×170 ×6 — 행 우선 격자로 이어 붙이면 마을 그림
+ */
+const TOWN_MAPS: Record<number, Omit<TownMap, 'variant'>> = { 40: { file: 'Act2Map', cols: 5, rows: 4 }, 103: { file: 'Act4Map', cols: 2, rows: 2 }, 109: { file: 'ExTnMap', cols: 3, rows: 2 } };
+
 export interface WorldLevel {
   key: string;
   id: number;
   name: string;
   /** AutoMap.txt LevelName (LvlTypes Id 고정 표 — "Act 5 - Ice Caves"(33) → "5 Ice") */
   automapName: string;
+  /** 미리 그려진 마을 자동 지도 (루트 골레인·판데모니움·하로가스). 출처: DRLGPRESET pfTownAutomap + data\global\ui\automap\*.dc6 */
+  townMap: TownMap | null;
   /** levels.txt LevelWarp 문자열 ("To The Cold Plains") — 자동 지도 출구 표시 */
   warpLabel: string;
   preset: PresetLevel;
@@ -187,9 +198,13 @@ export function assembleWorld(src: AssetSource, tables: GameTables, gameData: Ga
     if (ti) def.portalSpot = { x: ti.x * 5 + 3, y: ti.y * 5 + 3 };
     // LvlPrest AutoMap=1 (마을 5곳) → 자동 지도 전부 드러냄. 출처: DRLGPRESET — pfAutomap 을 모든 방에 (1·3막) / pfTownAutomap 그림 (2·4·5막)
     if (tables.table('LvlPrest').some((r) => Number(r.LevelId) === lv.id && Number(r.AutoMap) === 1)) def.automapAll = true;
+    const tm = TOWN_MAPS[lv.id];
+    // 루트 골레인 그림 묶음: 고른 DS1 이 LutN 이면 뒤 묶음(1), LutW 면 앞 묶음(0). 출처: Phrozen Keep KB 373 (서쪽 판 0001~0019, 북쪽 판 0021~0039)
+    const townDs1 = world.townFile !== undefined ? (data.lvlPrestByLevel(lv.id)?.file[world.townFile] ?? '') : '';
     const warpKey = tables.table('Levels').find((r) => Number(r.Id) === lv.id)?.LevelWarp ?? '';
     levels.push({
-      key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(rec.levelType), warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,
+      key, id: lv.id, name: tables.string(rec.levelName) || rec.levelName, automapName: AutomapTable.levelName(rec.levelType),
+      townMap: tm ? { ...tm, variant: /LutN/i.test(townDs1) ? 1 : 0 } : null, warpLabel: warpKey ? tables.string(warpKey) : '', preset, def,
     });
   }
   const byKey = new Map(levels.map((l) => [l.key, l]));

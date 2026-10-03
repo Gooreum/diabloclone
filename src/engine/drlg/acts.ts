@@ -19,6 +19,8 @@ export interface DrlgWorld {
   levels: Map<number, DrlgLevel>;
   /** 레벨 가장자리 출구 (양방향) */
   exits: EdgeExit[];
+  /** 마을 프리셋이 고른 DS1 파일 번호 (0 = File1) — Act 1·2 만 (원작 nPickedFile; 루트 골레인 자동 지도 그림 묶음 선택) */
+  townFile?: number;
 }
 
 export interface ActDrlg {

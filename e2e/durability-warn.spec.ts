@@ -92,6 +92,7 @@ test('내구도 경고: 낮으면 노란 아이콘, 0 이면 빨강, 인벤토�
   await page.waitForTimeout(300);
   const tip = await page.evaluate(() => {
     const w = window.__game!, m = w.input!.mouse;
+    if (!m) return null;
     const it = w.ui!.inventory.itemAt(w.game.store, m.x, m.y);
     const ch = w.game.character!;
     return it ? w.ui!.itemText.lines(it, { level: ch.level, str: ch.str, dex: ch.dex, cls: ch.cls })[0] : null;

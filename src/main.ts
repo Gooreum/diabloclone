@@ -37,6 +37,8 @@ import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
 import { ensureLocalMpqs } from './ui/mpq-setup';
 import { ControlPanel, type HudAction, type HudState } from './ui/hud';
+import { invWarnings } from './ui/invwarn';
+import { isBroken } from './engine/price';
 import { Panels } from './ui/panels';
 import { SkillTree } from './ui/skillpanel';
 import { CharPanel } from './ui/charpanel';
@@ -555,6 +557,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   const invPanel = new InventoryPanel(parseInvLayout(tables.table('Inventory'), cls), icons, itemText, art, data.expansion ?? false);
   // 요구치를 못 채운 아이템은 빨간 바탕 (원작)
   invPanel.usable = (it) => {
+    // 부서진 아이템(내구도 0)도 빨간 바탕 (원작: 수리 전엔 쓸 수 없다 — Arreat Summit "A red item has 0 Durability")
+    if (isBroken(it)) return false;
     const r = requirements(data.items, it), c = game.character;
     const b = data.items.base(it.code), cc = b ? itemClassCode(data.items, b) : '';
     // 다른 직업 전용 아이템도 빨간 바탕 (itemtypes Class)
@@ -1280,6 +1284,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       mercBar.draw(ctx, s.merc, s.merc ? str(s.merc.name) : '');
       // 왼쪽 위 메시지 (용병 초상이 있으면 그 오른쪽) — 패널·툴팁 아래
       messageLog.draw(ctx, now, s.merc ? 64 : 10, 10);
+      // 내구도·수량 경고 (원작 invwarn): 플레이 화면 오른쪽 위 — 인벤토리 등 패널이 열리면 그 아래 가려진다
+      hud.drawWarnings(ctx, invWarnings(game.store, data.items));
       // 왼쪽 패널 자리: 캐릭터·보관함·웨이포인트·퀘스트 / 오른쪽: 스킬 트리·인벤토리
       charPanel.draw(ctx, input.mouse);
       stashPanel.draw(ctx, game.store, game.stashGold, ch.level, str, input.mouse, (it) => itemText.lines(it, reqCtx));

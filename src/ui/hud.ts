@@ -17,6 +17,7 @@ import type { Character, ExpTable } from '../engine/player';
 import type { ItemStore } from '../engine/itemstore';
 import type { SkillDb, SkillRecord } from '../engine/skills/db';
 import type { ItemIcons } from './invpanel';
+import type { InvWarning } from './invwarn';
 import type { Edition } from '../assets/edition';
 import { UI, type UiArt } from './art';
 import { d2text, drawText } from './text';
@@ -37,7 +38,9 @@ const MENUBTN = `${PANEL}menubutton.dc6`;
 const MINI = `${PANEL}minipanel.dc6`;
 const MINIBTN = `${PANEL}minipanelbtn.dc6`;
 const LEVEL = `${PANEL}level.dc6`;
-export const HUD_ART = [CTRL, GLOBE, OVERLAP, RUN, MENUBTN, MINI, MINIBTN, LEVEL, `${UI}SPELLS\\Skillicon.dc6`];
+/** 내구도·수량 경고 아이콘 (원작 "upper right corner of the Play Area") — 프레임 고르기는 ui/invwarn.ts */
+export const INVWARN = `${PANEL}invwarn.DC6`;
+export const HUD_ART = [CTRL, GLOBE, OVERLAP, RUN, MENUBTN, MINI, MINIBTN, LEVEL, INVWARN, `${UI}SPELLS\\Skillicon.dc6`];
 
 /** 스킬 아이콘 파일 (skills.txt charclass → SPELLS\<접두>Skillicon.dc6, 일반 스킬 = Skillicon.dc6) */
 export function skillIconPath(charclass: string): string {
@@ -325,6 +328,14 @@ export class ControlPanel {
     g.putImageData(img, 0, 0);
     this.glassImg = c;
     return c;
+  }
+
+  /**
+   * 내구도·수량 경고 아이콘: 화면 오른쪽 위, 오른쪽부터 왼쪽으로 한 줄. draw() 와 따로 두어 패널 아래에 그린다.
+   * 근사(원작 미확인): 정확한 좌표·간격·깜빡임 여부는 클라이언트 코드라 못 봤다 — 오른쪽 가장자리 8px, 자동 지도 이름 줄 아래(y 34), 간격 4px, 깜빡임 없음
+   */
+  drawWarnings(ctx: CanvasRenderingContext2D, warnings: readonly InvWarning[]): void {
+    warnings.forEach((w, i) => this.art.draw(ctx, INVWARN, w.frame, 800 - 8 - 40 - i * 44, 34));
   }
 
   draw(ctx: CanvasRenderingContext2D, st: HudState): void {

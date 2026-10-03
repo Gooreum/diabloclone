@@ -7,6 +7,7 @@ import type { ItemDb } from '../engine/items';
 import type { ItemGen } from '../engine/itemgen';
 import { statOf } from '../engine/itemgen';
 import { armorDefense, etherealBase, weaponDamage } from '../engine/charstats';
+import { isBroken } from '../engine/price';
 import { itemClassCode, requirements } from '../engine/inventory';
 import { CLASS_CODE } from '../engine/skills/db';
 import type { ClassName } from '../engine/player';
@@ -184,7 +185,8 @@ export class ItemText {
     const rw = this.runewords?.get(item.runeword);
     const gold = QUALITY_COLOR[QUALITY.UNIQUE] as string, grey = '#8c8c8c';
     // 룬워드: 이름 금색, 기본 이름 회색, 룬 글자 'TalEth' 금색 (원작 툴팁 — 근사: 회색 값은 글꼴 색표 미확인)
-    const color = rw ? gold : (QUALITY_COLOR[item.quality] ?? '#fff');
+    // 부서진 아이템(내구도 0)은 이름이 빨강 (원작 Amazon Basin "names are displayed in red text")
+    const color = isBroken(item) ? '#ff5050' : rw ? gold : (QUALITY_COLOR[item.quality] ?? '#fff');
     const out: TextLine[] = [{ text: this.name(item), color }];
     if (!b) return out;
     if (rw) {

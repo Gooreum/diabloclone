@@ -1254,7 +1254,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         const reveal = game.automapOf(game.levelId);
         if (wl && reveal) {
           const objs = game.objects;
-          automapDrawn = automap.draw(ctx, automapMode, wl.preset, wl.automapName, reveal, {
+          automapDrawn = automap.draw(ctx, automapMode, wl.preset, wl.automapName, wl.townMap, reveal, {
             player: { x: s.player.x, y: s.player.y },
             waypoints: objs.filter((o) => o.type.subClass & SUBCLASS.WAYPOINT).map((o) => ({ x: o.x, y: o.y })),
             portals: objs.filter((o) => o.portal).map((o) => ({ x: o.x, y: o.y })),

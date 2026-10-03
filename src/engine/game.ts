@@ -1787,6 +1787,26 @@ export class Game {
         this.events.push({ type: 'itemMoved', itemId: cmd.itemId, to: cmd.to.kind });
         return;
       }
+      case 'toBelt': {
+        // 출처: D2MOO Rcv0x63_ShiftLeftClickItemToBelt — 인벤토리 격자 아이템만, 커서에 든 게 있으면 "할 수 없다",
+        // 벨트 칸은 INVENTORY_GetFreeBeltSlot, 빈 칸이 없으면 조용히 무시
+        const found = this.store.find(cmd.itemId);
+        if (!found || found.where.kind !== 'inventory') return;
+        if (this.store.cursor) {
+          this.events.push({ type: 'itemMoveFailed', itemId: cmd.itemId, reason: 'occupied' });
+          return;
+        }
+        const slot = this.store.freeBeltSlot(found.item);
+        if (slot === null) return;
+        if (this.store.move(cmd.itemId, { kind: 'belt', slot }).ok) this.events.push({ type: 'itemMoved', itemId: cmd.itemId, to: 'belt' });
+        return;
+      }
+      case 'stackItem': {
+        // 출처: D2MOO Rcv0x21_StackItems(같은 묶음) · Rcv0x29_ScrollToBook(두루마리→책) — 못 합치면 아무 일도 없음
+        const moved = this.store.stackInto(cmd.itemId, cmd.targetId);
+        if (moved > 0) this.events.push({ type: 'itemStacked', itemId: cmd.targetId, from: cmd.itemId, count: moved });
+        return;
+      }
       case 'useBelt': {
         const it = this.store.belt[cmd.slot];
         if (it) this.useItem(it.id);
@@ -2662,6 +2682,20 @@ export class Game {
       if (take >= g.item.quantity) this.ground.splice(this.ground.indexOf(g), 1);
       else g.item.quantity -= take;
       this.events.push({ type: 'goldPickup', amount: take });
+      return;
+    }
+    // 두루마리는 채울 책이 있으면 책으로(+1), 책은 가진 책에 합친다. 넘치면 가진 책 = maxstack, 주운 책은 나머지 수량으로 땅에 남는다.
+    // 출처: D2MOO ItemMode.cpp:1173 (ITEMTYPE_SCROLL → sub_6FC49AE0, ITEMTYPE_BOOK → sub_6FC43BF0) + INVENTORY_FindFillableBook
+    const code = g.item.code;
+    const book = code === 'tsc' || code === 'isc' || code === 'tbk' || code === 'ibk' ? this.store.fillableBook(code) : null;
+    if (book) {
+      const max = this.data?.items.base(book.code)?.maxStack ?? 0;
+      const have = g.item.quantity || 1;
+      const take = Math.min(have, max - book.quantity);
+      book.quantity += take;
+      if (have - take <= 0) this.ground.splice(this.ground.indexOf(g), 1);
+      else g.item.quantity = have - take;
+      this.events.push({ type: 'itemPickup', itemId: book.id, code, stacked: true });
       return;
     }
     if (!this.store.store(g.item)) {

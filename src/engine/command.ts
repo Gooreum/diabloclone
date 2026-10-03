@@ -27,6 +27,10 @@ export type Command =
   | { type: 'waypoint'; level: string | number }
   | { type: 'useBelt'; slot: number }
   | { type: 'moveItem'; itemId: number; to: ItemLocation }
+  /** Shift+왼쪽 클릭: 인벤토리 격자 아이템을 벨트 빈 칸으로 (원작 벨트 칸 규칙). 출처: D2MOO Rcv0x63_ShiftLeftClickItemToBelt */
+  | { type: 'toBelt'; itemId: number }
+  /** 커서 아이템을 같은 묶음·책 위에 놓기 (두루마리→책, 열쇠→열쇠 …). 출처: D2MOO Rcv0x21_StackItems · Rcv0x29_ScrollToBook */
+  | { type: 'stackItem'; itemId: number; targetId: number }
   /** 인벤토리·벨트 아이템 사용 (물약 마시기, 두루마리 읽기 — 원작 우클릭) */
   | { type: 'useItem'; itemId: number; targetId?: number }
   | { type: 'spendStat'; stat: 'str' | 'dex' | 'vit' | 'ene' }

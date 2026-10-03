@@ -199,7 +199,9 @@ function run(game: Game, ticks = 2): GameEvent[] {
 describe.skipIf(!hasGameData)('명령: toBelt (Shift+클릭) · stackItem', () => {
   it('toBelt: 인벤토리 hp1 이 벨트 빈 칸(같은 종류 열 위)으로, itemMoved 사건', () => {
     const hp = make('hp1');
-    const game = setup({ inventory: [hp], belt: [make('hp1'), null, null, null] });
+    // 초기 inventory 는 줍기 규칙(store)으로 들어가 벨트로 가 버리니 격자에 직접 둔다
+    const game = setup({ belt: [make('hp1'), null, null, null] });
+    game.store.inv.autoAdd(hp);
     game.enqueue({ type: 'toBelt', itemId: hp.id });
     const ev = run(game);
     expect(ev.some((e) => e.type === 'itemMoved' && e.to === 'belt')).toBe(true);
@@ -209,7 +211,8 @@ describe.skipIf(!hasGameData)('명령: toBelt (Shift+클릭) · stackItem', () =
   });
   it('toBelt: 커서에 든 게 있으면 itemMoveFailed, 움직이지 않음', () => {
     const hp = make('hp1');
-    const game = setup({ inventory: [hp] });
+    const game = setup();
+    game.store.inv.autoAdd(hp);
     game.store.cursor = make('cap');
     game.enqueue({ type: 'toBelt', itemId: hp.id });
     const ev = run(game);
@@ -218,7 +221,8 @@ describe.skipIf(!hasGameData)('명령: toBelt (Shift+클릭) · stackItem', () =
   });
   it('toBelt: 빈 칸이 없으면 조용히 무시 (원작)', () => {
     const hp = make('hp1');
-    const game = setup({ inventory: [hp], belt: [make('hp1'), make('hp1'), make('hp1'), make('hp1')] });
+    const game = setup({ belt: [make('hp1'), make('hp1'), make('hp1'), make('hp1')] });
+    game.store.inv.autoAdd(hp);
     game.enqueue({ type: 'toBelt', itemId: hp.id });
     const ev = run(game);
     expect(ev.filter((e) => e.type === 'itemMoved' || e.type === 'itemMoveFailed')).toEqual([]);

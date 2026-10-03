@@ -32,6 +32,8 @@
 | 벨트 칸 고르기 (줍기·Shift+클릭) | ✅ 조작 수정 | 아래 줄의 같은 종류(생명끼리·마나끼리·회복끼리) 물약 열 위로, 없으면 items.txt `autobelt` 품목만 아래 줄 첫 빈칸 (`INVENTORY_GetFreeBeltSlot`, `ITEMS_ComparePotionTypes`). 주울 때는 `autobelt` 또는 같은 종류가 벨트에 있을 때만 (`ITEMS_CheckIfAutoBeltable`, 두루마리 제외). 전에는 첫 빈칸 |
 | 두루마리 → 책 | ✅ 조작 수정 | 커서의 두루마리를 책 위에 클릭하면 +1 (`Rcv0x29_ScrollToBook`), 주우면 수량이 남은 책으로 (`ItemMode.cpp:1173`, `INVENTORY_FindFillableBook`), 책을 주우면 가진 책에 합치고 넘치면 땅에 나머지 (`sub_6FC43BF0`). 책이 꽉 찼을 때 클릭은 원작 서버처럼 아무 일도 없음 (클라이언트가 그 뒤 자리 바꾸기를 보내는지 미확인) |
 | 같은 묶음 합치기 | ✅ 조작 수정 | 커서의 열쇠·화살·투창을 같은 코드·등급·소켓 없음·이더리얼 같음인 묶음 위에 클릭하면 합치고 넘치면 커서에 나머지 (`Rcv0x21_StackItems`, `ITEMS_AreStackablesEqual`). 주울 때 자동 합치기(`autostack` 열, `sub_6FC437F0`)는 ❌ (items.txt 파서에 없음) |
+| 내구도 경고 아이콘 | ✅ 표시 추가 | 착용 중인 머리·몸통·양손 아이템이 내구도 21% 미만이면 화면 오른쪽 위에 원작 `PANEL\invwarn.DC6` 아이콘(노랑), 0 이면 빨강 (Arreat Summit basics "upper right corner … yellow … red", Amazon Basin wiki "< 21%"). 전에는 소리만 났다. **좌표·간격·깜빡임은 클라이언트 코드라 미확인** → 오른쪽 8px·y 34·간격 4·깜빡임 없음(근사). DC6 의 주황(가운데 색) 프레임을 켜는 기준 미확인 → 안 씀. 화살·볼트·투척의 수량 경고 기준 미확인 → 내구도와 같은 21%(근사). 벨트·신발·장갑·반지·목걸이는 DC6 에 종류가 없어 아이콘 없음 |
+| 부서진 아이템 표시 | ✅ 표시 추가 | 내구도 0 이면 인벤토리 칸 바탕 빨강 + 툴팁 이름 빨강 (Amazon Basin "names are displayed in red text and their equipment slots have a red background"). 보관함·큐브·용병 창의 바탕색은 ❌ (각자 그리기 코드, 미적용) |
 
 ### 7직업 전 스킬 실제 클릭 검사 (`e2e/class-play.spec.ts`)
 스킬 버튼으로 고르고, Hell 필드에서 진짜 마우스 오른쪽 클릭으로 몬스터 위·시체 위·빈 땅을 누른다. 시전 시작, 효과(미사일·소환·상태·피해), 시전 뒤 이동 클릭을 본다.

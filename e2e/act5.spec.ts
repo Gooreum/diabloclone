@@ -81,6 +81,16 @@ test('Act 5: Tyrael → Harrogath (NPC), 5 탭, Bloody Foothills 몬스터, Worl
     await page.locator('#game').screenshot({ path: `test-results/act5-${key}.png` });
     expect(await litRatio(page), key).toBeGreaterThan(0.15);
   }
+
+  // 크리스탈 통로(Ice Caves) 자동 지도 — AutoMap.txt "5 Ice". 예전엔 레벨 이름이 "5 Ice Caves" 로 어긋나 빈 지도였다
+  await visit(page, 'crystallinepassage');
+  expect(await page.evaluate(() => window.__game!.game.automapOf('crystallinepassage')!.count())).toBeGreaterThan(0);
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => window.__game!.ui!.automap() === 'full' && window.__game!.ui!.automapReady(), undefined, { timeout: 10_000 });
+  await page.waitForTimeout(300);
+  await page.locator('#game').screenshot({ path: 'test-results/act5-automap-crystallinepassage.png' });
+  expect(await page.evaluate(() => window.__game!.ui!.automapDrawn())).toBeGreaterThan(5);
+  await page.keyboard.press('Tab');
   expect(errors).toEqual([]);
 });
 

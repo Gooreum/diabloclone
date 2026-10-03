@@ -23,23 +23,29 @@ const CSS = `
 #mpq-setup .err { color: #d05040; }
 `;
 
-/** 보관된 MPQ 가 필수 3개를 모두 갖췄으면 곧바로, 아니면 고르는 화면을 띄우고 다 고르면 돌려준다 */
-export async function ensureLocalMpqs(host: HTMLElement): Promise<Map<string, Blob>> {
+/**
+ * 보관된 MPQ 가 필수 3개를 모두 갖췄으면 곧바로, 아니면 고르는 화면을 띄우고 다 고르면 돌려준다.
+ * reopen: 이미 갖췄어도 화면을 띄운다 (메인 메뉴 "Game Files" — 확장팩·소리 파일을 더 넣거나 바꾼다)
+ */
+export async function ensureLocalMpqs(host: HTMLElement, reopen = false): Promise<Map<string, Blob>> {
   const have = await MpqStore.all();
-  if (MpqStore.missing(have).length === 0) return have;
+  if (!reopen && MpqStore.missing(have).length === 0) return have;
   void navigator.storage?.persist?.().catch(() => false);
-  return new Promise((done) => showSetup(host, have, done));
+  return new Promise((done) => showSetup(host, have, done, reopen));
 }
 
-function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<string, Blob>) => void): void {
+function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<string, Blob>) => void, reopen: boolean): void {
   const style = document.createElement('style');
   style.textContent = CSS;
   const root = document.createElement('div');
   root.id = 'mpq-setup';
   root.innerHTML = `
     <h1>Diablo II 원작 파일 불러오기</h1>
-    <p>가지고 계신 Diablo II (1.14d) 설치 폴더의 MPQ 파일을 선택하세요.</p>
-    <p class="muted">확장팩(Lord of Destruction)을 설치한 폴더면 확장팩으로, 클래식만 설치했으면 클래식으로 시작합니다.</p>
+    ${reopen
+      ? `<p>✓ 표시는 이 브라우저에 보관된 파일입니다. 확장팩(d2exp.mpq 등)이나 소리 파일을 더 넣거나, 같은 이름의 파일을 넣어 바꿀 수 있습니다.</p>
+         <p class="muted">확장팩으로 바꾸려면 확장팩 설치 폴더를 통째로 고르세요 (patch_d2·d2char 가 확장팩판으로 바뀌고 d2exp 가 더해집니다).</p>`
+      : `<p>가지고 계신 Diablo II (1.14d) 설치 폴더의 MPQ 파일을 선택하세요.</p>
+         <p class="muted">확장팩(Lord of Destruction)을 설치한 폴더면 확장팩으로, 클래식만 설치했으면 클래식으로 시작합니다.</p>`}
     <p class="muted">파일은 서버로 전송되지 않고 이 브라우저에만 저장됩니다. 한 번만 하면 다음부터는 바로 시작합니다.</p>
     <div class="drop">
       <p>여기로 MPQ 파일(또는 폴더)을 끌어다 놓거나</p><br>
@@ -51,13 +57,14 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
     <ul></ul>
     <p class="edition"></p>
     <p class="status"></p>
-    <p><button type="button" data-start disabled>시작</button></p>`;
+    <p><button type="button" data-start disabled>시작</button>${reopen ? '<button type="button" data-clear>보관한 파일 모두 지우기</button>' : ''}</p>`;
   host.replaceChildren(style, root);
 
   const list = root.querySelector('ul')!;
   const status = root.querySelector('.status') as HTMLElement;
   const edition = root.querySelector('.edition') as HTMLElement;
   const start = root.querySelector('[data-start]') as HTMLButtonElement;
+  const clear = root.querySelector('[data-clear]') as HTMLButtonElement | null;
   const drop = root.querySelector('.drop') as HTMLElement;
   let busy = false;
 
@@ -72,6 +79,7 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
     const miss = MpqStore.missing(have);
     const quiet = OPTIONAL_MPQS.filter((n) => !have.has(n));
     start.disabled = busy || miss.length > 0;
+    if (clear) clear.disabled = busy;
     if (busy) return;
     if (miss.length) status.innerHTML = `<span class="err">필요한 파일: ${miss.join(', ')}</span>`;
     else if (quiet.length) status.textContent = `소리 파일이 없어 소리 없이 시작합니다 (${quiet.join(', ')})`;
@@ -129,6 +137,17 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
     e.preventDefault();
     drop.classList.remove('over');
     void droppedFiles(e.dataTransfer).then(add);
+  };
+  // 보관한 MPQ 만 지운다 (캐릭터 저장은 다른 DB). 지우면 필수 파일이 빠져 시작이 꺼지고, 다시 넣으면 켜진다
+  if (clear) clear.onclick = () => {
+    if (busy) return;
+    busy = true;
+    render();
+    void MpqStore.clear().then(() => {
+      have.clear();
+      busy = false;
+      render();
+    });
   };
   start.onclick = () => {
     if (start.disabled) return;

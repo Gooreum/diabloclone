@@ -28,6 +28,10 @@
 | 투창·화살 수량 0 | ✅ 조작 수정 | 일반 등급은 없어지고 가방의 같은 묶음 자동 장착(itemtypes `Reload`), 매직 이상 무기는 부서짐으로 남음 (`PlrModes.cpp sub_6FC80B90`). `ReEquip`(던지는 물약 뒤 원래 무기)은 ❌ |
 | 반복 소리 정리 | ✅ 조작 수정 | 효과음은 미사일 TravelSound만 반복, 레벨 이동 때 정리 (`audio/sound.ts`). 전에는 Wake of Inferno 소리가 마을까지 영원히 남았다 |
 | 쓸 수 없는 스킬 빨간 아이콘·맨손 공격 | ✅ | `game.ts skillUseState` (원작 `SKILLS_GetUseState`), `weaponAllows` 맨손 규칙 (`sub_6FDB1130`) |
+| 인벤토리 Shift+클릭 → 벨트 | ✅ 조작 수정 | `toBelt` 명령 (`PlrMsg.cpp Rcv0x63_ShiftLeftClickItemToBelt`). 커서에 든 게 있으면 거부, 칸은 아래 규칙. 전에는 아무 일도 없었다. **벨트 아이템을 Shift+클릭해 인벤토리로 보내는 조작은 원작 유무 미확인이라 없음** |
+| 벨트 칸 고르기 (줍기·Shift+클릭) | ✅ 조작 수정 | 아래 줄의 같은 종류(생명끼리·마나끼리·회복끼리) 물약 열 위로, 없으면 items.txt `autobelt` 품목만 아래 줄 첫 빈칸 (`INVENTORY_GetFreeBeltSlot`, `ITEMS_ComparePotionTypes`). 주울 때는 `autobelt` 또는 같은 종류가 벨트에 있을 때만 (`ITEMS_CheckIfAutoBeltable`, 두루마리 제외). 전에는 첫 빈칸 |
+| 두루마리 → 책 | ✅ 조작 수정 | 커서의 두루마리를 책 위에 클릭하면 +1 (`Rcv0x29_ScrollToBook`), 주우면 수량이 남은 책으로 (`ItemMode.cpp:1173`, `INVENTORY_FindFillableBook`), 책을 주우면 가진 책에 합치고 넘치면 땅에 나머지 (`sub_6FC43BF0`). 책이 꽉 찼을 때 클릭은 원작 서버처럼 아무 일도 없음 (클라이언트가 그 뒤 자리 바꾸기를 보내는지 미확인) |
+| 같은 묶음 합치기 | ✅ 조작 수정 | 커서의 열쇠·화살·투창을 같은 코드·등급·소켓 없음·이더리얼 같음인 묶음 위에 클릭하면 합치고 넘치면 커서에 나머지 (`Rcv0x21_StackItems`, `ITEMS_AreStackablesEqual`). 주울 때 자동 합치기(`autostack` 열, `sub_6FC437F0`)는 ❌ (items.txt 파서에 없음) |
 
 ### 7직업 전 스킬 실제 클릭 검사 (`e2e/class-play.spec.ts`)
 스킬 버튼으로 고르고, Hell 필드에서 진짜 마우스 오른쪽 클릭으로 몬스터 위·시체 위·빈 땅을 누른다. 시전 시작, 효과(미사일·소환·상태·피해), 시전 뒤 이동 클릭을 본다.

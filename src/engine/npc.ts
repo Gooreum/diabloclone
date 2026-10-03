@@ -197,13 +197,6 @@ function putInBelt(h: TradeHost, it: ItemInstance): boolean {
   return false;
 }
 
-/** 두루마리를 채울 책 (tsc → tbk, isc → ibk) 중 수량이 남은 첫 책. 출처: sub_6FC4B430 */
-function tomeFor(h: TradeHost, scroll: string): ItemInstance | undefined {
-  const book = scroll === 'tsc' ? 'tbk' : scroll === 'isc' ? 'ibk' : '';
-  const max = h.data.items.base(book)?.maxStack ?? 0;
-  return h.store.inv.items.map((p) => p.item).find((x) => x.code === book && x.quantity < max);
-}
-
 export interface HireCandidate { index: number; name: string; init: HirelingInit }
 
 /**
@@ -356,7 +349,8 @@ export class NpcServices {
     let multi = !!opts.multi && perm && b.multibuy;
     // 두루마리 → 책
     if (!gambling && items.isType(b, 'scro')) {
-      const tome = tomeFor(h, b.code);
+      // 채울 책 (ItemStore.fillableBook — 출처: INVENTORY_FindFillableBook / sub_6FC4B430)
+      const tome = h.store.fillableBook(b.code);
       if (tome) {
         const max = items.base(tome.code)?.maxStack ?? 0;
         const room = max - tome.quantity;

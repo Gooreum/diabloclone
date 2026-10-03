@@ -10,6 +10,22 @@ import type { ItemInstance } from './treasure';
 
 export const BELT_SLOTS = 16;
 
+/** 벨트 열을 같이 쓰는 "같은 종류" 물약 묶음. 출처: D2MOO ITEMS_ComparePotionTypes (생명 hp1~5 · 마나 mp1~5 · 회복 rvl·rvs) */
+const POTION_KINDS: readonly (readonly string[])[] = [['hp1', 'hp2', 'hp3', 'hp4', 'hp5'], ['mp1', 'mp2', 'mp3', 'mp4', 'mp5'], ['rvl', 'rvs']];
+
+/** 같은 코드, 또는 둘 다 생명·마나·회복 물약이면 같은 종류. 출처: ITEMS_ComparePotionTypes */
+export function samePotionKind(a: ItemInstance, b: ItemInstance): boolean {
+  if (a.code === b.code) return true;
+  return POTION_KINDS.some((g) => g.includes(a.code) && g.includes(b.code));
+}
+
+/** 두루마리·책 코드 → 그 두루마리를 담는 책 코드 (tsc·tbk → tbk, isc·ibk → ibk) */
+function bookFor(code: string): string {
+  if (code === 'tsc' || code === 'tbk') return 'tbk';
+  if (code === 'isc' || code === 'ibk') return 'ibk';
+  return '';
+}
+
 export type Where =
   | { kind: 'inventory'; x: number; y: number }
   | { kind: 'stash'; x: number; y: number }
@@ -200,17 +216,96 @@ export class ItemStore {
   }
 
   /**
-   * 주운 아이템 넣기: 벨트에 넣을 수 있는 물약·두루마리는 벨트 빈 칸(아래 줄 왼쪽부터) 먼저, 아니면 인벤토리 빈 자리.
+   * 벨트 빈 칸 고르기. 출처: D2MOO INVENTORY_GetFreeBeltSlot —
+   * 1×1 벨트용 아이템만. 아래 줄 4칸을 왼쪽부터 보며 그 칸 물약과 같은 종류면 그 열에서 위로 올라가며 첫 빈 칸.
+   * 그런 열이 없거나 꽉 찼으면 items.txt autobelt 인 품목만 아래 줄 첫 빈 칸. 아니면 null
+   */
+  freeBeltSlot(item: ItemInstance): number | null {
+    if (!this.items || !beltable(this.items, item) || item.invW !== 1 || item.invH !== 1) return null;
+    const cap = this.beltCapacity();
+    for (let col = 0; col < 4; col++) {
+      const bottom = this.belt[col];
+      if (!bottom || !samePotionKind(item, bottom)) continue;
+      for (let s = col; s < cap; s += 4) if (!this.belt[s]) return s;
+    }
+    if (!this.items.base(item.code)?.autoBelt) return null;
+    for (let s = 0; s < 4; s++) if (!this.belt[s]) return s;
+    return null;
+  }
+
+  /**
+   * 주울 때 벨트로 가는가. 출처: ITEMS_CheckIfAutoBeltable — autobelt 이거나,
+   * (두루마리 isc·tsc 가 아니면서) 아래 줄에 같은 종류 물약이 있을 때 (INVENTORY_HasSimilarPotionInBelt)
+   */
+  autoBeltable(item: ItemInstance): boolean {
+    if (!this.items) return false;
+    if (this.items.base(item.code)?.autoBelt) return true;
+    if (item.code === 'isc' || item.code === 'tsc') return false;
+    return this.belt.slice(0, 4).some((b) => b && samePotionKind(item, b));
+  }
+
+  /** 두루마리(또는 책)를 채울 책 — 인벤토리 격자의 같은 종류 책 중 수량이 남은 첫 책. 출처: INVENTORY_FindFillableBook */
+  fillableBook(code: string): ItemInstance | null {
+    const book = bookFor(code);
+    const max = book ? (this.items?.base(book)?.maxStack ?? 0) : 0;
+    return this.inv.items.map((p) => p.item).find((x) => x.code === book && x.quantity < max) ?? null;
+  }
+
+  /**
+   * src 를 dst 위에 놓으면 합쳐지는 종류인가 (수량은 보지 않는다).
+   * 두루마리 → 같은 종류 책, 또는 같은 코드·같은 등급·소켓 없음·이더리얼 같음인 묶음 아이템.
+   * 출처: ITEMS_AreStackablesEqual, sub_6FC49AE0 (ScrollToBook)
+   */
+  stackable(src: ItemInstance, dst: ItemInstance): boolean {
+    if (src === dst || !this.items) return false;
+    if ((src.code === 'tsc' || src.code === 'isc') && dst.code === bookFor(src.code)) return true;
+    const db = this.items.base(dst.code);
+    if (!db?.stackable || src.code !== dst.code || src.quality !== dst.quality) return false;
+    if (src.sockets || dst.sockets || !!src.ethereal !== !!dst.ethereal) return false;
+    return true;
+  }
+
+  /**
+   * src(커서 등)를 dst 묶음·책에 합친다. 반환: 옮긴 수량 (0 = 못 합침).
+   * 두루마리 → 책: 책 +1, 두루마리 삭제 (sub_6FC49AE0). 책이 꽉 찼으면 아무 일도 없음.
+   * 같은 묶음: 합이 maxstack 이하면 dst = 합·src 삭제, 넘치면 dst = maxstack·src 는 나머지 (sub_6FC484E0)
+   */
+  stackInto(srcId: number, dstId: number): number {
+    const src = this.find(srcId), dst = this.find(dstId);
+    if (!src || !dst || dst.where.kind === 'cursor' || !this.stackable(src.item, dst.item) || !this.items) return 0;
+    const s = src.item, d = dst.item;
+    const max = this.items.base(d.code)?.maxStack ?? 0;
+    if (s.code !== d.code) {
+      if (d.quantity >= max) return 0;
+      d.quantity++;
+      this.detach(s, src.where);
+      return 1;
+    }
+    const total = s.quantity + d.quantity;
+    if (total <= max) {
+      const moved = s.quantity;
+      d.quantity = total;
+      this.detach(s, src.where);
+      return moved;
+    }
+    const moved = max - d.quantity;
+    if (moved <= 0) return 0;
+    d.quantity = max;
+    s.quantity = total - max;
+    return moved;
+  }
+
+  /**
+   * 주운 아이템 넣기: 원작 자동 벨트 조건(autoBeltable)이 맞으면 벨트 칸 규칙(freeBeltSlot)대로, 아니면 인벤토리 빈 자리.
+   * 출처: D2MOO ItemMode.cpp 줍기 — ITEMS_CheckIfBeltable && ITEMS_CheckIfAutoBeltable && INVENTORY_PlaceItemInFreeBeltSlot
    * 반환 false = 자리 없음
    */
   store(item: ItemInstance, preferBelt = true): boolean {
-    if (preferBelt && this.items && beltable(this.items, item)) {
-      const cap = this.beltCapacity();
-      for (let i = 0; i < cap; i++) {
-        if (!this.belt[i]) {
-          this.belt[i] = item;
-          return true;
-        }
+    if (preferBelt && this.autoBeltable(item)) {
+      const s = this.freeBeltSlot(item);
+      if (s !== null) {
+        this.belt[s] = item;
+        return true;
       }
     }
     return this.inv.autoAdd(item);

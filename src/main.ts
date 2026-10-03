@@ -793,6 +793,16 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'socket', itemId: under.id } });
         return true;
       }
+      // 원작: 커서의 두루마리를 책 위에, 같은 묶음(열쇠·화살·투창 …)을 같은 묶음 위에 클릭하면 합쳐진다 (Rcv0x29 ScrollToBook · Rcv0x21 StackItems)
+      if (cur && under && cur !== under && store.stackable(cur, under)) {
+        game.enqueue({ type: 'stackItem', itemId: cur.id, targetId: under.id });
+        return true;
+      }
+      // 원작: Shift+왼쪽 클릭 = 벨트로 (Rcv0x63 ShiftLeftClickItemToBelt — 벨트 칸 규칙은 엔진이 본다)
+      if (!cur && shift && it && hit.kind === 'inventory') {
+        game.enqueue({ type: 'toBelt', itemId: it.id });
+        return true;
+      }
       if (hit.kind === 'inventory') {
         if (cur) game.enqueue({ type: 'moveItem', itemId: cur.id, to: { kind: 'inventory', ...invPanel.placeAt(cur, x, y) } });
         else {

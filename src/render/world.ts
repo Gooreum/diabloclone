@@ -1,6 +1,7 @@
 // 레벨 타일 렌더러: 바닥 → 그림자 → (벽 + 유닛, 대각선 깊이 순) → 지붕.
 // 벽(방향 1~14)은 타일 기준점에서 +80 아래에 기준, 지붕(15)은 roofHeight 만큼 위.
 // 출처: Paul Siramy — DT1/DS1 문서 (방향 0 바닥, 13 그림자, 15 지붕, 3/4 코너 쌍)
+// 지붕: 플레이어가 선 셀의 지붕 묶음(이어진 지붕 = 한 건물)은 건너뛴다 (원작: 건물 안에 들어가면 지붕이 사라진다)
 import type { PresetLevel } from '../engine/drlg/preset';
 import { renderTile, type TileImage } from '../formats/dt1';
 import { toCanvas, type Camera } from './iso';
@@ -8,6 +9,38 @@ import type { IndexedImage, SpriteSink } from './sink';
 import { newSpriteId } from './sprites';
 
 export interface DepthSprite { depth: number; draw: (sink: SpriteSink, cam: Camera) => void }
+
+/**
+ * 셀마다 지붕 묶음 번호 (0 = 지붕 없음, 1부터 = 건물). 상하좌우로 이어진 지붕 셀(방향 15)은 같은 번호.
+ * 근사(원작 미확인): 원작 클라이언트가 "건물 안" 을 어떻게 판정하는지는 D2MOO 에 없다 —
+ *   플레이어가 선 타일 셀에 지붕 타일이 놓여 있으면 안으로 보고, 이어진 지붕을 한 건물로 묶어 통째로 숨긴다
+ */
+export function roofGroups(level: Pick<PresetLevel, 'widthTiles' | 'heightTiles' | 'walls'>): Int32Array {
+  const W = level.widthTiles, H = level.heightTiles;
+  const g = new Int32Array(W * H);
+  for (const w of level.walls) if (w.orientation === 15 && w.x >= 0 && w.x < W && w.y >= 0 && w.y < H) g[w.y * W + w.x] = -1;
+  let next = 0;
+  for (let start = 0; start < g.length; start++) {
+    if (g[start] !== -1) continue;
+    const id = ++next;
+    const stack = [start];
+    g[start] = id;
+    while (stack.length) {
+      const k = stack.pop() as number;
+      const x = k % W, y = Math.floor(k / W);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        const nk = ny * W + nx;
+        if (g[nk] === -1) {
+          g[nk] = id;
+          stack.push(nk);
+        }
+      }
+    }
+  }
+  return g;
+}
 
 export class WorldRenderer {
   private readonly images: ({ img: TileImage; image: IndexedImage } | null)[];

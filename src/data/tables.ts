@@ -15,10 +15,13 @@ export class GameTables {
   private stringsCache: Map<string, string> | null = null;
   /** 표시 언어 (문자열 표) */
   readonly lang: Lang;
+  /** 자체 번역 — 고른 언어의 원작 표 어디에도 없는 키만 채운다 (공식 표가 있으면 공식 값 우선). 영어는 쓰지 않는다 */
+  private readonly fallback: Readonly<Record<string, string>> | null;
 
-  constructor(src: AssetSource, lang: Lang = 'eng') {
+  constructor(src: AssetSource, lang: Lang = 'eng', fallback: Readonly<Record<string, string>> | null = null) {
     this.src = src;
     this.lang = lang;
+    this.fallback = lang === 'eng' ? null : fallback;
   }
 
   /** data\global\excel\<name>.txt (대소문자 무시) */
@@ -40,16 +43,23 @@ export class GameTables {
 
   /**
    * 원작 문자열 (string.tbl → expansionstring.tbl → patchstring.tbl 순으로 덮어씀).
-   * 다른 언어는 영어 표를 먼저 깔고 그 언어의 있는 표로 덮는다 (한국어 expansionstring 이 없어 확장팩 문자열은 영어)
+   * 다른 언어는 영어 표를 먼저 깔고 그 언어의 있는 표로 덮는다. 그 언어 표에 한 번도 안 나온 키만 자체 번역(fallback)으로 채운다 —
+   * 사용자 MPQ 에 kor\expansionstring.tbl 이 있으면 그 값이 이기고, 없으면(이 저장소의 기본 가정) 우리 번역이 쓰인다.
    */
   string(key: string): string {
     if (!this.stringsCache) {
       this.stringsCache = new Map();
+      const own = new Set<string>(); // 고른 언어의 원작 표가 직접 준 키
       for (const l of langLayers(this.lang))
         for (const f of STRING_TABLES) {
           const b = this.src.read(`data\\local\\lng\\${l}\\${f}`);
-          if (b) for (const [k, v] of parseTbl(b, l === 'eng' ? 'latin1' : 'utf-8')) this.stringsCache.set(k, v);
+          if (!b) continue;
+          for (const [k, v] of parseTbl(b, l === 'eng' ? 'latin1' : 'utf-8')) {
+            this.stringsCache.set(k, v);
+            if (l !== 'eng') own.add(k);
+          }
         }
+      if (this.fallback) for (const [k, v] of Object.entries(this.fallback)) if (!own.has(k)) this.stringsCache.set(k, v);
     }
     return this.stringsCache.get(key) ?? key;
   }

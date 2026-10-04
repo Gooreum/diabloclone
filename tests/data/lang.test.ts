@@ -40,14 +40,27 @@ describe.skipIf(!hasLod)('한국어 문자열 (원작 kor 표)', () => {
     expect(t.string('ssd')).toBe('숏소드');
     expect(t.string('Andariel')).toMatch(/[가-힣]/);
   });
-  it('한국어 표에 없는 확장팩 전용 문자열은 영어', () => {
+  it('한국어 표에 없는 확장팩 전용 문자열: 자체 번역이 없으면 영어, 있으면 그 번역', () => {
     const exp = parseTbl(chain.read('data\\local\\lng\\eng\\expansionstring.tbl')!);
     const kor = new Map([...parseTbl(chain.read('data\\local\\lng\\kor\\string.tbl')!, 'utf-8'), ...parseTbl(chain.read('data\\local\\lng\\kor\\patchstring.tbl')!, 'utf-8')]);
-    const key = [...exp.keys()].find((k) => !kor.has(k) && /[a-z]/i.test(exp.get(k)!))!;
-    expect(key).toBeTruthy();
-    expect(new GameTables(chain, 'kor').string(key)).toBe(exp.get(key));
+    expect(kor.has('Harrogath')).toBe(false);
+    expect(exp.get('Harrogath')).toBe('Harrogath');
+    expect(new GameTables(chain, 'kor').string('Harrogath')).toBe('Harrogath');
+    expect(new GameTables(chain, 'kor', { Harrogath: '하로가스' }).string('Harrogath')).toBe('하로가스');
   });
-  it('영어 (기본) 는 지금과 같다', () => {
+  it('공식 한국어 표에 있는 키는 자체 번역이 있어도 공식 값', () => {
+    expect(new GameTables(chain, 'kor', { ssd: '우리번역' }).string('ssd')).toBe('숏소드');
+  });
+  it('영어 (기본) 는 지금과 같고 자체 번역을 무시한다', () => {
     expect(new GameTables(chain).string('ssd')).toBe('Short Sword');
+    expect(new GameTables(chain, 'eng', { ssd: '우리번역', Harrogath: '하로가스' }).string('Harrogath')).toBe('Harrogath');
+  });
+  it('사용자 MPQ 에 공식 kor\\expansionstring.tbl 이 있으면 그 값이 자체 번역보다 우선, 거기에도 없는 키만 채운다', () => {
+    // 가짜 소스: kor\expansionstring.tbl 요청에 영어 expansionstring 바이트를 준다 (ASCII 라 UTF-8 로 그대로 읽힘)
+    const fake = { read: (p: string) => chain.read(/kor\\expansionstring\.tbl$/i.test(p) ? 'data\\local\\lng\\eng\\expansionstring.tbl' : p) };
+    const t = new GameTables(fake, 'kor', { Harrogath: '하로가스', GemXp1: '테스트' });
+    expect(t.string('Harrogath')).toBe('Harrogath'); // "공식" 파일 값
+    expect(t.string('ssd')).toBe('숏소드');
+    expect(t.string('GemXp1')).toBe('테스트'); // eng patchstring 에만 있고 kor 표 어디에도 없는 키
   });
 });

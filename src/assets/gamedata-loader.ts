@@ -13,6 +13,8 @@ export const EXCEL_TABLES = ['weapons', 'armor', 'misc', 'ItemTypes', 'TreasureC
 
 export async function loadGameData(assets: AssetLoader, lang: Lang = 'eng'): Promise<{ data: GameData; tables: GameTables }> {
   await assets.preload([...EXCEL_TABLES.map((t) => `data\\global\\excel\\${t}.txt`), 'data\\global\\AnimData.d2']);
-  const tables = new GameTables(assets, lang);
+  // 자체 번역은 그 언어를 골랐을 때만 읽는다 (별도 청크) — 공식 표에 없는 키만 채운다 (GameTables.string)
+  const fallback = lang === 'kor' ? (await import('../data/lang/kor-fallback')).KOR_FALLBACK : null;
+  const tables = new GameTables(assets, lang, fallback);
   return { data: buildGameData(assets, tables), tables };
 }

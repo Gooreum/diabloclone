@@ -29,6 +29,10 @@ test('언어 단추: 한국어로 바꾸면 원작 한국어 문자열과 한글
   await page.locator('#game').screenshot({ path: 'test-results/korean-title.png' });
   expect(await page.evaluate(() => window.__str!('ssd'))).toBe('숏소드');
   expect(await page.evaluate(() => window.__d2text!.width('숏소드', 'font16'))).toBeGreaterThan(0);
+  // 확장팩 문자열: 공식 kor\expansionstring.tbl 이 없는 MPQ 면 자체 번역(kor-fallback)이 채운다 — 공식 파일이 있는 환경도 한글이면 통과
+  expect(await page.evaluate(() => window.__str!('Harrogath'))).toMatch(/[가-힣]/);
+  expect(await page.evaluate(() => window.__str!('Larzuk'))).toMatch(/[가-힣]/);
+  expect(await page.evaluate(() => window.__str!('Skillname230'))).toMatch(/[가-힣]/);
 
   // 게임 속: 원작 한국어 문자열을 메시지로 띄워 그려지는지 (스크린샷으로 확인)
   await newHero(page, uniqueName('Kor'));
@@ -52,6 +56,7 @@ test('언어 단추: 한국어로 바꾸면 원작 한국어 문자열과 한글
   await page.click('#btn-lang-eng');
   await page.waitForFunction(() => window.__menuReady === true && window.__lang === 'eng', undefined, { timeout: 90_000 });
   expect(await page.evaluate(() => window.__str!('ssd'))).toBe('Short Sword');
+  expect(await page.evaluate(() => window.__str!('Harrogath'))).toBe('Harrogath'); // 영어는 자체 번역을 읽지 않는다
   expect(errors).toEqual([]);
 });
 

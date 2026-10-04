@@ -1,4 +1,5 @@
-// 표시 언어 (원작 data\local\lng\<lang>\*.tbl). 고른 언어 표에 없는 파일·키는 영어를 쓴다.
+// 표시 언어 (원작 data\local\lng\<lang>\*.tbl). 고른 언어 표에 없는 파일·키는 영어를 쓰되,
+// 한국어는 자체 번역(lang/kor-fallback.ts)으로 빈 키를 채운다 — 공식 표(있다면 kor\expansionstring.tbl 포함)가 항상 우선 (GameTables.string).
 // 출처: 사용자 MPQ 직접 확인 — d2exp.mpq kor\string.tbl, patch_d2.mpq kor\patchstring.tbl (UTF-8), kor\expansionstring.tbl 없음
 export type Lang = 'eng' | 'kor';
 export const STRING_TABLES = ['string.tbl', 'expansionstring.tbl', 'patchstring.tbl'] as const;

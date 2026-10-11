@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hero } from './d1-hero';
 import { pngStats } from './png';
 
 // 디아블로 1 헬파이어: 정식판 diabdat.mpq + 헬파이어 MPQ 4개 (GOG 설치 파일에서 꺼낸 것, game-data/diablo1-full/ — 저장소에 넣지 않음)
@@ -64,6 +65,21 @@ test('정식판 + 헬파이어 파일을 넣으면 Hellfire 를 골라 몽크로
   await expect.poll(async () => (await look(page)).lit, { timeout: 90_000 }).toBeGreaterThan(0.3);
   await page.waitForTimeout(3000);
   await shot(page, '5-town');
+
+  // ★ 최강: 몽크는 지팡이(양손, loc 2) + 레벨 50 + 주문 15
+  await page.click('#btn-d1-max');
+  await expect(page.locator('#btn-d1-max')).toHaveText('★ 완료', { timeout: 30_000 });
+  const h = (await hero(page))!;
+  console.log(JSON.stringify(h));
+  expect([h.class, h.level]).toEqual([3, 50]);
+  expect(h.spell15).toBeGreaterThan(0);
+  expect(h.equip.map((e) => e.loc).sort()).toEqual([2, 3, 4, 5, 5, 6]);
+  await page.locator('#d1-frame').focus();
+  await page.keyboard.press('i');
+  await page.waitForTimeout(800);
+  await page.keyboard.press('c');
+  await page.waitForTimeout(800);
+  await shot(page, '6-max');
   expect(await page.evaluate(() => window.__d1!.errors)).toEqual([]);
   expect(errors).toEqual([]);
 });

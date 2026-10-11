@@ -12,13 +12,14 @@
   5. 단축키에 동시키(SHIFT+1·CTRL+ALT+A 등) — 조합 배정이 있으면 먼저, 없으면 원래처럼 키 하나
   6. 브라우저가 먼저 쓰는 F1~F12 는 배정하지 않음 — 기본값을 H·SHIFT+S·SHIFT+L·SHIFT+1~4 로, 예전 설정의 F키는 기본값으로
   7. 웹 페이지의 게임 중 단축키 화면이 키 배정을 읽고 바꾸는 함수 (dvx_keymap_json, dvx_keymap_set)
+  8. 웹 페이지의 "★ 최강" 단추 — 지금 영웅을 최대 레벨·능력치·주문 15·직업별 최고 장비로 바꾸고 저장 (dvx_max_hero, 확인용 dvx_hero_json)
 - 빌드: `scripts/build-devilutionx.sh` (emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.12 (5488e0871d46d19a3209988190fa6a653126256f))
 - 한글 글꼴 `fonts-ko.mpq`: DevilutionX 글꼴 모음 fonts.mpq (https://github.com/diasurgical/devilutionx-assets 릴리스 v5) 에서
   한글 음절 블록만 골라 다시 묶은 것 (`scripts/build-d1-fonts.ts`). 글꼴은 Noto CJK·Unifont, SIL Open Font License 1.1 — 이 폴더의 `LICENSE-SIL.txt`
 
 | 파일 | 크기 | sha256 |
 |------|------|--------|
-| `devilutionx.js` | 221495 | `774153bb79627e7a09dd97ac99e1959aecdbb11b7931fd60071c3f89ccaa5d39` |
-| `devilutionx.wasm` | 6022284 | `d31bdd813ce7041c370e409c8d48db2edc99228da137a934eeaab62ef85327cb` |
+| `devilutionx.js` | 221638 | `fb4526159cacbdbd2e08a1f7ba02e6444874a8a558107dc9ba672778decd97b7` |
+| `devilutionx.wasm` | 6036448 | `e93dc5970b6be8407bbb7d0793a24b74d99af116f4c207810d1b871f2c65d33c` |
 | `devilutionx.data` | 12732968 | `e4cedda044a21cbe2efd7c926b9667c4267a986e692a309ac7df2c7ccf636ac6` |
 | `fonts-ko.mpq` | 16418824 | `2baee5ad59e672ca871feeee1874c562194129e9275a8aca5f4ce547cde92cc8` |

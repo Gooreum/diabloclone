@@ -138,7 +138,7 @@ index b13b7416..3edbc00b 100644
  
  	// TODO: This should be handled outside of the keymapper.
 diff --git a/Source/diablo.cpp b/Source/diablo.cpp
-index e92c03c7..15916297 100644
+index e92c03c7..47fc16b6 100644
 --- a/Source/diablo.cpp
 +++ b/Source/diablo.cpp
 @@ -1861,7 +1861,7 @@ void InitKeymapActions()
@@ -186,13 +186,162 @@ index e92c03c7..15916297 100644
  	    HelpKeyPressed,
  	    nullptr,
  	    CanPlayerTakeAction);
-@@ -3547,3 +3547,27 @@ void PrintScreen(SDL_Keycode vkey)
+@@ -3547,3 +3547,232 @@ void PrintScreen(SDL_Keycode vkey)
  }
  
  } // namespace devilution
 +
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten.h>
++
++#include <random>
++
++#include "items.h"
++#include "msg.h"
++#include "spells.h"
++#include "tables/spelldat.h"
++#include "utils/str_cat.hpp"
++
++// diabloclone web: "★ 최강" button — max level, attributes, spell levels and the best gear for the current hero.
++// Same steps as the debug-only dev console (lua/modules/dev), callable from the page in release builds.
++namespace devilution {
++namespace {
++
++struct AffixWant {
++	item_effect_type pre; // IPL_INVALID = any
++	item_effect_type suf;
++};
++
++std::mt19937 MaxHeroRng;
++
++bool BaseFits(const Player &p, const ItemData &d)
++{
++	return d.iMinStr <= p.GetMaximumAttributeValue(CharacterAttribute::Strength)
++	    && d.iMinMag <= p.GetMaximumAttributeValue(CharacterAttribute::Magic)
++	    && d.iMinDex <= p.GetMaximumAttributeValue(CharacterAttribute::Dexterity);
++}
++
++/** best droppable base of a slot: highest max damage (weapons) or max AC (others) the hero can wear */
++_item_indexes BestBase(const Player &p, item_equip_type loc, std::initializer_list<ItemType> types)
++{
++	_item_indexes best = IDI_NONE;
++	int bestScore = -1;
++	for (size_t i = 0; i < AllItemsList.size(); i++) {
++		const ItemData &d = AllItemsList[i];
++		if (d.dropRate == 0 || !IsItemAvailable(static_cast<int>(i)) || d.iLoc != loc || d.iMiscId == IMISC_UNIQUE || !BaseFits(p, d))
++			continue;
++		if (std::find(types.begin(), types.end(), d.itype) == types.end())
++			continue;
++		const int score = loc == ILOC_ONEHAND || loc == ILOC_TWOHAND ? d.iMaxDam : d.iMaxAC;
++		if (score > bestScore) {
++			bestScore = score;
++			best = static_cast<_item_indexes>(i);
++		}
++	}
++	return best;
++}
++
++bool Matches(item_effect_type want, item_effect_type have)
++{
++	return want == IPL_INVALID || want == have;
++}
++
++/** roll magic items of a base (item level 40-60, where the top affixes are) until the earliest wanted affix pair shows up (highest value wins a tie) */
++Item RollBest(const Player &p, _item_indexes idx, std::initializer_list<AffixWant> wants)
++{
++	Item best;
++	size_t bestRank = wants.size() + 1;
++	if (idx == IDI_NONE)
++		return best;
++	const uint32_t begin = SDL_GetTicks();
++	std::uniform_int_distribution<int32_t> dist(0, INT_MAX);
++	for (int i = 0; i < 400000 && SDL_GetTicks() - begin < 800; i++) {
++		Item it;
++		SetupAllItems(p, it, idx, dist(MaxHeroRng), 40 + dist(MaxHeroRng) % 21, 1, true, false, 0, true);
++		if (it.isEmpty() || it._iMagical != ITEM_QUALITY_MAGIC)
++			continue;
++		size_t rank = wants.size(); // any magic item is still better than nothing
++		size_t r = 0;
++		for (const AffixWant &w : wants) {
++			if (Matches(w.pre, it._iPrePower) && Matches(w.suf, it._iSufPower)) {
++				rank = r;
++				break;
++			}
++			r++;
++		}
++		if (rank < bestRank || (rank == bestRank && it._iIvalue > best._iIvalue)) {
++			best = it;
++			bestRank = rank;
++		}
++		if (bestRank == 0 && i > 20000)
++			break;
++	}
++	if (!best.isEmpty())
++		best._iIdentified = true;
++	return best;
++}
++
++void PutAway(Player &p, Item &old)
++{
++	if (old.isEmpty())
++		return;
++	if (!AutoPlaceItemInInventory(p, old) && ActiveItemCount < MAXITEMS) {
++		const int ii = AllocateItem();
++		Items[ii] = old;
++		GetSuperItemSpace(p.position.tile, ii);
++		NetSendCmdPItem(false, CMD_SPAWNITEM, Items[ii].position, Items[ii]);
++	}
++	old.clear();
++}
++
++void Wear(Player &p, inv_body_loc loc, Item item)
++{
++	if (item.isEmpty())
++		return;
++	PutAway(p, p.InvBody[loc]);
++	p.InvBody[loc] = item;
++}
++
++void EquipBest(Player &p)
++{
++	constexpr AffixWant AnyMagic = { IPL_INVALID, IPL_INVALID };
++	Item weapon;
++	switch (p._pClass) {
++	case HeroClass::Rogue:
++		weapon = RollBest(p, BestBase(p, ILOC_TWOHAND, { ItemType::Bow }),
++		    { { IPL_DAMP, IPL_LIGHT_ARROWS }, { IPL_DAMP, IPL_ATTRIBS }, { IPL_DAMP, IPL_INVALID }, AnyMagic });
++		break;
++	case HeroClass::Sorcerer:
++		weapon = RollBest(p, BestBase(p, ILOC_TWOHAND, { ItemType::Staff }),
++		    { { IPL_SPLLVLADD, IPL_MAG }, { IPL_SPLLVLADD, IPL_INVALID }, { IPL_MANA, IPL_INVALID }, AnyMagic });
++		break;
++	case HeroClass::Monk:
++		weapon = RollBest(p, BestBase(p, ILOC_TWOHAND, { ItemType::Staff }),
++		    { { IPL_TOHIT_DAMP, IPL_FASTATTACK }, { IPL_TOHIT_DAMP, IPL_INVALID }, AnyMagic });
++		break;
++	default:
++		weapon = RollBest(p, BestBase(p, ILOC_ONEHAND, { ItemType::Sword }),
++		    { { IPL_TOHIT_DAMP, IPL_FASTATTACK }, { IPL_DAMP, IPL_FASTATTACK }, { IPL_TOHIT_DAMP, IPL_INVALID }, AnyMagic });
++		break;
++	}
++	if (!weapon.isEmpty()) {
++		Wear(p, INVLOC_HAND_LEFT, weapon);
++		if (weapon._iLoc == ILOC_TWOHAND)
++			PutAway(p, p.InvBody[INVLOC_HAND_RIGHT]);
++		else
++			Wear(p, INVLOC_HAND_RIGHT, RollBest(p, BestBase(p, ILOC_ONEHAND, { ItemType::Shield }), { { IPL_ACP, IPL_LIFE }, { IPL_ACP, IPL_INVALID }, AnyMagic }));
++	}
++	const std::initializer_list<AffixWant> armorWants = { { IPL_ACP, IPL_LIFE }, { IPL_ACP, IPL_INVALID }, AnyMagic };
++	Wear(p, INVLOC_CHEST, RollBest(p, BestBase(p, ILOC_ARMOR, { ItemType::LightArmor, ItemType::MediumArmor, ItemType::HeavyArmor }), armorWants));
++	Wear(p, INVLOC_HEAD, RollBest(p, BestBase(p, ILOC_HELM, { ItemType::Helm }), armorWants));
++	const std::initializer_list<AffixWant> jewelWants = { { IPL_ALLRES, IPL_ATTRIBS }, { IPL_INVALID, IPL_ATTRIBS }, { IPL_ALLRES, IPL_INVALID }, AnyMagic };
++	Wear(p, INVLOC_RING_LEFT, RollBest(p, BestBase(p, ILOC_RING, { ItemType::Ring }), jewelWants));
++	Wear(p, INVLOC_RING_RIGHT, RollBest(p, BestBase(p, ILOC_RING, { ItemType::Ring }), jewelWants));
++	Wear(p, INVLOC_AMULET, RollBest(p, BestBase(p, ILOC_AMULET, { ItemType::Amulet }), jewelWants));
++}
++
++} // namespace
++} // namespace devilution
 +
 +// diabloclone web: the page's in-game key bindings screen reads and changes the keymap through these
 +extern "C" {
@@ -210,6 +359,62 @@ index e92c03c7..15916297 100644
 +		return 0;
 +	devilution::SaveOptions();
 +	return 1;
++}
++
++EMSCRIPTEN_KEEPALIVE int dvx_max_hero()
++{
++	using namespace devilution;
++	if (!gbRunGame || gbIsMultiplayer || MyPlayer == nullptr || !MyPlayer->plractive)
++		return 0;
++	Player &p = *MyPlayer;
++	MaxHeroRng.seed(SDL_GetTicks());
++	while (!p.isMaxCharacterLevel())
++		p.addExperience(GetNextExperienceThresholdForLevel(p.getMaxCharacterLevel()));
++	ModifyPlrStr(p, p.GetMaximumAttributeValue(CharacterAttribute::Strength) - p._pBaseStr);
++	ModifyPlrMag(p, p.GetMaximumAttributeValue(CharacterAttribute::Magic) - p._pBaseMag);
++	ModifyPlrDex(p, p.GetMaximumAttributeValue(CharacterAttribute::Dexterity) - p._pBaseDex);
++	ModifyPlrVit(p, p.GetMaximumAttributeValue(CharacterAttribute::Vitality) - p._pBaseVit);
++	p._pStatPts = 0;
++	for (auto i = static_cast<uint8_t>(SpellID::Firebolt); i < SpellsData.size(); i++) {
++		if (GetSpellBookLevel(static_cast<SpellID>(i)) == -1)
++			continue;
++		p._pMemSpells |= GetSpellBitmask(static_cast<SpellID>(i));
++		p._pSplLvl[i] = MaxSpellLevel;
++	}
++	EquipBest(p);
++	CalcPlrInv(p, true);
++	p.RestoreFullLife();
++	p.RestoreFullMana();
++	RedrawEverything();
++	SaveGame();
++	return 1;
++}
++
++/** current hero for the page's tests: level, base attributes, spells at max level and equipped item names */
++EMSCRIPTEN_KEEPALIVE const char *dvx_hero_json()
++{
++	using namespace devilution;
++	static std::string json;
++	if (MyPlayer == nullptr || !MyPlayer->plractive)
++		return "null";
++	const Player &p = *MyPlayer;
++	int spells = 0;
++	for (size_t i = 0; i < SpellsData.size(); i++)
++		if (p._pSplLvl[i] == MaxSpellLevel) spells++;
++	json = StrCat("{\"class\":", static_cast<int>(p._pClass), ",\"level\":", p.getCharacterLevel(),
++	    ",\"str\":", p._pBaseStr, ",\"mag\":", p._pBaseMag, ",\"dex\":", p._pBaseDex, ",\"vit\":", p._pBaseVit,
++	    ",\"spell15\":", spells, ",\"equip\":[");
++	bool first = true;
++	for (const Item &it : p.InvBody) {
++		if (it.isEmpty()) continue;
++		std::string name;
++		for (const char *c = it._iIName; *c != '\0'; c++)
++			if (*c != '"' && *c != '\\') name += *c;
++		StrAppend(json, first ? "" : ",", "{\"loc\":", static_cast<int>(it._iLoc), ",\"type\":", static_cast<int>(it._itype), ",\"name\":\"", name, "\"}");
++		first = false;
++	}
++	json += "]}";
++	return json.c_str();
 +}
 +
 +} // extern "C"

@@ -117,9 +117,27 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
     if (!rt?.Module || document.getElementById('d1-keys')) return;
     void openKeymap(host, rt).then(() => frame.contentWindow?.focus());
   });
+  // 지금 영웅을 최대 레벨·스탯·주문 15·직업별 최고 장비로 (엔진이 바로 저장 — 혼자 하기만)
+  const max = document.createElement('button');
+  max.id = 'btn-d1-max';
+  max.type = 'button';
+  max.textContent = '★ 최강';
+  max.title = '지금 영웅을 최대 레벨·스탯·주문 15·최고 장비로 (혼자 하기만, 바로 저장)';
+  max.addEventListener('click', () => {
+    const rt = frame.contentWindow as (Window & D1Runtime) | null;
+    max.textContent = '만드는 중…';
+    // 글자가 먼저 보이게 한 박자 쉬고 (장비를 고르는 동안 몇 초 멈춘다)
+    setTimeout(() => {
+      const ok = rt?.Module?.ccall('dvx_max_hero', 'number', [], []) === 1;
+      if (ok) rt?.FS?.syncfs(false, () => undefined);
+      max.textContent = ok ? '★ 완료' : '게임 안에서 눌러요';
+      setTimeout(() => (max.textContent = '★ 최강'), 2500);
+      frame.contentWindow?.focus();
+    }, 30);
+  });
   const bar = document.createElement('div');
   bar.id = 'd1-bar';
-  bar.append(exit, keys);
+  bar.append(exit, keys, max);
   host.replaceChildren(style, frame, bar);
   // 마우스가 멈추면 흐리게 (전체화면 단추와 같은 규칙) — iframe 안 움직임은 부모에 안 오므로 단추 위에서만 다시 밝게
   let timer = 0;

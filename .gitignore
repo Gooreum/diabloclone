@@ -8,3 +8,4 @@ game-data/
 *.MPQ
 .ai-bouncer-tasks/
 e2e-reports/
+.dvx-build/

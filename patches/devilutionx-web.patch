@@ -1,0 +1,119 @@
+diff --git a/3rdParty/Lua/CMakeLists.txt b/3rdParty/Lua/CMakeLists.txt
+index c2fc550..da9c905 100644
+--- a/3rdParty/Lua/CMakeLists.txt
++++ b/3rdParty/Lua/CMakeLists.txt
+@@ -37,9 +37,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin" AND DARWIN_MAJOR_VERSION VERSION_EQUAL 8)
+   find_package(MacportsLegacySupport REQUIRED)
+   target_link_libraries(lua_static PRIVATE MacportsLegacySupport::MacportsLegacySupport)
+ elseif(EMSCRIPTEN)
+-  # Enable pthread support for Emscripten to match SDL2's USE_PTHREADS=1
+-  target_compile_options(lua_static PUBLIC -pthread)
+-  target_link_options(lua_static PUBLIC -pthread)
++  # diabloclone: single-threaded web build (no SharedArrayBuffer on GitHub Pages)
+ elseif(TARGET_PLATFORM STREQUAL "dos")
+   target_compile_definitions(lua_static PUBLIC -DLUA_USE_C89)
+ elseif(ANDROID AND ("${ANDROID_ABI}" STREQUAL "armeabi-v7a" OR "${ANDROID_ABI}" STREQUAL "x86"))
+diff --git a/CMake/Dependencies.cmake b/CMake/Dependencies.cmake
+index 2488f2c..d4786d5 100644
+--- a/CMake/Dependencies.cmake
++++ b/CMake/Dependencies.cmake
+@@ -58,7 +58,7 @@ endif()
+ 
+ if(EMSCRIPTEN)
+   # We use `USE_PTHREADS=1` here to get a version of SDL2 that supports threads.
+-  emscripten_system_library("SDL2" SDL2::SDL2 USE_SDL=2 USE_PTHREADS=1)
++  emscripten_system_library("SDL2" SDL2::SDL2 USE_SDL=2)
+   list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/3rdParty/SDL2/CMake")
+ elseif(USE_SDL1)
+   find_package(SDL 1.2.10 REQUIRED)
+diff --git a/CMake/functions/devilutionx_library.cmake b/CMake/functions/devilutionx_library.cmake
+index d03271a..19e7bc2 100644
+--- a/CMake/functions/devilutionx_library.cmake
++++ b/CMake/functions/devilutionx_library.cmake
+@@ -68,7 +68,9 @@ function(add_devilutionx_library NAME)
+ 
+   # Ensure all libraries and the shared PCH compile with a consistent threading
+   # model (e.g. -pthread / _REENTRANT) and transitively provide threading flags.
+-  target_link_libraries(${NAME} PUBLIC Threads::Threads)
++  if(NOT EMSCRIPTEN)
++    target_link_libraries(${NAME} PUBLIC Threads::Threads)
++  endif()
+ 
+   set_relative_file_macro(${NAME})
+ endfunction()
+diff --git a/Source/DiabloUI/diabloui.cpp b/Source/DiabloUI/diabloui.cpp
+index eca3f18..41b5f2b 100644
+--- a/Source/DiabloUI/diabloui.cpp
++++ b/Source/DiabloUI/diabloui.cpp
+@@ -657,7 +657,9 @@ void LoadUiGFX()
+ 	}
+ 	DifficultyIndicator = LoadPcx("ui_art\\r1_gry", /*transparentColor=*/0);
+ 	ArtFocus[FOCUS_SMALL] = LoadPcxSpriteList("ui_art\\focus16", /*numFrames=*/8, /*transparentColor=*/250);
+-	ArtFocus[FOCUS_MED] = LoadPcxSpriteList("ui_art\\focus", /*numFrames=*/8, /*transparentColor=*/250);
++	ArtFocus[FOCUS_MED] = LoadPcxSpriteList("ui_art\\focus", /*numFrames=*/8, /*transparentColor=*/250, nullptr, /*logError=*/false);
++	// diabloclone: some web-repacked shareware MPQs lack focus.pcx -- fall back to the small pentagram
++	if (!ArtFocus[FOCUS_MED].has_value()) ArtFocus[FOCUS_MED] = LoadPcxSpriteList("ui_art\\focus16", /*numFrames=*/8, /*transparentColor=*/250);
+ 	ArtFocus[FOCUS_BIG] = LoadPcxSpriteList("ui_art\\focus42", /*numFrames=*/8, /*transparentColor=*/250);
+ 
+ 	ArtCursor = LoadPcx("ui_art\\cursor", /*transparentColor=*/0);
+diff --git a/Source/engine/sound.cpp b/Source/engine/sound.cpp
+index 56a8adc..4a34308 100644
+--- a/Source/engine/sound.cpp
++++ b/Source/engine/sound.cpp
+@@ -5,6 +5,8 @@
+  */
+ #include "engine/sound.h"
+ 
++#include <cstring>
++
+ #include <algorithm>
+ #include <cstddef>
+ #include <cstdint>
+@@ -75,7 +77,21 @@ std::expected<void, std::string> LoadAudioFile(const char *path, bool stream, So
+ 		isMp3 = false;
+ 	}
+ 	if (!ref.ok()) {
+-		return std::unexpected(StrCat("Audio file not found\n", path, "\n", SDL_GetError(), "\n" __FILE__ ":", __LINE__));
++		// diabloclone: a few sounds are absent from web-repacked shareware MPQs -- play a short silence instead of aborting the game
++		LogWarn(LogCategory::Audio, "Audio file not found, using silence: {}", path);
++		constexpr std::size_t Samples = 64;
++		constexpr std::size_t Bytes = 44 + Samples * 2;
++		auto wav = MakeArraySharedPtr<std::uint8_t>(Bytes);
++		std::uint8_t *w = wav.get();
++		std::memset(w, 0, Bytes);
++		auto put32 = [&](std::size_t at, std::uint32_t v) { for (int i = 0; i < 4; ++i) w[at + i] = static_cast<std::uint8_t>(v >> (8 * i)); };
++		auto put16 = [&](std::size_t at, std::uint16_t v) { w[at] = static_cast<std::uint8_t>(v); w[at + 1] = static_cast<std::uint8_t>(v >> 8); };
++		std::memcpy(w, "RIFF", 4); put32(4, static_cast<std::uint32_t>(Bytes - 8)); std::memcpy(w + 8, "WAVEfmt ", 8);
++		put32(16, 16); put16(20, 1); put16(22, 1); put32(24, 22050); put32(28, 44100); put16(32, 2); put16(34, 16);
++		std::memcpy(w + 36, "data", 4); put32(40, static_cast<std::uint32_t>(Samples * 2));
++		if (result.SetChunk(wav, Bytes, /*isMp3=*/false) != 0)
++			return std::unexpected(StrCat("Audio file not found\n", path, "\n", SDL_GetError(), "\n" __FILE__ ":", __LINE__));
++		return {};
+ 	}
+ 
+ #ifdef STREAM_ALL_AUDIO_MIN_FILE_SIZE
+@@ -91,6 +107,12 @@ std::expected<void, std::string> LoadAudioFile(const char *path, bool stream, So
+ #endif
+ 
+ 	if (stream) {
++		// diabloclone: streamed audio too -- MP3 data under a .wav name (web-repacked shareware)
++		if (!isMp3) {
++			AssetHandle probe = OpenAsset(std::string_view(foundPath));
++			std::uint8_t d[3] {};
++			if (probe.ok() && probe.read(d, 3) && ((d[0] == 'I' && d[1] == 'D' && d[2] == '3') || (d[0] == 0xFF && (d[1] & 0xE0) == 0xE0))) isMp3 = true;
++		}
+ 		if (result.SetChunkStream(foundPath, isMp3, /*logErrors=*/true) != 0) {
+ 			return std::unexpected(StrCat("Failed to load audio file\n", foundPath, "\n", SDL_GetError(), "\n" __FILE__ ":", __LINE__));
+ 		}
+@@ -106,6 +128,11 @@ std::expected<void, std::string> LoadAudioFile(const char *path, bool stream, So
+ 		if (!handle.read(waveFile.get(), size)) {
+ 			return std::unexpected(StrCat("Failed to read file\n", foundPath, ": ", SDL_GetError(), __FILE__ ":", __LINE__));
+ 		}
++		// diabloclone: web-repacked shareware MPQs store MP3 data under .wav names -- detect by header (ID3 tag or MPEG frame sync)
++		if (!isMp3 && size >= 3) {
++			const std::uint8_t *d = waveFile.get();
++			if ((d[0] == 'I' && d[1] == 'D' && d[2] == '3') || (d[0] == 0xFF && (d[1] & 0xE0) == 0xE0)) isMp3 = true;
++		}
+ 		const int error = result.SetChunk(waveFile, size, isMp3);
+ 		if (error != 0) {
+ 			return std::unexpected(SDL_GetError());

@@ -145,3 +145,49 @@ test('클래식 설치: Configure Controls 에 Skill 9~16 이 없다', async ({ 
   await expect(page.locator('#key-swap')).toBeHidden();
   await page.locator('#game').screenshot({ path: 'test-results/hotkeys-controls-classic.png' });
 });
+
+test('H (도움말): 원작 문구를 화면 위에 겹쳐 보이고, H·Esc 로 닫힌다 (Esc 는 게임 메뉴를 열지 않음)', async ({ page }) => {
+  await newHero(page, uniqueName('Hp'), 'sorceress');
+  await overWorld(page);
+  const shot = async () => page.evaluate(async () => {
+    const img = await window.__game!.capture!();
+    let sum = 0;
+    for (let i = 0; i < img.data.length; i += 16) sum += img.data[i]!;
+    return sum;
+  });
+  await page.keyboard.press('h');
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.help.open)).toBe(true);
+  await page.waitForTimeout(300);
+  await page.locator('#game').screenshot({ path: 'test-results/hotkeys-help.png' });
+  await page.keyboard.press('h');
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.help.open)).toBe(false);
+  await page.keyboard.press('h');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.help.open)).toBe(false);
+  expect(await page.evaluate(() => window.__game!.ui!.gameMenu.menuOpen)).toBe(false);
+  expect(await shot()).toBeGreaterThan(0);
+});
+
+test('Enter (채팅): 쓴 글이 메시지에 이름과 함께 뜨고, 채팅 중 I 는 인벤토리를 열지 않으며, Esc 는 보내지 않고 닫는다', async ({ page }) => {
+  const name = uniqueName('Ch');
+  await newHero(page, name, 'sorceress');
+  await overWorld(page);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#chat-input')).toBeFocused();
+  await page.keyboard.type('hi there');
+  expect(await page.evaluate(() => window.__game!.ui!.inventory.open)).toBe(false);
+  await page.waitForTimeout(200);
+  await page.locator('#game').screenshot({ path: 'test-results/hotkeys-chat-typing.png' });
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.__game!.ui!.messages.visible(performance.now()).map((l) => l.text))).toContain(`${name}: hi there`);
+  expect(await page.evaluate(() => window.__game!.ui!.chat.open)).toBe(false);
+  await page.waitForTimeout(200);
+  await page.locator('#game').screenshot({ path: 'test-results/hotkeys-chat-sent.png' });
+  // Esc: 보내지 않고 닫는다, 게임 메뉴도 열지 않는다
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('nope');
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => window.__game!.ui!.chat.open)).toBe(false);
+  expect(await page.evaluate(() => window.__game!.ui!.messages.visible(performance.now()).some((l) => l.text.includes('nope')))).toBe(false);
+  expect(await page.evaluate(() => window.__game!.ui!.gameMenu.menuOpen)).toBe(false);
+});

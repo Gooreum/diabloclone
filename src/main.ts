@@ -38,6 +38,8 @@ import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
 import { ensureLocalMpqs } from './ui/mpq-setup';
 import { fitStage } from './ui/stage';
+import { HelpOverlay } from './ui/help';
+import { ChatInput } from './ui/chat';
 import { installFullscreen } from './ui/fullscreen';
 import { ControlPanel, type HudAction, type HudState } from './ui/hud';
 import { invWarnings } from './ui/invwarn';
@@ -108,6 +110,7 @@ declare global {
         /** e2e (확장팩): 용병 창 (O) · 고용 교체 확인 */
         merc: MercPanel; hireConfirm: ConfirmBox;
         /** e2e (Phase 12 Step 2): 금화 창·메시지·커서·로딩·바닥 이름표·가리킨 유닛 */
+        help: HelpOverlay; chat: ChatInput;
         gold: GoldPopup; messages: MessageLog; cursor: GameCursor; loading: LoadingScreen; labels: () => GroundLabel[]; hover: () => Hover; altHeld: () => boolean;
         /** e2e: 가림 — 지난 프레임 숨긴 지붕 수·반투명 벽 수, 서브타일 위 지붕 묶음 번호 (0 = 없음), 그 자리에 서면 반투명이 될 벽 수 */
         cover: { roofsHidden: () => number; wallsFaded: () => number; groupAt: (x: number, y: number) => number; wallsFadedAt: (x: number, y: number) => number };
@@ -864,6 +867,10 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     // 원작: 확장팩 설치만 Skill 9~16 · Swap Weapons · Hireling Screen (expansionstring.tbl)
     const lodInstall = sh.edition === 'lod';
     panels.setEdition(lodInstall);
+    // 원작 도움말 (H) · 채팅 (Enter)
+    const help = new HelpOverlay();
+    const chat = new ChatInput(stage);
+    chat.onSend = (t) => messageLog.push(`${name}: ${t}`, performance.now());
     // 옵션 AUTOMAP SIZE → 자동 지도 크기
     automapStyle = panels.options.automapSize;
     panels.onOptions = (o) => {
@@ -970,6 +977,23 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         return;
       }
       const act = keyBindings.actionOf(e);
+      // 도움말이 떠 있으면 Esc·도움말 키·Clear Screen 은 닫기만
+      if (help.open && (e.key === 'Escape' || act === 'help' || act === 'clearscreen')) {
+        e.preventDefault();
+        help.open = false;
+        return;
+      }
+      if (act === 'help') {
+        e.preventDefault();
+        help.toggle();
+        return;
+      }
+      // 원작 채팅 (Enter): 입력 줄을 연다. Alt+Enter 는 전체 화면 (ui/fullscreen.ts)
+      if (act === 'chat' && !e.altKey) {
+        e.preventDefault();
+        chat.start();
+        return;
+      }
       // 원작 스킬 단축키 (Skill 1~8, 기본 F1~F8): 스킬 고르기 목록에서 아이콘을 가리키고 누르면 그 손에 등록, 아니면 등록한 스킬로 바꾼다
       const slot = SKILL_SLOTS.indexOf(act as SkillSlot);
       // 클래식 설치는 Skill 1~8 만 (9~16 은 확장팩 문자열)
@@ -999,6 +1023,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (act === 'clearscreen') {
         e.preventDefault();
         hud.skillMenu = null;
+        help.open = false;
         closeAll();
         return;
       }
@@ -1105,6 +1130,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
       canvas.removeEventListener('wheel', onWheel);
+      chat.dispose();
       if (import.meta.env.DEV) delete window.__game;
       // 메뉴로 돌아가면 월드 캔버스를 숨긴다 (메뉴는 UI 캔버스에 그린다)
       worldCanvas.style.visibility = 'hidden';
@@ -1137,7 +1163,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
           waypoint: wpPanel, automap: () => automapMode, automapReady: () => automap.ready, automapDrawn: () => automapDrawn, hoverMonster: () => hoverMonster, camera: () => cam,
           store: storePanel, npcMenu, hire: hirePanel, talk: talkBox, mercBar, inventory: invPanel, itemText, quest: questPanel, rain,
           hud, charPanel, skillTree: skillPanels as SkillTree, stash: stashPanel, gameMenu: panels, art, cube: cubePanel, merc: mercPanel, hireConfirm,
-          gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
+          help, chat, gold: goldPopup, messages: messageLog, cursor, loading, labels: () => labels, hover: () => hoverNow, altHeld: () => altHeld,
           cover: {
             roofsHidden: () => (renderers[game.levelId] as WorldRenderer).roofsHidden, wallsFaded: () => (renderers[game.levelId] as WorldRenderer).wallsFaded,
             groupAt: (x, y) => (renderers[game.levelId] as WorldRenderer).roofGroupAt(x, y), wallsFadedAt: (x, y) => (renderers[game.levelId] as WorldRenderer).wallsFadedAt(x, y, WIDTH, HEIGHT),
@@ -1169,7 +1195,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     const frameBody = (now: number) => {
       acc += Math.min(now - last, 250);
       last = now;
-      input.enabled = !panels.menuOpen;
+      input.enabled = !panels.menuOpen && !chat.open;
       // 원작 싱글플레이: 게임 메뉴가 열리면 게임이 멈춘다
       while (acc >= step) {
         if (!panels.menuOpen) {
@@ -1381,6 +1407,12 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       invPanel.draw(ctx, game.store, s.player.gold, ch.level * 10000, input.mouse, reqCtx, str);
       // 원작 DC6 컨트롤 패널
       hud.draw(ctx, hudState());
+      chat.drawOverhead(ctx, now);
+      chat.draw(ctx, now, name);
+      help.draw(ctx, hud.L, str, {
+        run: keyBindings.label(keyBindings.map.run, str), showItems: keyBindings.label(keyBindings.map.showitems, str),
+        automap: keyBindings.label(keyBindings.map.automap, str), help: keyBindings.label(keyBindings.map.help, str),
+      });
       goldPopup.draw(ctx);
       hireConfirm.draw(ctx, str);
       // 용병 초상 안내 (확장팩 hireiconinfo1·2)

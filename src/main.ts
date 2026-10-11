@@ -861,6 +861,9 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
   return new Promise((resolve) => {
     let running = true;
     const panels = new Panels(stage, art, () => void saveAndExit(), { get: (k) => sound.settings[k], set: (k, v) => sound.setVolume(k, v) }, str);
+    // 원작: 확장팩 설치만 Skill 9~16 · Swap Weapons · Hireling Screen (expansionstring.tbl)
+    const lodInstall = sh.edition === 'lod';
+    panels.setEdition(lodInstall);
     // 옵션 AUTOMAP SIZE → 자동 지도 크기
     automapStyle = panels.options.automapSize;
     panels.onOptions = (o) => {
@@ -927,9 +930,35 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (keyBindings.is(e, 'showitems')) altHeld = false;
     };
     const onBlur = () => (altHeld = false);
+    /** 열린 창 모두 닫기 (원작 Esc 의 창 닫기 · Clear Screen) — 닫은 게 있으면 true */
+    const closeAll = (): boolean => {
+      const any = wpPanel.open || questPanel.open || charPanel.open || mercPanel.open || stashPanel.open || cubePanel.open || invPanel.open || !!skillPanels?.open || hud.beltOpen;
+      wpPanel.open = false;
+      questPanel.open = false;
+      hud.beltOpen = false;
+      openLeft(null);
+      openRight(null);
+      return any;
+    };
+    /**
+     * 원작 Select Previous / Next Skill (기본 마우스 휠): 단축키에 등록한 스킬을 칸 순서대로 바꿔 든다.
+     * 근사(원작 미확인): 지금 든 스킬이 등록된 칸(오른손 먼저)에서 dir 방향의 다음 등록 칸, 끝에서는 처음으로. 클래식은 앞 8칸만
+     */
+    const cycleSkill = (dir: 1 | -1): void => {
+      const n = lodInstall ? SKILL_SLOTS.length : 8;
+      const hk = (ch.hotkeys ?? []).slice(0, n);
+      const filled = hk.map((h, i) => (h ? i : -1)).filter((i) => i >= 0);
+      if (!filled.length) return;
+      const cur = hk.findIndex((h) => !!h && h.hand === 'right' && h.skill === ch.rightSkill);
+      const curAny = cur >= 0 ? cur : hk.findIndex((h) => !!h && h.hand === 'left' && h.skill === ch.leftSkill);
+      const at = filled.indexOf(curAny);
+      const next = filled[at < 0 ? (dir > 0 ? 0 : filled.length - 1) : (at + dir + filled.length) % filled.length]!;
+      const h = hk[next]!;
+      game.enqueue({ type: 'setSkill', hand: h.hand, skill: h.skill, ...(h.charge ? { charge: true } : {}) });
+    };
     const onKey = (e: KeyboardEvent) => {
-      // 게임 중 F1~F10 은 단축키가 없어도 브라우저 동작(도움말·새로고침·찾기 …) 대신 게임으로. F11 전체 화면·F12 개발자 도구는 그대로
-      if (/^F([1-9]|10)$/.test(e.key)) e.preventDefault();
+      // 게임 중 F1~F10 은 단축키가 없어도 브라우저 동작(도움말·새로고침·찾기 …) 대신 게임으로. F11 전체 화면·F12 개발자 도구는 배정했을 때만 게임으로
+      if (/^F([1-9]|10)$/.test(e.key) || (/^F1[12]$/.test(e.key) && keyBindings.actionOf(e))) e.preventDefault();
       // 금화 창이 떠 있으면 숫자·Enter·Esc 만
       if (goldPopup.key(e)) return;
       // 게임 메뉴가 열려 있으면 위·아래·Enter·Esc 만 (단축키 바꾸는 중이면 그 키)
@@ -943,6 +972,8 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       const act = keyBindings.actionOf(e);
       // 원작 스킬 단축키 (Skill 1~8, 기본 F1~F8): 스킬 고르기 목록에서 아이콘을 가리키고 누르면 그 손에 등록, 아니면 등록한 스킬로 바꾼다
       const slot = SKILL_SLOTS.indexOf(act as SkillSlot);
+      // 클래식 설치는 Skill 1~8 만 (9~16 은 확장팩 문자열)
+      if (slot >= 8 && !lodInstall) return;
       if (slot >= 0) {
         e.preventDefault();
         const m = input.mouse;
@@ -957,6 +988,18 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       if (act === 'showitems') {
         e.preventDefault();
         altHeld = true;
+        return;
+      }
+      if (act === 'skillup' || act === 'skilldown') {
+        e.preventDefault();
+        cycleSkill(act === 'skillup' ? -1 : 1);
+        return;
+      }
+      // 원작 Clear Screen (기본 Space): 열린 창을 모두 닫는다 (게임 메뉴는 열지 않는다 — Esc 와 다름)
+      if (act === 'clearscreen') {
+        e.preventDefault();
+        hud.skillMenu = null;
+        closeAll();
         return;
       }
       if (act === 'automap') {
@@ -975,14 +1018,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
         return;
       }
       // 원작: Esc 는 열린 패널부터 모두 닫는다
-      if (e.key === 'Escape' && (wpPanel.open || questPanel.open || charPanel.open || mercPanel.open || stashPanel.open || cubePanel.open || invPanel.open || skillPanels?.open || hud.beltOpen)) {
-        wpPanel.open = false;
-        questPanel.open = false;
-        hud.beltOpen = false;
-        openLeft(null);
-        openRight(null);
-        return;
-      }
+      if (e.key === 'Escape' && closeAll()) return;
       // 원작 단축키: Q 퀘스트 로그
       if (act === 'quest') {
         if (!questPanel.open) openLeft('quest');
@@ -1068,6 +1104,7 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      canvas.removeEventListener('wheel', onWheel);
       if (import.meta.env.DEV) delete window.__game;
       // 메뉴로 돌아가면 월드 캔버스를 숨긴다 (메뉴는 UI 캔버스에 그린다)
       worldCanvas.style.visibility = 'hidden';
@@ -1076,6 +1113,18 @@ function play(sh: Shared, name: string, cls: ClassName, save: CharacterSave | nu
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
+    // 마우스 휠 = 키 'WheelUp'·'WheelDown' (원작 KeyWheelUp/Down, 기본 이전·다음 스킬) — 단축키와 같은 길로, 다른 기능에 배정할 수도 있다
+    let wheelAt = 0;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (panels.menuOpen || goldPopup.open || !e.deltaY) return;
+      // 트랙패드는 한 번 쓸어도 이벤트가 여러 번 — 한 칸씩 (근사)
+      const now = performance.now();
+      if (now - wheelAt < 120) return;
+      wheelAt = now;
+      onKey({ key: e.deltaY < 0 ? 'WheelUp' : 'WheelDown', code: '', shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, preventDefault: () => undefined } as unknown as KeyboardEvent);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     // 이번 프레임 가리킨 유닛·바닥 이름표 (e2e)
     let hoverNow: Hover = null;
     let labels: GroundLabel[] = [];

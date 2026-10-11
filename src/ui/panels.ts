@@ -104,7 +104,7 @@ const BAR_ROW = { labelX: 110, barX: 400, w: 290, h: 33 } as const;
 /** 켜고 끄는 항목: 이름 왼쪽, 값 오른쪽 */
 const OPT_ROW = { labelX: 60, valueX: 740 } as const;
 /** 단축키 목록 틀 */
-const CTRL = { x: 100, y: 64, w: 600, h: 420, rowTop: 104, rowH: 22, keyDX: 160 } as const;
+const CTRL = { x: 40, y: 64, w: 720, h: 420, rowTop: 104, rowH: 22, keyDX: 186 } as const;
 
 export class Panels {
   private readonly art: UiArt;

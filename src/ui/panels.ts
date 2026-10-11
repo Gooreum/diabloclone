@@ -13,7 +13,7 @@
 //   CONFIGURE CONTROLS 화면 배치(틀 100,64 600×420, 줄 간격 22)
 import { UI, type UiArt } from './art';
 import { HotLayer, type HRect } from './hotspot';
-import { baseKeyName, HOLD_KEYS, KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, UNBINDABLE_KEYS, type KeyAction, type KeyEv } from './keys';
+import { actionsFor, baseKeyName, HOLD_KEYS, KEY_ACTIONS, KEY_LABEL, keyBindings, keyName, UNBINDABLE_KEYS, type KeyAction, type KeyEv } from './keys';
 import { d2text, drawText } from './text';
 
 const PENT = `${UI}CURSOR\\pentspin.dc6`;
@@ -105,8 +105,6 @@ const BAR_ROW = { labelX: 110, barX: 400, w: 290, h: 33 } as const;
 const OPT_ROW = { labelX: 60, valueX: 740 } as const;
 /** 단축키 목록 틀 */
 const CTRL = { x: 100, y: 64, w: 600, h: 420, rowTop: 104, rowH: 22, keyDX: 160 } as const;
-/** 두 줄로 나눈 한 줄 수 (항목 25 개 → 13) */
-const KEY_ROWS = Math.ceil(KEY_ACTIONS.length / 2);
 
 export class Panels {
   private readonly art: UiArt;
@@ -121,6 +119,8 @@ export class Panels {
   /** 단축키 기다리는 중 누르고 있는 Shift·Ctrl·Alt·Fn (다음 키와 조합, 그대로 떼면 그 키 하나) */
   private holdName: string | null = null;
   private assignedAt = 0;
+  /** Configure Controls 에 보이는 기능 (클래식 판본이면 확장팩 전용 빼고) */
+  private actions: KeyAction[] = actionsFor(true);
   /** 옵션이 바뀌면 (main 이 자동 지도 등에 반영) */
   onOptions: ((o: GameOptions) => void) | null = null;
 
@@ -150,6 +150,12 @@ export class Panels {
       });
     }
     // 단축키 목록 줄 (누르면 다음 키를 기다린다) · 기본값 단추
+    // 단축키 기다리는 중 마우스 휠 = 'WheelUp'·'WheelDown' (원작 KeyWheelUp/Down — 휠도 배정할 수 있다)
+    this.layer.root.addEventListener('wheel', (e) => {
+      if (!this.waitingKey) return;
+      e.preventDefault();
+      this.assign(keyName({ key: e.deltaY < 0 ? 'WheelUp' : 'WheelDown', shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey }));
+    }, { passive: false });
     KEY_ACTIONS.forEach((a, i) => this.layer.button(`key:${a}`, this.keyRow(i), () => {
       this.waitingKey = a;
       this.holdName = null;
@@ -180,10 +186,25 @@ export class Panels {
     return { x: 400 - w / 2, y, w, h: ITEM_H };
   }
 
-  /** 단축키 줄: 기능이 23개라 두 칸 (왼쪽 12 · 오른쪽 11). 근사(원작 미확인): 원작은 한 줄 목록을 스크롤 */
+  /** 판본: 클래식이면 Skill 9~16·Swap Weapons·Hireling Screen 이 목록에 없다 (원작 문자열이 expansionstring.tbl 에만) */
+  setEdition(lod: boolean): void {
+    this.actions = actionsFor(lod);
+  }
+
+  /** 두 칸으로 나눈 한 칸의 줄 수 */
+  private get keyRows(): number {
+    return Math.ceil(this.actions.length / 2);
+  }
+
+  /** 줄 높이: 틀 안(기본값 단추 위)에 다 들어가게 — 클래식 22, 확장팩 17 */
+  private get rowH(): number {
+    return Math.min(CTRL.rowH, Math.floor((CTRL.y + CTRL.h - 44 - CTRL.rowTop) / this.keyRows));
+  }
+
+  /** 단축키 줄: 두 칸. 근사(원작 미확인): 원작은 한 줄 목록을 스크롤 */
   private keyRow(i: number): HRect {
-    const col = i < KEY_ROWS ? 0 : 1, row = i % KEY_ROWS, w = (CTRL.w - 28) / 2;
-    return { x: CTRL.x + 14 + col * w, y: CTRL.rowTop + row * CTRL.rowH, w, h: CTRL.rowH };
+    const rows = this.keyRows, col = i < rows ? 0 : 1, row = i % rows, w = (CTRL.w - 28) / 2;
+    return { x: CTRL.x + 14 + col * w, y: CTRL.rowTop + row * this.rowH, w, h: this.rowH };
   }
 
   private go(scr: Screen): void {
@@ -192,14 +213,14 @@ export class Panels {
     this.selected = scr === 'main' ? 1 : 0;
     const keys = new Set(SCREENS[scr].map((it) => it.key));
     if (scr === 'controls') {
-      for (const a of KEY_ACTIONS) keys.add(`key:${a}`);
+      for (const a of this.actions) keys.add(`key:${a}`);
       keys.add('keydefault');
     }
     this.layer.only(keys);
     // 숨겼던 단추를 다시 보이게 (only 는 숨기기만 한다)
     SCREENS[scr].forEach((it, i) => this.layer.button(it.key, this.itemRect(scr, i), () => undefined));
     if (scr === 'controls') {
-      KEY_ACTIONS.forEach((a, i) => this.layer.button(`key:${a}`, this.keyRow(i), () => undefined));
+      this.actions.forEach((a, i) => this.layer.button(`key:${a}`, this.keyRow(i), () => undefined));
       this.layer.button('keydefault', { x: CTRL.x + 20, y: CTRL.y + CTRL.h - 36, w: 120, h: 24 }, () => undefined);
     }
   }
@@ -315,23 +336,24 @@ export class Panels {
     const s = this.str;
     drawText(ctx, s('cfgCtrl').toUpperCase(), 400, 20, { font: 'font30', align: 'center' });
     this.box(ctx, CTRL.x, CTRL.y, CTRL.w, CTRL.h);
-    for (const i of [0, KEY_ROWS]) {
+    for (const i of [0, this.keyRows]) {
       const r = this.keyRow(i);
       drawText(ctx, s('CfgFunction'), r.x + 10, CTRL.y + 14, { color: 'gold' });
       drawText(ctx, s('CfgPrimaryKey'), r.x + CTRL.keyDX, CTRL.y + 14, { color: 'gold' });
     }
-    KEY_ACTIONS.forEach((a, i) => {
+    const dy = this.rowH < CTRL.rowH ? 1 : 3;
+    this.actions.forEach((a, i) => {
       const r = this.keyRow(i);
       const waiting = this.waitingKey === a;
       if (waiting) {
         ctx.fillStyle = 'rgba(80,60,20,0.6)';
         ctx.fillRect(r.x, r.y, r.w, r.h);
       }
-      drawText(ctx, s(KEY_LABEL[a]), r.x + 10, r.y + 3, { color: 'white' });
+      drawText(ctx, s(KEY_LABEL[a]), r.x + 10, r.y + dy, { color: 'white' });
       const key = keyBindings.map[a];
       // 기다리는 동안 깜빡이는 빈 칸 (근사)
       const label = waiting ? (Math.floor(now / 300) % 2 ? '_' : '') : keyBindings.label(key, s);
-      drawText(ctx, label, r.x + CTRL.keyDX, r.y + 3, { color: key ? 'white' : 'grey' });
+      drawText(ctx, label, r.x + CTRL.keyDX, r.y + dy, { color: key ? 'white' : 'grey' });
     });
     drawText(ctx, s('CfgDefault'), CTRL.x + 80, CTRL.y + CTRL.h - 32, { align: 'center', color: 'gold' });
     if (now - this.assignedAt < 1500) drawText(ctx, s('KeysAssigned'), CTRL.x + CTRL.w - 24, CTRL.y + CTRL.h - 32, { align: 'right' });

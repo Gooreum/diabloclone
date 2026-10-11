@@ -6,31 +6,43 @@
 // 출처: string.tbl CfgSkill1~8 "Skill 1~8", 원작 기본 키 F1~F8 (스킬 단축키)
 // 출처: 확장팩 string Cfgswapweapons "Swap Weapons", 원작 확장팩 기본 키 W (확장팩 캐릭터만 동작)
 // 출처: 확장팩 string Cfghireling "Hireling Screen", 원작 확장팩 기본 키 O (용병 창 — 확장팩만 동작)
-export const SKILL_SLOTS = ['skill1', 'skill2', 'skill3', 'skill4', 'skill5', 'skill6', 'skill7', 'skill8'] as const;
+// 출처: expansionstring.tbl CfgSkill9~16 "Skill 9~16" — 확장팩만 16칸 (클래식 string.tbl 은 CfgSkill1~8). 원작 기본 키 없음
+// 출처: string.tbl CfgHelp "Help Screen"·CfgChat "Chat"·CfgClearScreen "Clear Screen"·Cfgskillup "Select Previous Skill"·Cfgskilldown "Select Next Skill",
+//   KeyWheelUp·KeyWheelDown "Mouse Wheel Up/Down". 기본 키: StrHelp7 "Hit <Enter> to go into chat mode", 원작 매뉴얼 H 도움말·Space 화면 지우기·휠 스킬 넘기기
+export const SKILL_SLOTS = ['skill1', 'skill2', 'skill3', 'skill4', 'skill5', 'skill6', 'skill7', 'skill8', 'skill9', 'skill10', 'skill11', 'skill12', 'skill13', 'skill14', 'skill15', 'skill16'] as const;
 export type SkillSlot = (typeof SKILL_SLOTS)[number];
-export const KEY_ACTIONS = ['char', 'inv', 'tree', 'quest', 'automap', 'minimap', 'run', 'skillpick', 'belt1', 'belt2', 'belt3', 'belt4', 'beltshow', 'showitems', 'clearmsg', 'swap', 'hireling', ...SKILL_SLOTS] as const;
+export const KEY_ACTIONS = ['char', 'inv', 'tree', 'quest', 'help', 'chat', 'clearscreen', 'automap', 'minimap', 'run', 'skillpick', 'skillup', 'skilldown', 'belt1', 'belt2', 'belt3', 'belt4', 'beltshow', 'showitems', 'clearmsg', 'swap', 'hireling', ...SKILL_SLOTS] as const;
 export type KeyAction = (typeof KEY_ACTIONS)[number];
+/** 확장팩 설치에만 있는 기능 (문자열이 expansionstring.tbl 에만 있다) */
+export const LOD_ONLY_ACTIONS: ReadonlySet<KeyAction> = new Set<KeyAction>(['swap', 'hireling', 'skill9', 'skill10', 'skill11', 'skill12', 'skill13', 'skill14', 'skill15', 'skill16']);
+/** 판본에 보이는 기능 (Configure Controls 목록) */
+export function actionsFor(lod: boolean): KeyAction[] {
+  return KEY_ACTIONS.filter((a) => lod || !LOD_ONLY_ACTIONS.has(a));
+}
 
 export const KEY_LABEL: Record<KeyAction, string> = {
-  char: 'CfgCharacter', inv: 'CfgInventory', tree: 'CfgSkillTree', quest: 'CfgQuestLog', automap: 'CfgAutoMap', minimap: 'CfgMiniMap', run: 'CfgRunLock',
-  skillpick: 'CfgSkillPick', belt1: 'CfgBelt1', belt2: 'CfgBelt2', belt3: 'CfgBelt3', belt4: 'CfgBelt4', beltshow: 'CfgBeltShow', showitems: 'CfgShowItems', clearmsg: 'Cfgcleartextmsg', swap: 'Cfgswapweapons', hireling: 'Cfghireling',
+  char: 'CfgCharacter', inv: 'CfgInventory', tree: 'CfgSkillTree', quest: 'CfgQuestLog', help: 'CfgHelp', chat: 'CfgChat', clearscreen: 'CfgClearScreen',
+  automap: 'CfgAutoMap', minimap: 'CfgMiniMap', run: 'CfgRunLock', skillpick: 'CfgSkillPick', skillup: 'Cfgskillup', skilldown: 'Cfgskilldown', belt1: 'CfgBelt1', belt2: 'CfgBelt2', belt3: 'CfgBelt3', belt4: 'CfgBelt4', beltshow: 'CfgBeltShow', showitems: 'CfgShowItems', clearmsg: 'Cfgcleartextmsg', swap: 'Cfgswapweapons', hireling: 'Cfghireling',
   skill1: 'CfgSkill1', skill2: 'CfgSkill2', skill3: 'CfgSkill3', skill4: 'CfgSkill4', skill5: 'CfgSkill5', skill6: 'CfgSkill6', skill7: 'CfgSkill7', skill8: 'CfgSkill8',
+  skill9: 'CfgSkill9', skill10: 'CfgSkill10', skill11: 'CfgSkill11', skill12: 'CfgSkill12', skill13: 'CfgSkill13', skill14: 'CfgSkill14', skill15: 'CfgSkill15', skill16: 'CfgSkill16',
 };
 
 export const DEFAULT_KEYS: Record<KeyAction, string> = {
-  char: 'C', inv: 'I', tree: 'T', quest: 'Q', automap: 'Tab', minimap: 'V', run: 'R', skillpick: 'S',
+  char: 'C', inv: 'I', tree: 'T', quest: 'Q', help: 'H', chat: 'Enter', clearscreen: ' ', automap: 'Tab', minimap: 'V', run: 'R', skillpick: 'S', skillup: 'WheelUp', skilldown: 'WheelDown',
   belt1: '1', belt2: '2', belt3: '3', belt4: '4', beltshow: '`', showitems: 'Alt', clearmsg: 'N', swap: 'W', hireling: 'O',
   skill1: 'F1', skill2: 'F2', skill3: 'F3', skill4: 'F4', skill5: 'F5', skill6: 'F6', skill7: 'F7', skill8: 'F8',
+  skill9: '', skill10: '', skill11: '', skill12: '', skill13: '', skill14: '', skill15: '', skill16: '',
 };
 
 /** 키 이름 → string.tbl 키 (한 글자는 그대로 대문자) */
 const NAMED: Record<string, string> = {
   Tab: 'KeyTab', Alt: 'KeyMenu', ' ': 'KeySpace', Shift: 'KeyShift', Control: 'KeyControl', Enter: 'KeyReturn', Backspace: 'KeyBack', Delete: 'KeyDelete', Insert: 'KeyInsert',
-  F1: 'KeyF1', F2: 'KeyF2', F3: 'KeyF3', F4: 'KeyF4', F5: 'KeyF5', F6: 'KeyF6', F7: 'KeyF7', F8: 'KeyF8',
+  F1: 'KeyF1', F2: 'KeyF2', F3: 'KeyF3', F4: 'KeyF4', F5: 'KeyF5', F6: 'KeyF6', F7: 'KeyF7', F8: 'KeyF8', F9: 'KeyF9', F10: 'KeyF10', F11: 'KeyF11', F12: 'KeyF12',
+  WheelUp: 'KeyWheelUp', WheelDown: 'KeyWheelDown',
   Home: 'KeyHome', End: 'KeyEnd', PageUp: 'KeyPrior', PageDown: 'KeyNext', ArrowUp: 'KeyUp', ArrowDown: 'KeyDown', ArrowLeft: 'KeyLeft', ArrowRight: 'KeyRight', '`': 'KeyTilde',
 };
 
-/** 키 이벤트에서 쓰는 값 (KeyboardEvent 의 일부) */
+/** 키 이벤트에서 쓰는 값 (KeyboardEvent 의 일부). 마우스 휠은 key 'WheelUp'·'WheelDown' */
 export interface KeyEv { key: string; code?: string; shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean }
 
 /** 혼자서는 단축키가 될 수 없는 키 (맥 ⌘, Caps Lock, 한글 입력 조합 중 'Process', 알 수 없는 키) — 단축키 바꾸기에서 무시하고 다음 키를 기다린다 */

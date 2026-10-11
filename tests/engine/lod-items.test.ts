@@ -124,7 +124,7 @@ describe.skipIf(!hasGameData)('이더리얼', () => {
   });
 
   it('저장 왕복: ethereal 유지, 잘못된 값은 지운다', () => {
-    const ch = { cls: 'Barbarian', level: 1, experience: 0, str: 30, dex: 20, vit: 25, ene: 10, statPoints: 0, skillPoints: 0, maxLife: 55, maxMana: 10, maxStamina: 92, life: 55, mana: 10, stamina: 92, skills: {}, leftSkill: 0, rightSkill: 0, hotkeys: Array(8).fill(null) } as Character;
+    const ch = { cls: 'Barbarian', level: 1, experience: 0, str: 30, dex: 20, vit: 25, ene: 10, statPoints: 0, skillPoints: 0, maxLife: 55, maxMana: 10, maxStamina: 92, life: 55, mana: 10, stamina: 92, skills: {}, leftSkill: 0, rightSkill: 0, hotkeys: Array(16).fill(null) } as Character;
     const w = make(lod, 'lsd');
     makeEthereal(w, lod.items.base('lsd')!);
     const bad = { ...make(lod, 'qui'), ethereal: 'yes' as unknown as boolean };

@@ -68,7 +68,8 @@ export interface Character {
 }
 
 export interface SkillHotkey { skill: number; hand: 'left' | 'right'; charge?: boolean }
-export const HOTKEY_SLOTS = 8;
+/** 스킬 단축키 칸 — 출처: expansionstring.tbl CfgSkill9~16 (확장팩 16칸, 클래식은 앞 8칸만 키가 있다) */
+export const HOTKEY_SLOTS = 16;
 
 /** 시작 생명 = vit + hpadd, 마나 = 에너지, 스태미나 = stamina 컬럼 (예: 바바리안 55/10/92) */
 export function createCharacter(cs: ClassStats): Character {

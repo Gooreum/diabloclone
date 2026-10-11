@@ -38,3 +38,12 @@ describe('DevilutionX 웹 빌드 반입본', () => {
     expect(files).toEqual(['3rdParty/Lua/CMakeLists.txt', 'CMake/Dependencies.cmake', 'CMake/functions/devilutionx_library.cmake', 'Source/DiabloUI/diabloui.cpp', 'Source/engine/sound.cpp']);
   });
 });
+
+describe('DevilutionX 셸 (public/d1x/play.html)', () => {
+  it('엔진 주소에 붙는 버전이 wasm 해시와 같다 (캐시 무효화)', () => {
+    const shell = readFileSync(resolve(D1X, 'play.html'), 'utf8');
+    const v = /var D1X_VERSION = '([0-9a-f]{12})'/.exec(shell)?.[1];
+    expect(v).toBe(sha256(resolve(D1X, 'devilutionx.wasm')).slice(0, 12));
+    expect(shell).toContain("'--lang', 'en'");
+  });
+});

@@ -27,4 +27,8 @@ writeFileSync(join(out, 'NOTICE.md'), `# DevilutionX 웹 빌드 (수정본)
 |------|------|--------|
 ${rows.join('\n')}
 `);
-console.log('NOTICE.md 갱신');
+// 셸의 엔진 버전 (캐시 무효화) = wasm 해시 앞 12자리
+const wasmHash = createHash('sha256').update(readFileSync(join(out, 'devilutionx.wasm'))).digest('hex').slice(0, 12);
+const shell = join(out, 'play.html');
+writeFileSync(shell, readFileSync(shell, 'utf8').replace(/var D1X_VERSION = '[0-9a-f]*';/, `var D1X_VERSION = '${wasmHash}';`));
+console.log('NOTICE.md·play.html 버전 갱신', wasmHash);

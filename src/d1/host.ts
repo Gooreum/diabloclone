@@ -66,7 +66,8 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
   frame.id = 'd1-frame';
   frame.title = 'Diablo';
   frame.allow = 'fullscreen; autoplay; gamepad';
-  frame.src = `${import.meta.env.BASE_URL}d1x/play.html`;
+  // 셸은 작아서 매번 새로 받는다 (Pages 가 10분 캐시 — 엔진을 고친 뒤 옛 셸이 남지 않게). 엔진 파일은 셸이 버전을 붙여 받는다
+  frame.src = `${import.meta.env.BASE_URL}d1x/play.html?t=${Date.now()}`;
   // 키보드가 바로 게임으로 가게
   frame.addEventListener('load', () => frame.contentWindow?.focus());
   const exit = document.createElement('button');

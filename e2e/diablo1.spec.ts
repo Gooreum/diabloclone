@@ -92,3 +92,46 @@ test('?d1 로 바로 시작: 타이틀 → 메뉴 → 전사 만들기 → 트�
   expect(await page.evaluate(() => window.__d1!.errors)).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test('D2 타이틀의 "Diablo I" 단추로 디아블로 1 을 띄운다', async ({ page }) => {
+  test.skip(!existsSync('game-data/d2data.mpq'), 'Diablo II game-data 필요');
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 120_000 });
+  await page.waitForFunction(() => window.__menuArtReady?.() === true, undefined, { timeout: 60_000 });
+  await expect(page.locator('#btn-diablo1')).toBeVisible();
+  await page.locator('#game').screenshot({ path: 'test-results/diablo1-d2-title.png' });
+  await page.click('#btn-diablo1');
+  await waitReady(page);
+  await expect(page.locator('#menu')).toHaveCount(0);
+  await page.waitForFunction(() => (window.__d1?.frames ?? 0) >= 10, undefined, { timeout: 60_000 });
+  expect(errors).toEqual([]);
+});
+
+test('배포판 파일 고르기: spawn.mpq 하나만 넣어도 디아블로 1 로 시작한다', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/?local');
+  // 이전 실행이 보관한 파일을 지우고 처음 상태로
+  await page.evaluate(() => new Promise((r) => { const q = indexedDB.deleteDatabase('diabloclone-mpq'); q.onsuccess = q.onerror = q.onblocked = r; }));
+  await page.goto('/?local');
+  await expect(page.locator('#mpq-setup')).toBeVisible();
+  await expect(page.locator('#mpq-setup [data-start]')).toBeDisabled();
+  await page.locator('#mpq-setup [data-input="files"]').setInputFiles(SPAWN);
+  await expect(page.locator('#mpq-setup .edition')).toHaveText('디아블로 1 (쉐어웨어) 으로 시작합니다', { timeout: 60_000 });
+  await expect(page.locator('#mpq-setup .status')).toContainText('디아블로 1 만');
+  await expect(page.locator('#mpq-setup li.ok')).toHaveText(['spawn.mpq (디아블로 1)']);
+  await expect(page.locator('#mpq-setup [data-start]')).toBeEnabled();
+  await page.screenshot({ path: 'test-results/diablo1-setup.png' });
+  await page.click('#mpq-setup [data-start]');
+  await waitReady(page);
+  await expect(page.locator('#mpq-setup')).toHaveCount(0);
+  // 새로고침해도 보관된 파일로 고르기 화면 없이 바로
+  await page.reload();
+  await waitReady(page);
+  await expect(page.locator('#mpq-setup')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

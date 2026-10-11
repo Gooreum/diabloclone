@@ -1,11 +1,11 @@
 // 첫 접속 화면: 유저가 자기 Diablo II 설치 폴더의 MPQ 를 고르면 이 브라우저(IndexedDB)에 보관한다.
 // 파일은 서버로 보내지 않는다. 다음 접속부터는 보관된 파일로 곧바로 시작한다.
 import { editionOf, LOD_MPQS } from '../assets/edition';
-import { ALL_MPQS, canonicalName, isMpq, MpqStore, OPTIONAL_MPQS } from '../assets/local-mpq';
+import { ALL_MPQS, canonicalName, D1_MPQS, d1FileOf, isMpq, MpqStore, OPTIONAL_MPQS } from '../assets/local-mpq';
 
 const CSS = `
-#mpq-setup { width: 800px; height: 600px; box-sizing: border-box; padding: 48px 64px; background: #000; color: #c7b377;
-  font: 16px serif; display: flex; flex-direction: column; gap: 14px; }
+#mpq-setup { width: 800px; height: 600px; box-sizing: border-box; padding: 32px 64px; background: #000; color: #c7b377;
+  font: 16px serif; display: flex; flex-direction: column; gap: 10px; }
 #mpq-setup h1 { margin: 0 0 8px; font-size: 28px; color: #d8c690; letter-spacing: 1px; }
 #mpq-setup p { margin: 0; line-height: 1.5; }
 #mpq-setup .muted { color: #8f8563; font-size: 14px; }
@@ -29,7 +29,8 @@ const CSS = `
  */
 export async function ensureLocalMpqs(host: HTMLElement, reopen = false): Promise<Map<string, Blob>> {
   const have = await MpqStore.all();
-  if (!reopen && MpqStore.missing(have).length === 0) return have;
+  // D2 필수 3개가 있거나, 디아블로 1 파일이 있으면 곧바로 (D1 만 있으면 main 이 D1 을 띄운다)
+  if (!reopen && (MpqStore.missing(have).length === 0 || d1FileOf(have.keys()))) return have;
   void navigator.storage?.persist?.().catch(() => false);
   return new Promise((done) => showSetup(host, have, done, reopen));
 }
@@ -40,12 +41,13 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
   const root = document.createElement('div');
   root.id = 'mpq-setup';
   root.innerHTML = `
-    <h1>Diablo II 원작 파일 불러오기</h1>
+    <h1>원작 파일 불러오기 (Diablo II · Diablo I)</h1>
     ${reopen
       ? `<p>✓ 표시는 이 브라우저에 보관된 파일입니다. 확장팩(d2exp.mpq 등)이나 소리 파일을 더 넣거나, 같은 이름의 파일을 넣어 바꿀 수 있습니다.</p>
          <p class="muted">확장팩으로 바꾸려면 확장팩 설치 폴더를 통째로 고르세요 (patch_d2·d2char 가 확장팩판으로 바뀌고 d2exp 가 더해집니다).</p>`
       : `<p>가지고 계신 Diablo II (1.14d) 설치 폴더의 MPQ 파일을 선택하세요.</p>
          <p class="muted">확장팩(Lord of Destruction)을 설치한 폴더면 확장팩으로, 클래식만 설치했으면 클래식으로 시작합니다.</p>`}
+    <p class="muted">디아블로 1: 정식판 DIABDAT.MPQ (GOG) 또는 쉐어웨어 spawn.mpq 를 넣으면 됩니다.</p>
     <p class="muted">파일은 서버로 전송되지 않고 이 브라우저에만 저장됩니다. 한 번만 하면 다음부터는 바로 시작합니다.</p>
     <div class="drop">
       <p>여기로 MPQ 파일(또는 폴더)을 끌어다 놓거나</p><br>
@@ -70,18 +72,24 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
 
   const render = (): void => {
     list.innerHTML = ALL_MPQS.map((n) => {
-      const lod = (LOD_MPQS as readonly string[]).includes(n);
-      const req = !lod && !(OPTIONAL_MPQS as readonly string[]).includes(n);
-      const tag = lod ? ' <span class="muted">(확장팩)</span>' : req ? '' : ' <span class="muted">(소리)</span>';
+      const lod = (LOD_MPQS as readonly string[]).includes(n), d1 = (D1_MPQS as readonly string[]).includes(n);
+      const req = !lod && !d1 && !(OPTIONAL_MPQS as readonly string[]).includes(n);
+      const tag = d1 ? ' <span class="muted">(디아블로 1)</span>' : lod ? ' <span class="muted">(확장팩)</span>' : req ? '' : ' <span class="muted">(소리)</span>';
       return `<li class="${have.has(n) ? 'ok' : 'no'}${req ? ' req' : ''}">${n}${tag}</li>`;
     }).join('');
-    edition.textContent = editionOf(have.keys()) === 'lod' ? '확장팩(Lord of Destruction)으로 시작합니다' : '클래식으로 시작합니다 (확장팩: d2exp.mpq 필요)';
     const miss = MpqStore.missing(have);
+    const d1 = d1FileOf(have.keys());
+    const d1Label = d1 ? `디아블로 1 (${d1.spawn ? '쉐어웨어' : '정식판'})` : '';
+    edition.textContent = (editionOf(have.keys()) === 'lod' ? '확장팩(Lord of Destruction)으로 시작합니다' : '클래식으로 시작합니다 (확장팩: d2exp.mpq 필요)') + (d1 ? ` · ${d1Label} 준비됨` : '');
     const quiet = OPTIONAL_MPQS.filter((n) => !have.has(n));
-    start.disabled = busy || miss.length > 0;
+    // D2 필수 파일이 다 있거나 디아블로 1 파일이 있으면 시작할 수 있다
+    start.disabled = busy || (miss.length > 0 && !d1);
     if (clear) clear.disabled = busy;
     if (busy) return;
-    if (miss.length) status.innerHTML = `<span class="err">필요한 파일: ${miss.join(', ')}</span>`;
+    if (miss.length && d1) {
+      edition.textContent = `${d1Label} 으로 시작합니다`;
+      status.textContent = 'Diablo II 는 파일이 모자라 디아블로 1 만 할 수 있습니다';
+    } else if (miss.length) status.innerHTML = `<span class="err">필요한 파일: ${miss.join(', ')}</span>`;
     else if (quiet.length) status.textContent = `소리 파일이 없어 소리 없이 시작합니다 (${quiet.join(', ')})`;
     else status.textContent = '준비 완료';
   };

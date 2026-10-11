@@ -347,6 +347,13 @@ async function boot(): Promise<void> {
   // 프런트엔드 소리: 메뉴 음악 (sounds.txt music_options = music\common\options.wav), 클래스 고르기 소리 (cursor_<클래스>_select)
   let inMenu = true, soundReady = false;
   menu.onSound = (n) => void sound.play(n);
+  // 디아블로 1 파일이 있으면 타이틀에 "Diablo I" 단추 — D2 메뉴·소리를 내리고 D1 을 띄운다. 끝나면 다시 시작 (Game Files 와 같은 방식)
+  const d1 = src.d1;
+  if (d1) menu.onDiablo1 = () => {
+    menu.hide();
+    sound.stopAll();
+    void runDiablo1(host, d1).then(() => location.reload());
+  };
   sound.bindUnlock();
   void sound.init({ assets, tables, data, cls: '', baseUrl: src.base, fetchRange: src.fetch, soundMpqs: soundMpqs(src.edition) }).then(() => {
     soundReady = true;

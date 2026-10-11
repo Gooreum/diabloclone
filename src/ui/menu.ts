@@ -49,6 +49,8 @@ const POP = { x: 268, y: 212, w: 264, h: 176 } as const;
 const CONVERT_BTN = { x: 264, y: 537, w: 272, h: 35 } as const;
 /** 근사(원작 미확인): 타이틀의 "Game Files" 단추 — 원작 Credits 자리(Other Multiplayer 아래). 이 클론 것 (배포판에서 원작 파일 다시 고르기) */
 const FILES_BTN: HRect = { x: 264, y: 410, w: 272, h: 35 };
+/** 근사(원작 미확인): 타이틀 왼쪽 아래 "Diablo I" 단추 — 이 클론 것 (디아블로 1 파일이 있을 때) */
+const D1_BTN: HRect = { x: 32, y: 540, w: 128, h: 35 };
 /** 확인 창 문구. 근사(원작 미확인): 바꾸기 문구 (원작 문구는 tbl 이 아니라 D2Launch.dll 안) */
 const CONFIRM_TEXT = {
   delete: 'Are you sure that you want\nto delete this character?\nTake note: this will delete all\nversions of this Character.',
@@ -121,6 +123,8 @@ export class Menu {
   onLanguage: ((l: Lang) => void) | null = null;
   /** 배포판: 원작 파일 다시 고르기 (main 이 고르기 화면을 띄우고 다시 시작). null 이면 단추 없음 (dev 서버) */
   onFiles: (() => void) | null = null;
+  /** 디아블로 1 파일이 있으면 타이틀에 단추 (main 이 D1 을 띄운다). null 이면 단추 없음 */
+  onDiablo1: (() => void) | null = null;
   /** 만들기 화면 체크 상태 */
   private expansionChecked = true;
   /** 선택 화면 알림 (클래식 판본에서 확장팩 캐릭터를 골랐을 때) */
@@ -200,6 +204,7 @@ export class Menu {
       this.btn('bnet', { x: 264, y: 330, w: 272, h: 35 }, () => undefined, 'btn-battlenet', 'Battle.net');
       this.btn('multi', { x: 264, y: 370, w: 272, h: 35 }, () => undefined, 'btn-multiplayer', 'Other Multiplayer');
       if (this.onFiles) this.btn('files', FILES_BTN, () => this.onFiles?.(), 'btn-files', 'Game Files');
+      if (this.onDiablo1) this.btn('d1', D1_BTN, () => this.onDiablo1?.(), 'btn-diablo1', 'Diablo I');
       // 근사(원작 미확인): 원작은 설치 언어가 고정 — 언어 단추·위치는 이 클론 것
       if (this.languages.length > 1)
         this.languages.forEach((l, i) => this.btn(`lang:${l}`, langRect(i), () => {
@@ -435,6 +440,7 @@ export class Menu {
       this.button(a, WIDE, { x: 264, y: 330, w: 272, h: 35 }, 'Battle.net');
       this.button(a, WIDE, { x: 264, y: 370, w: 272, h: 35 }, 'Other Multiplayer');
       if (this.onFiles) this.button(a, WIDE, FILES_BTN, 'Game Files');
+      if (this.onDiablo1) this.button(a, MED, D1_BTN, 'Diablo I');
       if (this.languages.length > 1) {
         // 라벨은 언어 단추 줄 왼쪽 (위는 Game Files 단추 자리)
         drawText(ctx, 'LANGUAGE / 언어', 256, LANG_Y + 10, { font: 'font16', align: 'right', color: 'gold' });

@@ -26,7 +26,8 @@
     };
     window.Module = {
       canvas: document.getElementById('canvas'),
-      arguments: [],
+      // 언어는 영어(원작 그대로) — 브라우저가 한국어·중국어·일본어면 DevilutionX 가 그 언어를 고르는데, 그러려면 CJK 글꼴(fonts.mpq 58MB)이 있어야 해서 멈춘다
+      arguments: ['--lang', 'en'],
       preRun: [function () {
         // 원작 MPQ 를 가상 파일 시스템 맨 위(/)에 둔다 — DevilutionX 가 base 경로에서 diabdat.mpq / spawn.mpq 를 찾는다
         if (src && src.buffer) FS.writeFile('/' + src.name, new Uint8Array(src.buffer));

@@ -94,6 +94,22 @@ test('?d1: 타이틀 → 메뉴 → 전사 만들기 → 트리스트럼에서 �
   expect(errors).toEqual([]);
 });
 
+test.describe('브라우저 언어가 한국어여도', () => {
+  test.use({ locale: 'ko-KR' });
+  test('영어로 시작해 글꼴 파일(fonts.mpq) 없이 메뉴까지 간다', async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.goto('/?d1');
+    await waitReady(page);
+    await page.waitForTimeout(6000);
+    await page.mouse.click(400, 300);
+    await page.waitForTimeout(3000);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(3000);
+    expect(await page.evaluate(() => window.__d1!.log.filter((l) => /fonts\.mpq/i.test(l)))).toEqual([]);
+    await page.screenshot({ path: 'test-results/diablo1-ko-locale.png' });
+  });
+});
+
 test('파일 없이 ?d1: 고르기 화면 없이 쉐어웨어를 받아 시작하고, 다음엔 받지 않는다', async ({ page }) => {
   test.setTimeout(300_000);
   const errors: string[] = [];

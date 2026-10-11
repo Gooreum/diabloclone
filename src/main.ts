@@ -38,6 +38,7 @@ import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
 import { ensureLocalMpqs } from './ui/mpq-setup';
 import { fitStage } from './ui/stage';
+import { installFullscreen } from './ui/fullscreen';
 import { ControlPanel, type HudAction, type HudState } from './ui/hud';
 import { invWarnings } from './ui/invwarn';
 import { isBroken } from './engine/price';
@@ -205,6 +206,8 @@ async function devD1(): Promise<D1Source> {
 
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
+  // 전체화면 단추·Alt+Enter (파일 고르기·D2·D1 공통)
+  installFullscreen();
   const src = await mpqSource(host);
   // 디아블로 1: D2 파일이 없거나 ?d1 이면 메뉴 없이 바로. 끝나면 (D2 가 없으면) 파일 고르기 화면을 거쳐 다시 시작
   if (!src.d2 || new URLSearchParams(location.search).has('d1')) {
@@ -244,13 +247,6 @@ async function boot(): Promise<void> {
   fitStage(stage, WIDTH, HEIGHT);
   addEventListener('resize', () => fitStage(stage, WIDTH, HEIGHT));
   document.addEventListener('fullscreenchange', () => fitStage(stage, WIDTH, HEIGHT));
-  // 원작처럼 Alt+Enter 로 전체 화면 켜고 끄기
-  addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || !e.altKey) return;
-    e.preventDefault();
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void document.documentElement.requestFullscreen?.().catch(() => undefined);
-  }, true);
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
   ctx.fillStyle = '#c7b377';
   ctx.font = '16px serif';

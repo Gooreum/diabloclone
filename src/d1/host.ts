@@ -121,7 +121,7 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
     event('DApi_Mouse', 0, 0, mods(e), x, y);
   };
   const onDown = (e: MouseEvent): void => {
-    if (e.target === keyboard) return;
+    if (e.target === keyboard || (e.target as Element | null)?.id === 'btn-fullscreen') return;
     audio.resume();
     const { x, y } = pos(e);
     event('DApi_Mouse', 1, MOUSE_BUTTON[e.button] ?? 1, mods(e), x, y);
@@ -132,6 +132,8 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
     event('DApi_Mouse', 2, MOUSE_BUTTON[e.button] ?? 1, mods(e), x, y);
   };
   const onKeyDown = (e: KeyboardEvent): void => {
+    // Alt+Enter 는 전체화면 (ui/fullscreen.ts)
+    if (e.altKey && e.keyCode === 13) return;
     audio.resume();
     event('DApi_Key', 0, mods(e), e.keyCode);
     // 입력칸이 열려 있으면 글자는 입력칸이 받아 text 로 동기화한다

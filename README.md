@@ -63,6 +63,14 @@
 - **무기 바꾸기**(`W`)
 - **클래식 캐릭터 전환:** 캐릭터 선택 화면에서 클래식 캐릭터를 고르면 원작처럼 "Convert to Expansion" 단추가 나옵니다. 바꾸면 Act 5에 갈 수 있습니다(되돌릴 수 없음).
 
+### 디아블로 1 (덤)
+- **디아블로 1 도 같은 페이지에서 할 수 있습니다.** 정식판 `DIABDAT.MPQ` (GOG) 또는 무료 쉐어웨어 `spawn.mpq` 를 원작 파일 고르기 화면에 넣으면 됩니다.
+  - 디아블로 1 파일만 있으면 바로 디아블로 1 로, Diablo II 파일도 있으면 타이틀 왼쪽 아래 **Diablo I** 단추로 들어갑니다.
+  - 세이브는 이 브라우저에 보관됩니다 (다음에 열면 캐릭터가 남아 있습니다).
+- 게임 자체는 이 프로젝트가 만든 것이 아니라 **Devilution(역공학 소스)을 WebAssembly 로 빌드한 것**(d07RiV/diabloweb)을 수정 없이 씁니다. 이 프로젝트는 그걸 띄우는 화면·입력·소리·저장 부분을 썼습니다.
+- 멀티플레이는 안 됩니다. 원작 메뉴 목록은 원작처럼 **더블클릭**으로 엽니다.
+- 이 모듈은 **비상업 조건**입니다 ([라이선스](#라이선스)).
+
 ### 한국어
 - 메인 메뉴의 **ENGLISH / 한국어** 단추로 표시 언어를 바꿉니다.
 - 원작 한국어판 확장팩 MPQ에 들어 있는 한국어 문자열 표(`data\local\lng\kor\*.tbl`)를 씁니다. 그래서 한국어판 파일을 골랐을 때만 단추가 나옵니다.
@@ -175,6 +183,11 @@ npm run dev          # http://localhost:5173
 - 주소 뒤에 `?preset=paladin`(amazon, sorceress, necromancer, paladin, barbarian, assassin, druid)을 붙이면 그 캐릭터를 처음 상태로 되돌려 Hell 마을에서 바로 시작합니다. `?preset=all`은 7개를 모두 처음 상태로 되돌립니다.
 - 프리셋 파일에는 아이템 코드와 수치만 있고 원작 그림·소리는 없습니다.
 
+### 디아블로 1 (개발 서버)
+- `game-data/diablo1/` 에 `diabdat.mpq` 또는 `spawn.mpq` 를 두면 dev 서버가 `/d1/` 로 서빙합니다 (정식판 우선).
+- 쉐어웨어는 `npm run fetch-d1` 로 받을 수 있습니다 (25MB, 저장소에는 넣지 않습니다).
+- `http://localhost:5173/?d1` 로 메뉴 없이 바로 디아블로 1 을 띄웁니다. e2e: `npx playwright test e2e/diablo1.spec.ts --workers=1`
+
 ### 배포
 - `main`에 push하면 GitHub Actions(`.github/workflows/pages.yml`)가 게임 코드만 빌드해 GitHub Pages에 올립니다.
 - 빌드 결과에 `.mpq`가 섞이면 배포를 멈춥니다.
@@ -229,6 +242,7 @@ src/
 ├── ui/         원작 DC6 UI (조작판·패널·메뉴·커서·글꼴)
 ├── audio/      사운드 (Web Audio, 해석 워커)
 ├── input/      마우스·키보드 → Command
+├── d1/         디아블로 1 (Devilution WASM 반입본 vendor/ + 워커·화면·입력·소리·세이브 호스트)
 └── main.ts     조립 (메뉴 → 게임 루프 → 렌더)
 tests/          vitest 단위 테스트
 e2e/            Playwright 브라우저 테스트
@@ -279,6 +293,7 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - 이 프로젝트의 코드는 **GPL-3.0** 입니다 (`LICENSE`). Copyright (c) 2026 Gooreum.
 - OpenDiablo2(GPL-3.0) 코드를 옮겨 왔기 때문에 같은 라이선스를 씁니다. D2MOO(MIT) 등 제3자 표기는 `THIRD_PARTY_NOTICES.md` 에 있습니다.
 - 원작 게임 파일(MPQ)은 이 라이선스와 무관하며 Blizzard 의 저작물입니다.
+- **예외: 디아블로 1 모듈** (`src/d1/vendor/`, Devilution 웹 빌드)은 GPL-3.0 이 아니라 **비상업 용도 전용** 조건입니다. 자세한 내용은 `THIRD_PARTY_NOTICES.md` 의 "Devilution 웹 빌드" 절을 보세요.
 
 ## 참고 자료·감사
 - [D2MOO](https://github.com/ThePhrozenKeep/D2MOO) — Diablo II 1.10 재구성 소스 (DRLG·AI·스킬·퀘스트 규칙 참고)

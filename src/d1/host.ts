@@ -2,6 +2,7 @@
 // 원작 MPQ 는 여기서 준비한다 (보관한 파일 또는 무료 쉐어웨어를 처음 한 번 받아 보관) → iframe 의 셸(d1x/play.html)이 가상 파일 시스템에 넣는다.
 // 세이브·설정은 DevilutionX 가 브라우저(IndexedDB, /libsdl/diasurgical)에 스스로 보관한다.
 import { MpqStore, type D1MpqName } from '../assets/local-mpq';
+import { openKeymap, type D1Runtime } from './keymap';
 
 /** 원작 데이터: 보관한 Blob 또는 URL. keep 이면 받은 뒤 브라우저에 보관 (다음부터 바로) */
 export interface D1Source { name: D1MpqName; spawn: boolean; blob?: Blob; url?: string; keep?: boolean }
@@ -39,10 +40,12 @@ const CSS = `
   color: #c7b377; background: #000; font: 18px serif; text-align: center; padding: 32px; box-sizing: border-box; }
 #d1-status .err { color: #d05040; white-space: pre-wrap; font-size: 14px; }
 #d1-status button { background: #1a160c; color: #d8c690; border: 1px solid #6b5f3c; padding: 8px 16px; font: 15px serif; cursor: pointer; }
-#btn-d1-exit { position: fixed; top: 8px; left: 8px; z-index: 1000; height: 36px; padding: 0 12px; background: rgba(20, 16, 8, .75); color: #d8c690;
-  border: 1px solid #6b5f3c; border-radius: 4px; font: 14px serif; cursor: pointer; opacity: .9; transition: opacity .4s; }
-#btn-d1-exit:hover { opacity: 1; border-color: #d8c690; }
-#btn-d1-exit.idle { opacity: .15; }
+#d1-bar { position: fixed; top: 8px; left: 8px; z-index: 1000; display: flex; gap: 6px; opacity: .9; transition: opacity .4s; }
+#d1-bar.idle { opacity: .15; }
+#d1-bar:hover { opacity: 1; }
+#d1-bar button { height: 36px; padding: 0 12px; background: rgba(20, 16, 8, .75); color: #d8c690;
+  border: 1px solid #6b5f3c; border-radius: 4px; font: 14px serif; cursor: pointer; }
+#d1-bar button:hover { border-color: #d8c690; }
 `;
 
 /** 디아블로 1 을 화면 가득 띄운다. 왼쪽 위 "나가기" 를 누르면 resolve */
@@ -94,15 +97,29 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
   exit.type = 'button';
   exit.textContent = '← 나가기';
   exit.title = '디아블로 1 끝내기 (세이브는 브라우저에 남습니다)';
-  host.replaceChildren(style, frame, exit);
+  // 게임 중 단축키 바꾸기 (엔진 키 배정을 바로 바꾸고 브라우저에 저장). 여는 동안 게임은 멈춘다 (창 포커스를 잃으면 멈춤)
+  const keys = document.createElement('button');
+  keys.id = 'btn-d1-keys';
+  keys.type = 'button';
+  keys.textContent = '⌨ 단축키';
+  keys.title = '단축키 바꾸기 (Shift·Ctrl·Alt 동시키 가능)';
+  keys.addEventListener('click', () => {
+    const rt = frame.contentWindow as (Window & D1Runtime) | null;
+    if (!rt?.Module || document.getElementById('d1-keys')) return;
+    void openKeymap(host, rt).then(() => frame.contentWindow?.focus());
+  });
+  const bar = document.createElement('div');
+  bar.id = 'd1-bar';
+  bar.append(exit, keys);
+  host.replaceChildren(style, frame, bar);
   // 마우스가 멈추면 흐리게 (전체화면 단추와 같은 규칙) — iframe 안 움직임은 부모에 안 오므로 단추 위에서만 다시 밝게
   let timer = 0;
   const wake = (): void => {
-    exit.classList.remove('idle');
+    bar.classList.remove('idle');
     clearTimeout(timer);
-    timer = window.setTimeout(() => exit.classList.add('idle'), 2000);
+    timer = window.setTimeout(() => bar.classList.add('idle'), 2000);
   };
-  exit.addEventListener('mouseenter', wake);
+  bar.addEventListener('mouseenter', wake);
   wake();
 
   return new Promise<void>((resolve) => {

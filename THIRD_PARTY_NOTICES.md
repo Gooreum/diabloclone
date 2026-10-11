@@ -43,11 +43,18 @@ https://github.com/diasurgical/devilutionX (커밋 b569d8a, 2026-10-11)
 
 디아블로 1 모드는 DevilutionX(1996년 Diablo 를 역공학한 Devilution 을 현대화한 포트)를 Emscripten 으로 빌드한 WebAssembly 를 씁니다:
 `public/d1x/devilutionx.js`, `devilutionx.wasm`, `devilutionx.data` (해시·빌드 정보는 `public/d1x/NOTICE.md`, 라이선스 전문은 `public/d1x/LICENSE.md`).
-- **수정했습니다.** 웹 빌드용 수정 5파일 36줄이 `patches/devilutionx-web.patch` 에 있고, `scripts/build-devilutionx.sh` 로 그대로 재현합니다:
-  스레드 사용 안 함(GitHub Pages), .wav 이름의 MP3 소리 인식, 없는 소리는 무음, 메뉴 오각별 그림 대체.
+- **수정했습니다.** 웹 빌드용 수정(11개 파일)이 `patches/devilutionx-web.patch` 에 있고, `scripts/build-devilutionx.sh` 로 그대로 재현합니다:
+  스레드 사용 안 함(GitHub Pages), .wav 이름의 MP3 소리 인식, 없는 소리는 무음, 메뉴 오각별 그림 대체,
+  동시키 단축키·F1~F12 대신 브라우저에서 쓸 수 있는 기본값, 웹 페이지의 단축키 화면용 함수.
 - 셸(`public/d1x/play.html`)과 사이트 연결(`src/d1/host.ts`)은 이 프로젝트가 직접 썼습니다.
 - 조건이 이 저장소의 GPL-3.0 과 **다릅니다**: 비상업·개인 용도로만 쓰고, 배포할 때는 무료로, 라이선스·저작권 표시를 지우지 말 것. 이 모듈을 빼면 나머지는 GPL-3.0 그대로입니다.
 - 원작 데이터(DIABDAT.MPQ, 쉐어웨어 spawn.mpq)는 포함하지 않습니다. 파일이 없으면 공개 호스팅된 쉐어웨어(https://d07riv.github.io/diabloweb/spawn.mpq)를 사용자 브라우저가 받습니다.
+
+## DevilutionX 글꼴 (한글 부분) — SIL Open Font License 1.1
+https://github.com/diasurgical/devilutionx-assets (릴리스 v5 의 fonts.mpq)
+
+`public/d1x/fonts-ko.mpq` 는 DevilutionX 글꼴 모음에서 한글 음절 블록만 골라 다시 묶은 것입니다 (`scripts/build-d1-fonts.ts`, 내용은 바꾸지 않음).
+글꼴은 Noto CJK 와 Unifont 를 바탕으로 하며 SIL Open Font License 1.1 입니다 — 전문은 `public/d1x/LICENSE-SIL.txt`.
 
 ## 문서
 - The Phrozen Keep (https://d2mods.info/) — 데이터 표·파일 형식 문서

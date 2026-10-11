@@ -14,7 +14,6 @@ type Rt = { Module: { ccall(n: string, r: string, t: string[], a: string[]): str
 const look = async (page: Page) => pngStats(await page.screenshot());
 /** 화면 왼쪽 절반 (캐릭터 창 자리) */
 const leftHalf = async (page: Page) => pngStats(await page.screenshot({ clip: { x: 0, y: 0, width: 400, height: 420 } }));
-const frameRt = (page: Page) => page.frameLocator('#d1-frame');
 
 async function keymap(page: Page): Promise<KeyAction[]> {
   const f = page.frame({ url: /d1x\/play\.html/ })!;
@@ -59,7 +58,6 @@ test('엔진: 기본값에 F키가 없고, SHIFT+1 을 배정하면 Shift+1 로 
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await startInTown(page);
-  void frameRt;
 
   const map = await keymap(page);
   const key = (id: string) => map.find((a) => a.id === id)?.key;
@@ -92,5 +90,67 @@ test('엔진: 기본값에 F키가 없고, SHIFT+1 을 배정하면 Shift+1 로 
   await page.keyboard.up('Shift');
   await page.waitForTimeout(800);
   expect(await page.evaluate(() => window.__d1!.errors)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('게임 중 "⌨ 단축키" 화면: Shift+1 배정 → 게임에서 바로, F1 거부, Alt 동시키·Ctrl 혼자, 새로고침해도 남는다', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await startInTown(page);
+  const row = (id: string) => page.locator(`#d1-keys .row[data-id="${id}"]`);
+
+  await page.click('#btn-d1-keys');
+  await expect(page.locator('#d1-keys')).toBeVisible();
+  await expect(row('Character').locator('.key')).toHaveText('C');
+  await expect(row('Help').locator('.key')).toHaveText('H');
+  await page.screenshot({ path: 'test-results/diablo1-keys-panel.png' });
+
+  // 캐릭터 = Shift+1 (같은 키였던 빠른 마법 1 은 비워진다)
+  await row('Character').locator('.key').click();
+  await expect(row('Character').locator('.key')).toHaveText('키를 누르세요…');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('Digit1');
+  await page.keyboard.up('Shift');
+  await expect(row('Character').locator('.key')).toHaveText('SHIFT+1');
+  await expect(row('QuickSpell1').locator('.key')).toHaveText('—');
+
+  // F1 은 거부, 값은 그대로
+  await row('Help').locator('.key').click();
+  await page.keyboard.press('F1');
+  await expect(page.locator('#d1-keys .msg')).toContainText('F1~F12');
+  await page.keyboard.press('Escape');
+  await expect(row('Help').locator('.key')).toHaveText('H');
+
+  // Alt 누른 채 2 → ALT+2, Ctrl 혼자 눌렀다 떼기 → LCONTROL
+  await row('Inventory').locator('.key').click();
+  await page.keyboard.down('Alt');
+  await page.keyboard.press('Digit2');
+  await page.keyboard.up('Alt');
+  await expect(row('Inventory').locator('.key')).toHaveText('ALT+2');
+  await row('QuickSpell2').locator('.key').click();
+  await page.keyboard.down('Control');
+  await page.keyboard.up('Control');
+  await expect(row('QuickSpell2').locator('.key')).toHaveText('LCONTROL');
+  await page.screenshot({ path: 'test-results/diablo1-keys-panel-changed.png' });
+
+  // 닫기 → 게임으로 포커스, Shift+1 로 캐릭터 창
+  await page.click('#d1-keys [data-close]');
+  await expect(page.locator('#d1-keys')).toHaveCount(0);
+  await page.waitForTimeout(800);
+  const before = await leftHalf(page);
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('Digit1');
+  await page.keyboard.up('Shift');
+  await expect.poll(async () => (await leftHalf(page)).hash, { timeout: 5000 }).not.toBe(before.hash);
+  await page.screenshot({ path: 'test-results/diablo1-keys-ingame.png' });
+
+  // 새로고침해도 남는다 (브라우저 저장)
+  await page.waitForTimeout(1500);
+  await page.reload();
+  await page.waitForFunction(() => window.__d1?.ready === true, undefined, { timeout: 120_000 });
+  await page.waitForTimeout(3000);
+  const map = await keymap(page);
+  expect(['Character', 'Inventory', 'QuickSpell2'].map((id) => map.find((a) => a.id === id)?.key)).toEqual(['SHIFT+1', 'ALT+2', 'LCONTROL']);
   expect(errors).toEqual([]);
 });

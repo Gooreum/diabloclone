@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // 디아블로 1 (Devilution 웹 빌드). 원작 데이터는 쉐어웨어 spawn.mpq — `npm run fetch-d1` 로 game-data/diablo1/ 에 받는다
@@ -133,5 +133,87 @@ test('배포판 파일 고르기: spawn.mpq 하나만 넣어도 디아블로 1 �
   await page.reload();
   await waitReady(page);
   await expect(page.locator('#mpq-setup')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+// ---- 파일 없이: 쉐어웨어를 처음 한 번 받아 보관 (원격 주소는 로컬 사본으로 돌려 결정적으로)
+const SPAWN_URL = 'https://d07riv.github.io/diabloweb/spawn.mpq';
+
+async function serveSpawn(page: Page): Promise<{ hits: number }> {
+  const counter = { hits: 0 };
+  const body = readFileSync(SPAWN);
+  await page.route(SPAWN_URL, (r) => {
+    counter.hits++;
+    return r.fulfill({ status: 200, body, headers: { 'content-type': 'application/octet-stream', 'access-control-allow-origin': '*' } });
+  });
+  return counter;
+}
+
+async function clearStores(page: Page): Promise<void> {
+  await page.goto('/?local&files');
+  await page.evaluate(() => Promise.all(['diabloclone-mpq', 'diabloclone-d1'].map((n) => new Promise((r) => {
+    const q = indexedDB.deleteDatabase(n);
+    q.onsuccess = q.onerror = q.onblocked = r;
+  }))));
+}
+
+test('파일 없이 ?d1: 고르기 화면 없이 쉐어웨어를 받아 시작하고, 다음엔 받지 않는다', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const remote = await serveSpawn(page);
+  await clearStores(page);
+  await page.goto('/?local&d1');
+  await expect(page.locator('#mpq-setup')).toHaveCount(0);
+  await waitReady(page);
+  expect(remote.hits).toBe(1);
+  await expect.poll(() => page.evaluate(() => new Promise<string[]>((res) => {
+    const q = indexedDB.open('diabloclone-mpq', 1);
+    q.onupgradeneeded = () => q.result.createObjectStore('files');
+    q.onsuccess = () => { const k = q.result.transaction('files').objectStore('files').getAllKeys(); k.onsuccess = () => res(k.result.map(String)); };
+  })), { timeout: 30_000 }).toContain('spawn.mpq');
+  await page.reload();
+  await waitReady(page);
+  expect(remote.hits).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('파일 없이 첫 화면: "디아블로 1 바로 하기" 단추 한 번으로 시작', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await serveSpawn(page);
+  await clearStores(page);
+  await page.goto('/?local');
+  await expect(page.locator('#mpq-setup [data-play-d1]')).toBeVisible();
+  await page.screenshot({ path: 'test-results/diablo1-play-button.png' });
+  await page.click('#mpq-setup [data-play-d1]');
+  await waitReady(page);
+  await page.waitForFunction(() => (window.__d1?.frames ?? 0) >= 10, undefined, { timeout: 60_000 });
+  expect(errors).toEqual([]);
+});
+
+test('D1 파일이 없어도 D2 타이틀에 "Diablo I" 단추가 있다', async ({ page }) => {
+  test.skip(!existsSync('game-data/d2data.mpq'), 'Diablo II game-data 필요');
+  test.setTimeout(300_000);
+  await page.route('**/d1/*.mpq', (r) => r.fulfill({ status: 404, body: 'not found' }));
+  await serveSpawn(page);
+  await page.goto('/');
+  await page.waitForFunction(() => window.__menuReady === true, undefined, { timeout: 120_000 });
+  await expect(page.locator('#btn-diablo1')).toBeVisible();
+  await page.click('#btn-diablo1');
+  await waitReady(page);
+});
+
+test('받기 실패: 오류 글과 다시 시작 단추, 페이지 오류 없음', async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.route(SPAWN_URL, (r) => r.fulfill({ status: 500, body: 'x' }));
+  await clearStores(page);
+  await page.goto('/?local&d1');
+  await page.waitForFunction(() => (window.__d1?.errors.length ?? 0) > 0, undefined, { timeout: 60_000 });
+  await expect(page.locator('#d1-status')).toContainText('받지 못했습니다');
+  await expect(page.locator('#d1-status button')).toHaveText('다시 시작');
   expect(errors).toEqual([]);
 });

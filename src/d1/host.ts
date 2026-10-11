@@ -1,6 +1,6 @@
 // 디아블로 1 실행 (메인 스레드): 640×480 무대에 워커가 보낸 프레임을 그리고, 마우스·키보드를 넘기고, 소리를 내고, 세이브를 브라우저에 보관한다.
 // 게임 자체는 Devilution 웹 빌드 (src/d1/vendor, 워커 d1-worker.ts). 입력 값의 뜻은 글루의 _DApi_Mouse/_DApi_Key/_DApi_Char 그대로.
-import { kvStore } from '../assets/local-mpq';
+import { kvStore, MpqStore } from '../assets/local-mpq';
 import { fitStage } from '../ui/stage';
 import { D1Audio } from './audio';
 import type { D1Event, D1MpqName, Frame, FromWorker, ToWorker } from './protocol';
@@ -13,8 +13,15 @@ export const D1_WIDTH = 640, D1_HEIGHT = 480;
 /** 반입한 diabloweb 빌드 버전 (게임이 메뉴 구석에 표시) — 출처: diabloweb package.json 1.0.39 */
 export const D1_VERSION: [number, number, number] = [1, 0, 39];
 
-/** 원작 데이터: 보관한 Blob 또는 (dev 서버) URL */
-export interface D1Source { name: D1MpqName; spawn: boolean; blob?: Blob; url?: string }
+/** 원작 데이터: 보관한 Blob 또는 URL. keep 이면 받은 뒤 브라우저에 보관 (다음부터 바로) */
+export interface D1Source { name: D1MpqName; spawn: boolean; blob?: Blob; url?: string; keep?: boolean }
+
+/** 무료 쉐어웨어 (Blizzard 배포본) — diabloweb 공개 호스팅. 파일이 없으면 처음 한 번 받아 보관한다 */
+export const SPAWN_URL = 'https://d07riv.github.io/diabloweb/spawn.mpq';
+/** 알려진 쉐어웨어 spawn.mpq 크기 (1.09 판본 둘) */
+export const SPAWN_SIZES = [25830791, 50274091];
+/** 파일 없이 하는 디아블로 1 */
+export const SHAREWARE: D1Source = { name: 'spawn.mpq', spawn: true, url: SPAWN_URL, keep: true };
 
 /** 세이브(single_N.sv / spawnN.sv)·config.ini — 원작 MPQ 보관과 다른 DB */
 export const D1Store = kvStore<Uint8Array>('diabloclone-d1');
@@ -77,7 +84,16 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
   let mpq: ArrayBuffer;
   let files: Map<string, Uint8Array>;
   try {
-    mpq = src.blob ? await src.blob.arrayBuffer() : await fetchAll(src.url!);
+    const mb = (n: number) => (n / 1048576).toFixed(1);
+    mpq = src.blob ? await src.blob.arrayBuffer() : await download(src.url!, (got, total) => {
+      status.textContent = src.keep ? `디아블로 1 받는 중… ${mb(got)} / ${mb(total)} MB (처음 한 번만)` : `디아블로 1 불러오는 중… ${mb(got)} MB`;
+    });
+    if (src.keep) {
+      if (!SPAWN_SIZES.includes(mpq.byteLength)) throw new Error(`받은 파일 크기가 다릅니다 (${mpq.byteLength} bytes)`);
+      // 워커로 넘기기 전에 사본을 보관 — 다음부터는 받지 않고 바로
+      void MpqStore.put(src.name, new Blob([mpq.slice(0)])).catch(() => undefined);
+    }
+    status.textContent = '디아블로 1 시작하는 중…';
     files = await D1Store.all().catch(() => new Map<string, Uint8Array>());
   } catch (e) {
     showError(status, debug, (e as Error).message);
@@ -245,10 +261,40 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
   });
 }
 
-async function fetchAll(url: string): Promise<ArrayBuffer> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`원작 파일을 못 받음: ${url} (${r.status})`);
-  return r.arrayBuffer();
+/** 진행률을 알리며 통째로 받는다 */
+async function download(url: string, onProgress: (got: number, total: number) => void): Promise<ArrayBuffer> {
+  let r: Response;
+  try {
+    r = await fetch(url);
+  } catch {
+    throw new Error('디아블로 1 파일을 받지 못했습니다. 인터넷 연결을 확인하고 다시 시작해 주세요.');
+  }
+  if (!r.ok || !r.body) throw new Error(`디아블로 1 파일을 받지 못했습니다 (HTTP ${r.status}). 잠시 뒤 다시 시작해 주세요.`);
+  const total = Number(r.headers.get('content-length')) || SPAWN_SIZES[0]!;
+  const out = new Uint8Array(total);
+  const parts: Uint8Array[] = [];
+  let got = 0, last = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (got + value.byteLength <= out.byteLength) out.set(value, got);
+    parts.push(value);
+    got += value.byteLength;
+    if (got - last > 262144) {
+      last = got;
+      onProgress(got, total);
+    }
+  }
+  if (got === out.byteLength) return out.buffer;
+  // 길이 헤더가 없거나 틀렸으면 조각을 이어 붙인다
+  const all = new Uint8Array(got);
+  let o = 0;
+  for (const p of parts) {
+    all.set(p, o);
+    o += p.byteLength;
+  }
+  return all.buffer;
 }
 
 /** 오류 글과 다시 시작 단추 (게임은 멈춘 상태) */

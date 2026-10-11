@@ -21,33 +21,34 @@ const CSS = `
 #mpq-setup .status { min-height: 20px; }
 #mpq-setup .edition { color: #d8c690; }
 #mpq-setup .err { color: #d05040; }
+#mpq-setup .play button { font-size: 17px; padding: 10px 18px; margin: 0 8px 0 0; border-color: #d8c690; background: #2a1f0c; }
 `;
 
 /**
  * 보관된 MPQ 가 필수 3개를 모두 갖췄으면 곧바로, 아니면 고르는 화면을 띄우고 다 고르면 돌려준다.
  * reopen: 이미 갖췄어도 화면을 띄운다 (메인 메뉴 "Game Files" — 확장팩·소리 파일을 더 넣거나 바꾼다)
  */
-export async function ensureLocalMpqs(host: HTMLElement, reopen = false): Promise<Map<string, Blob>> {
+export async function ensureLocalMpqs(host: HTMLElement, reopen = false, onPlayD1?: () => void): Promise<Map<string, Blob>> {
   const have = await MpqStore.all();
   // D2 필수 3개가 있거나, 디아블로 1 파일이 있으면 곧바로 (D1 만 있으면 main 이 D1 을 띄운다)
   if (!reopen && (MpqStore.missing(have).length === 0 || d1FileOf(have.keys()))) return have;
   void navigator.storage?.persist?.().catch(() => false);
-  return new Promise((done) => showSetup(host, have, done, reopen));
+  return new Promise((done) => showSetup(host, have, done, reopen, onPlayD1));
 }
 
-function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<string, Blob>) => void, reopen: boolean): void {
+function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<string, Blob>) => void, reopen: boolean, onPlayD1?: () => void): void {
   const style = document.createElement('style');
   style.textContent = CSS;
   const root = document.createElement('div');
   root.id = 'mpq-setup';
   root.innerHTML = `
     <h1>원작 파일 불러오기 (Diablo II · Diablo I)</h1>
+    ${onPlayD1 ? '<p class="play"><button type="button" data-play-d1>▶ 디아블로 1 바로 하기 (무료 · 파일 필요 없음)</button> <span class="muted">처음 한 번만 25MB 받기</span></p>' : ''}
     ${reopen
       ? `<p>✓ 표시는 이 브라우저에 보관된 파일입니다. 확장팩(d2exp.mpq 등)이나 소리 파일을 더 넣거나, 같은 이름의 파일을 넣어 바꿀 수 있습니다.</p>
          <p class="muted">확장팩으로 바꾸려면 확장팩 설치 폴더를 통째로 고르세요 (patch_d2·d2char 가 확장팩판으로 바뀌고 d2exp 가 더해집니다).</p>`
       : `<p>가지고 계신 Diablo II (1.14d) 설치 폴더의 MPQ 파일을 선택하세요.</p>
          <p class="muted">확장팩(Lord of Destruction)을 설치한 폴더면 확장팩으로, 클래식만 설치했으면 클래식으로 시작합니다.</p>`}
-    <p class="muted">디아블로 1: 정식판 DIABDAT.MPQ (GOG) 또는 쉐어웨어 spawn.mpq 를 넣으면 됩니다.</p>
     <p class="muted">파일은 서버로 전송되지 않고 이 브라우저에만 저장됩니다. 한 번만 하면 다음부터는 바로 시작합니다.</p>
     <div class="drop">
       <p>여기로 MPQ 파일(또는 폴더)을 끌어다 놓거나</p><br>
@@ -156,6 +157,12 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
       busy = false;
       render();
     });
+  };
+  const play = root.querySelector('[data-play-d1]') as HTMLButtonElement | null;
+  if (play && onPlayD1) play.onclick = () => {
+    if (busy) return;
+    host.replaceChildren();
+    onPlayD1();
   };
   start.onclick = () => {
     if (start.disabled) return;

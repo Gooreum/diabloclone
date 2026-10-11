@@ -3,7 +3,7 @@ import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
 import { blobRange, D1_MPQS, d1FileOf, MpqStore } from './assets/local-mpq';
-import { runDiablo1, type D1Source } from './d1/host';
+import { runDiablo1, SHAREWARE, type D1Source } from './d1/host';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
 import { KOR_STRING, lngPaths, loadLang, saveLang, type Lang } from './data/lang';
@@ -179,7 +179,7 @@ window.addEventListener('unhandledrejection', (e) => reportClientError('rejectio
  * 원작 MPQ 를 어디서 읽나: dev 서버는 로컬 game-data/ 를 /d2/ (클래식)·/d2x/ (확장팩: game-data/lod 우선) 로 서빙,
  * 배포판(또는 ?local)은 유저가 고른 파일(브라우저 보관). 판본은 파일로 정한다 — d2exp.mpq 가 있으면 확장팩 (dev 는 ?edition=classic 로 클래식)
  */
-interface Source { base: string; fetch: RangeFetcher; local: boolean; edition: Edition; d1: D1Source | null; d2: boolean }
+interface Source { base: string; fetch: RangeFetcher; local: boolean; edition: Edition; d1: D1Source; d2: boolean }
 async function mpqSource(host: HTMLElement): Promise<Source> {
   const q = new URLSearchParams(location.search);
   if (import.meta.env.DEV && !q.has('local')) {
@@ -188,25 +188,26 @@ async function mpqSource(host: HTMLElement): Promise<Source> {
     const d1 = await devD1();
     return lod ? { base: '/d2x/', fetch: httpRange, local: false, edition: 'lod', d1, d2: true } : { base: '/d2/', fetch: httpRange, local: false, edition: 'classic', d1, d2: true };
   }
-  const files = await ensureLocalMpqs(host, q.has('files'));
+  // ?d1: 파일이 하나도 없어도 고르기 화면 없이 바로 (보관본이 있으면 그것, 없으면 쉐어웨어를 받는다)
+  const files = q.has('d1') ? await MpqStore.all() : await ensureLocalMpqs(host, q.has('files'), () => void runDiablo1(host, SHAREWARE).then(() => location.reload()));
   const found = d1FileOf(files.keys());
-  const d1 = found ? { ...found, blob: files.get(found.name) } : null;
+  const d1: D1Source = found ? { ...found, blob: files.get(found.name) } : SHAREWARE;
   return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()), d1, d2: MpqStore.missing(files).length === 0 };
 }
 
-/** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선) */
-async function devD1(): Promise<D1Source | null> {
+/** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선). 없으면 쉐어웨어를 받는다 */
+async function devD1(): Promise<D1Source> {
   for (const name of D1_MPQS) {
     if (await fetch(`/d1/${name}`, { method: 'HEAD' }).then((r) => r.ok, () => false)) return { name, spawn: name === 'spawn.mpq', url: `/d1/${name}` };
   }
-  return null;
+  return SHAREWARE;
 }
 
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const src = await mpqSource(host);
   // 디아블로 1: D2 파일이 없거나 ?d1 이면 메뉴 없이 바로. 끝나면 (D2 가 없으면) 파일 고르기 화면을 거쳐 다시 시작
-  if (src.d1 && (!src.d2 || new URLSearchParams(location.search).has('d1'))) {
+  if (!src.d2 || new URLSearchParams(location.search).has('d1')) {
     await runDiablo1(host, src.d1);
     if (!src.d2) await ensureLocalMpqs(host, true);
     location.replace(location.pathname);
@@ -347,9 +348,9 @@ async function boot(): Promise<void> {
   // 프런트엔드 소리: 메뉴 음악 (sounds.txt music_options = music\common\options.wav), 클래스 고르기 소리 (cursor_<클래스>_select)
   let inMenu = true, soundReady = false;
   menu.onSound = (n) => void sound.play(n);
-  // 디아블로 1 파일이 있으면 타이틀에 "Diablo I" 단추 — D2 메뉴·소리를 내리고 D1 을 띄운다. 끝나면 다시 시작 (Game Files 와 같은 방식)
+  // 타이틀의 "Diablo I" 단추 (파일이 없으면 쉐어웨어를 받는다) — D2 메뉴·소리를 내리고 D1 을 띄운다. 끝나면 다시 시작
   const d1 = src.d1;
-  if (d1) menu.onDiablo1 = () => {
+  menu.onDiablo1 = () => {
     menu.hide();
     sound.stopAll();
     void runDiablo1(host, d1).then(() => location.reload());

@@ -68,9 +68,11 @@
   - 처음 한 번 무료 쉐어웨어(25MB)를 받아 이 브라우저에 보관하고, 다음부터는 바로 시작합니다.
   - 정식판을 하려면 `DIABDAT.MPQ` (GOG) 를 원작 파일 고르기 화면에 넣으면 됩니다 (정식판이 우선).
   - 세이브는 이 브라우저에 보관됩니다 (다음에 열면 캐릭터가 남아 있습니다).
-- 게임 자체는 이 프로젝트가 만든 것이 아니라 **Devilution(역공학 소스)을 WebAssembly 로 빌드한 것**(d07RiV/diabloweb)을 수정 없이 씁니다. 이 프로젝트는 그걸 띄우는 화면·입력·소리·저장 부분을 썼습니다.
-- 멀티플레이는 안 됩니다. 원작 메뉴 목록은 원작처럼 **더블클릭**으로 엽니다.
-- 이 모듈은 **비상업 조건**입니다 ([라이선스](#라이선스)).
+- 게임 엔진은 **DevilutionX**(원작을 되살려 버그를 고치고 편의 기능을 더한 오픈소스 포트)를 웹으로 빌드한 것입니다. 원작 그대로 시작하고, 메인 메뉴 **Settings** 에서 편의 기능을 켤 수 있습니다:
+  - 금화·물약 자동 줍기, 벨트 자동 채우기, 바닥 아이템 이름(Alt), 몬스터 체력·경험치 막대, HP·마나 숫자, 마을에서 달리기
+  - 키 바꾸기와 마법 단축키 12개, Quick Cast, 능력치를 깎는 신전 막기, 와이드스크린·확대
+- 멀티플레이는 안 됩니다. 나가려면 왼쪽 위 **← 나가기**.
+- 이 모듈은 **비상업 조건**입니다 ([라이선스](#라이선스)). 다시 빌드하려면 `bash scripts/build-devilutionx.sh` (Emscripten 필요).
 
 ### 한국어
 - 메인 메뉴의 **ENGLISH / 한국어** 단추로 표시 언어를 바꿉니다.
@@ -243,7 +245,7 @@ src/
 ├── ui/         원작 DC6 UI (조작판·패널·메뉴·커서·글꼴)
 ├── audio/      사운드 (Web Audio, 해석 워커)
 ├── input/      마우스·키보드 → Command
-├── d1/         디아블로 1 (Devilution WASM 반입본 vendor/ + 워커·화면·입력·소리·세이브 호스트)
+├── d1/         디아블로 1 실행 (DevilutionX 웹 빌드 public/d1x 를 iframe 으로, 원작 MPQ 준비)
 └── main.ts     조립 (메뉴 → 게임 루프 → 렌더)
 tests/          vitest 단위 테스트
 e2e/            Playwright 브라우저 테스트
@@ -294,7 +296,7 @@ RECORD_GIF=1 npx playwright test e2e/record-gifs.spec.ts   # README GIF 다시 �
 - 이 프로젝트의 코드는 **GPL-3.0** 입니다 (`LICENSE`). Copyright (c) 2026 Gooreum.
 - OpenDiablo2(GPL-3.0) 코드를 옮겨 왔기 때문에 같은 라이선스를 씁니다. D2MOO(MIT) 등 제3자 표기는 `THIRD_PARTY_NOTICES.md` 에 있습니다.
 - 원작 게임 파일(MPQ)은 이 라이선스와 무관하며 Blizzard 의 저작물입니다.
-- **예외: 디아블로 1 모듈** (`src/d1/vendor/`, Devilution 웹 빌드)은 GPL-3.0 이 아니라 **비상업 용도 전용** 조건입니다. 자세한 내용은 `THIRD_PARTY_NOTICES.md` 의 "Devilution 웹 빌드" 절을 보세요.
+- **예외: 디아블로 1 엔진** (`public/d1x/`, DevilutionX 웹 빌드)은 GPL-3.0 이 아니라 Sustainable Use License(**비상업 용도 전용**)입니다. 자세한 내용은 `THIRD_PARTY_NOTICES.md` 의 "DevilutionX" 절을 보세요.
 
 ## 참고 자료·감사
 - [D2MOO](https://github.com/ThePhrozenKeep/D2MOO) — Diablo II 1.10 재구성 소스 (DRLG·AI·스킬·퀘스트 규칙 참고)

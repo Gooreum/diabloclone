@@ -31,10 +31,16 @@ const CSS = `
 
 let installed = false;
 
+declare global {
+  interface Window { __toggleFullscreen?: () => Promise<void> }
+}
+
 /** 한 번만 설치: Alt+Enter 키와 오른쪽 위 단추 (#btn-fullscreen) */
 export function installFullscreen(): void {
   if (installed) return;
   installed = true;
+  // 디아블로 1 은 iframe 안에서 키를 받는다 — 그쪽 셸(public/d1x/play.html)이 Alt+Enter 를 여기로 넘긴다
+  window.__toggleFullscreen = toggleFullscreen;
   addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || !e.altKey) return;
     e.preventDefault();

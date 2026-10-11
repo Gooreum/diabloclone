@@ -15,17 +15,17 @@ test('D1: 단추로 전체화면 켜고 끄기, 무대가 커지고 게임 입�
   await page.goto('/?d1');
   await page.waitForFunction(() => window.__d1?.ready === true, undefined, { timeout: 120_000 });
   await expect(page.locator('#btn-fullscreen')).toBeVisible();
-  const before = await box(page, '#d1-canvas');
+  const before = await box(page, '#d1-frame');
   await page.click('#btn-fullscreen');
   await expect.poll(() => isFull(page)).toBe(true);
   await page.waitForTimeout(500);
-  const after = await box(page, '#d1-canvas');
+  const after = await box(page, '#d1-frame');
   const vp = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
-  // 4:3 비율 유지로 화면 높이(또는 너비)를 꽉 채운다
-  expect(Math.max(after.width / vp.w, after.height / vp.h)).toBeGreaterThan(0.99);
-  expect(after.width / after.height).toBeCloseTo(4 / 3, 2);
+  // 게임 iframe 이 화면을 꽉 채운다 (비율 유지는 게임이 안에서)
+  expect(after.width / vp.w).toBeGreaterThan(0.99);
+  expect(after.height / vp.h).toBeGreaterThan(0.99);
   expect(after.width).toBeGreaterThanOrEqual(before.width);
-  await page.locator('#d1-canvas').screenshot({ path: 'test-results/fullscreen-d1.png' });
+  await page.screenshot({ path: 'test-results/fullscreen-d1.png' });
   await page.click('#btn-fullscreen');
   await expect.poll(() => isFull(page)).toBe(false);
   expect(await page.evaluate(() => window.__d1!.errors)).toEqual([]);
@@ -37,6 +37,8 @@ test('D1: Alt+Enter 로 전체화면 켜고 끄기', async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto('/?d1');
   await page.waitForFunction(() => window.__d1?.ready === true, undefined, { timeout: 120_000 });
+  // 키보드는 게임(iframe) 안으로 — 거기서 누른 Alt+Enter 가 사이트 전체화면을 켠다
+  await page.frameLocator('#d1-frame').locator('canvas').click({ position: { x: 300, y: 200 } });
   await page.keyboard.press('Alt+Enter');
   await expect.poll(() => isFull(page)).toBe(true);
   await page.keyboard.press('Alt+Enter');

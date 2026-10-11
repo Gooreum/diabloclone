@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diablo</title>
+<!-- 디아블로 1 셸 (diabloclone): DevilutionX 웹 빌드를 띄운다. 원작 MPQ 는 부모 페이지(src/d1/host.ts)가 window.__d1Source 로 넘긴다 -->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<script>
+  (function () {
+    var P = window.parent !== window ? window.parent : window;
+    var D = P.__d1 || (P.__d1 = { ready: false, errors: [], log: [] });
+    var src = P.__d1Source;
+    // 빌드에 들어 있는 emscripten_pre.js 는 같은 폴더의 spawn.mpq 를 받아 덮어쓴다 — 원작 파일은 부모가 주므로 그 요청은 '없음'으로
+    var realFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (/(^|\/)spawn\.mpq(\?|$)/i.test(url)) return Promise.resolve(new Response(null, { status: 404 }));
+      return realFetch(input, init);
+    };
+    window.Module = {
+      canvas: document.getElementById('canvas'),
+      arguments: [],
+      preRun: [function () {
+        // 원작 MPQ 를 가상 파일 시스템 맨 위(/)에 둔다 — DevilutionX 가 base 경로에서 diabdat.mpq / spawn.mpq 를 찾는다
+        if (src && src.buffer) FS.writeFile('/' + src.name, new Uint8Array(src.buffer));
+        else D.errors.push('원작 MPQ 가 없습니다');
+      }],
+      onRuntimeInitialized: function () { D.ready = true; },
+      onAbort: function (what) { D.errors.push('abort: ' + what); },
+      print: function () {},
+      printErr: function (t) { if (/ERROR|FATAL/.test(t)) D.log.push(t); },
+      setStatus: function () {},
+    };
+    window.addEventListener('error', function (e) { D.errors.push(String(e.message)); });
+    // Alt+Enter = 사이트의 전체화면 (부모 페이지 src/ui/fullscreen.ts) — 게임에는 넘기지 않는다
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.altKey && P.__toggleFullscreen) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        P.__toggleFullscreen();
+      }
+    }, true);
+    document.getElementById('canvas').addEventListener('mousedown', function () { window.focus(); });
+  })();
+</script>
+<script src="devilutionx.js"></script>
+</body>
+</html>

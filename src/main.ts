@@ -193,10 +193,18 @@ async function mpqSource(host: HTMLElement): Promise<Source> {
     return lod ? { base: '/d2x/', fetch: httpRange, local: false, edition: 'lod', d1, d2: true } : { base: '/d2/', fetch: httpRange, local: false, edition: 'classic', d1, d2: true };
   }
   // ?d1: 파일이 하나도 없어도 고르기 화면 없이 바로 (보관본이 있으면 그것, 없으면 쉐어웨어를 받는다)
-  const files = q.has('d1') ? await MpqStore.all() : await ensureLocalMpqs(host, q.has('files'), () => void runDiablo1(host, SHAREWARE).then(() => location.reload()));
+  const files = q.has('d1') ? await MpqStore.all() : await ensureLocalMpqs(host, q.has('files'), () => void runDiablo1(host, SHAREWARE).then(() => location.replace(filesUrl())));
   const found = d1FileOf(files.keys());
   const d1: D1Source = found ? { ...found, blob: files.get(found.name) } : SHAREWARE;
   return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()), d1, d2: MpqStore.missing(files).length === 0 };
+}
+
+/** 원작 파일 고르기 화면으로 다시 (?d1 은 빼고 ?files 를 붙인다 — dev 의 ?local 같은 다른 표시는 그대로) */
+function filesUrl(): string {
+  const q = new URLSearchParams(location.search);
+  q.delete('d1');
+  q.set('files', '');
+  return `${location.pathname}?${q.toString().replace(/=(&|$)/g, '$1')}`;
 }
 
 /** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선). 없으면 쉐어웨어를 받는다 */
@@ -215,8 +223,8 @@ async function boot(): Promise<void> {
   // 디아블로 1: D2 파일이 없거나 ?d1 이면 메뉴 없이 바로. 끝나면 (D2 가 없으면) 파일 고르기 화면을 거쳐 다시 시작
   if (!src.d2 || new URLSearchParams(location.search).has('d1')) {
     await runDiablo1(host, src.d1);
-    if (!src.d2) await ensureLocalMpqs(host, true);
-    location.replace(location.pathname);
+    // 나가기: D2 파일이 없으면 고르기 화면으로 (그대로 다시 시작하면 보관된 디아블로 1 이 또 뜬다)
+    location.replace(src.d2 ? location.pathname : filesUrl());
     return;
   }
   const canvas = document.createElement('canvas');

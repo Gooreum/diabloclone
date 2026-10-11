@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "e2e": "playwright test",
-    "check-data": "node scripts/check-game-data.mjs"
+    "check-data": "node scripts/check-game-data.mjs",
+    "fetch-d1": "node scripts/fetch-d1-spawn.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

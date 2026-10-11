@@ -1,7 +1,7 @@
 // 첫 접속 화면: 유저가 자기 Diablo II 설치 폴더의 MPQ 를 고르면 이 브라우저(IndexedDB)에 보관한다.
 // 파일은 서버로 보내지 않는다. 다음 접속부터는 보관된 파일로 곧바로 시작한다.
 import { editionOf, LOD_MPQS } from '../assets/edition';
-import { ALL_MPQS, canonicalName, D1_MPQS, d1FileOf, isMpq, MpqStore, OPTIONAL_MPQS } from '../assets/local-mpq';
+import { ALL_MPQS, canonicalName, D1_MPQS, d1FileOf, HELLFIRE_MPQS, isMpq, MpqStore, OPTIONAL_MPQS } from '../assets/local-mpq';
 
 const CSS = `
 #mpq-setup { width: 800px; height: 600px; box-sizing: border-box; padding: 32px 64px; background: #000; color: #c7b377;
@@ -74,8 +74,9 @@ function showSetup(host: HTMLElement, have: Map<string, Blob>, done: (m: Map<str
   const render = (): void => {
     list.innerHTML = ALL_MPQS.map((n) => {
       const lod = (LOD_MPQS as readonly string[]).includes(n), d1 = (D1_MPQS as readonly string[]).includes(n);
-      const req = !lod && !d1 && !(OPTIONAL_MPQS as readonly string[]).includes(n);
-      const tag = d1 ? ' <span class="muted">(디아블로 1)</span>' : lod ? ' <span class="muted">(확장팩)</span>' : req ? '' : ' <span class="muted">(소리)</span>';
+      const hf = (HELLFIRE_MPQS as readonly string[]).includes(n);
+      const req = !lod && !d1 && !hf && !(OPTIONAL_MPQS as readonly string[]).includes(n);
+      const tag = hf ? ' <span class="muted">(디아블로 1 헬파이어)</span>' : d1 ? ' <span class="muted">(디아블로 1)</span>' : lod ? ' <span class="muted">(확장팩)</span>' : req ? '' : ' <span class="muted">(소리)</span>';
       return `<li class="${have.has(n) ? 'ok' : 'no'}${req ? ' req' : ''}">${n}${tag}</li>`;
     }).join('');
     const miss = MpqStore.missing(have);

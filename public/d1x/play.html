@@ -34,8 +34,16 @@
       arguments: src && src.fonts ? [] : ['--lang', 'en'],
       preRun: [function () {
         // 원작 MPQ 를 가상 파일 시스템 맨 위(/)에 둔다 — DevilutionX 가 base 경로에서 diabdat.mpq / spawn.mpq 를 찾는다
-        if (src && src.buffer) FS.writeFile('/' + src.name, new Uint8Array(src.buffer));
+        // MEMFS 가 받은 버퍼를 그대로 쓰게 (canOwn) — 정식판 500MB + 헬파이어 170MB 를 한 번 더 복사하지 않는다
+        function put(path, buf) {
+          var s = FS.open(path, 'w');
+          FS.write(s, new Uint8Array(buf), 0, buf.byteLength, 0, true);
+          FS.close(s);
+        }
+        if (src && src.buffer) put('/' + src.name, src.buffer);
         else D.errors.push('원작 MPQ 가 없습니다');
+        // 헬파이어 확장팩 (hellfire.mpq 가 있으면 DevilutionX 가 시작할 때 Diablo / Hellfire 를 묻는다)
+        (src && src.extras || []).forEach(function (x) { put('/' + x.name, x.buffer); });
         if (src && src.fonts) FS.writeFile('/fonts.mpq', new Uint8Array(src.fonts));
       }],
       onRuntimeInitialized: function () { D.ready = true; },

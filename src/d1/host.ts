@@ -4,8 +4,10 @@
 import { MpqStore, type D1MpqName } from '../assets/local-mpq';
 import { openKeymap, type D1Runtime } from './keymap';
 
-/** 원작 데이터: 보관한 Blob 또는 URL. keep 이면 받은 뒤 브라우저에 보관 (다음부터 바로) */
-export interface D1Source { name: D1MpqName; spawn: boolean; blob?: Blob; url?: string; keep?: boolean }
+/** 원작에 더하는 파일 (헬파이어 확장팩 MPQ) — 보관한 Blob 또는 URL */
+export interface D1Extra { name: string; blob?: Blob; url?: string }
+/** 원작 데이터: 보관한 Blob 또는 URL. keep 이면 받은 뒤 브라우저에 보관 (다음부터 바로). extras 는 정식판일 때 헬파이어 */
+export interface D1Source { name: D1MpqName; spawn: boolean; blob?: Blob; url?: string; keep?: boolean; extras?: D1Extra[] }
 
 /** 무료 쉐어웨어 (Blizzard 배포본) — diabloweb 공개 호스팅(CORS 허용). 파일이 없으면 처음 한 번 받아 보관한다.
  *  웹용으로 다시 묶은 판이라 효과음이 .wav 이름의 MP3 — 엔진 패치가 내용으로 알아본다 (patches/devilutionx-web.patch) */
@@ -18,7 +20,7 @@ export const SHAREWARE: D1Source = { name: 'spawn.mpq', spawn: true, url: SPAWN_
 /** e2e·디버그용 상태 (셸이 채운다) */
 export interface D1Debug { ready: boolean; errors: string[]; log: string[] }
 /** 셸에 넘기는 원작 파일 (+ 한국어면 한글 글꼴 MPQ) */
-export interface D1Payload { name: D1MpqName; buffer: ArrayBuffer; fonts?: ArrayBuffer }
+export interface D1Payload { name: D1MpqName; buffer: ArrayBuffer; fonts?: ArrayBuffer; extras?: { name: string; buffer: ArrayBuffer }[] }
 
 /** 한글 글꼴: DevilutionX fonts.mpq 의 한글 부분 (scripts/build-d1-fonts.ts, SIL OFL) */
 export const FONTS_KO_PATH = 'd1x/fonts-ko.mpq';
@@ -82,7 +84,14 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
     }, FONTS_KO_SIZE).catch(() => undefined);
     if (fonts && fonts.byteLength !== FONTS_KO_SIZE) fonts = undefined;
   }
-  window.__d1Source = { name: src.name, buffer: mpq, fonts };
+  // 헬파이어 확장팩 (있으면 DevilutionX 가 시작할 때 Diablo / Hellfire 를 묻는다). 못 읽은 파일은 건너뛴다
+  const extras: { name: string; buffer: ArrayBuffer }[] = [];
+  for (const [i, x] of (src.extras ?? []).entries()) {
+    status.textContent = `헬파이어 불러오는 중… ${i + 1}/${src.extras!.length}`;
+    const buffer = await (x.blob ? x.blob.arrayBuffer() : fetch(x.url!).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))).catch(() => undefined);
+    if (buffer) extras.push({ name: x.name, buffer });
+  }
+  window.__d1Source = { name: src.name, buffer: mpq, fonts, extras };
 
   const frame = document.createElement('iframe');
   frame.id = 'd1-frame';

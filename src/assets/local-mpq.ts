@@ -10,8 +10,10 @@ export const OPTIONAL_MPQS = ['d2sfx.mpq', 'd2speech.mpq', 'd2music.mpq'] as con
 /** 디아블로 1 (정식 diabdat.mpq / 쉐어웨어 spawn.mpq). 있으면 D2 파일 없이도 시작할 수 있고, D2 와 같이 있으면 타이틀에 "Diablo I" 단추 */
 export const D1_MPQS = ['diabdat.mpq', 'spawn.mpq'] as const;
 export type D1MpqName = (typeof D1_MPQS)[number];
+/** 디아블로 1 헬파이어 확장팩 (GOG 설치 파일의 hellfire 폴더). 정식판 diabdat.mpq 와 같이 있을 때만 엔진에 넘긴다 */
+export const HELLFIRE_MPQS = ['hellfire.mpq', 'hfmonk.mpq', 'hfmusic.mpq', 'hfvoice.mpq'] as const;
 /** 확장팩 파일은 있으면 확장팩으로 (edition.ts) */
-export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS, ...LOD_MPQS, ...D1_MPQS];
+export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS, ...LOD_MPQS, ...D1_MPQS, ...HELLFIRE_MPQS];
 
 /** 보관 파일 중 디아블로 1 파일 (정식판 우선). 없으면 null */
 export function d1FileOf(names: Iterable<string>): { name: D1MpqName; spawn: boolean } | null {

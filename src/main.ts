@@ -2,7 +2,7 @@
 import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
-import { blobRange, D1_MPQS, d1FileOf, MpqStore } from './assets/local-mpq';
+import { blobRange, D1_MPQS, d1FileOf, HELLFIRE_MPQS, MpqStore } from './assets/local-mpq';
 import { runDiablo1, SHAREWARE, type D1Source } from './d1/host';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
@@ -195,7 +195,9 @@ async function mpqSource(host: HTMLElement): Promise<Source> {
   // ?d1: 파일이 하나도 없어도 고르기 화면 없이 바로 (보관본이 있으면 그것, 없으면 쉐어웨어를 받는다)
   const files = q.has('d1') ? await MpqStore.all() : await ensureLocalMpqs(host, q.has('files'), () => void runDiablo1(host, SHAREWARE).then(() => location.replace(filesUrl())));
   const found = d1FileOf(files.keys());
-  const d1: D1Source = found ? { ...found, blob: files.get(found.name) } : SHAREWARE;
+  // 정식판이면 보관된 헬파이어 파일도 함께 (쉐어웨어엔 헬파이어를 붙이지 않는다)
+  const extras = found && !found.spawn ? HELLFIRE_MPQS.filter((n) => files.has(n)).map((name) => ({ name, blob: files.get(name) })) : [];
+  const d1: D1Source = found ? { ...found, blob: files.get(found.name), extras } : SHAREWARE;
   return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()), d1, d2: MpqStore.missing(files).length === 0 };
 }
 
@@ -207,10 +209,15 @@ function filesUrl(): string {
   return `${location.pathname}?${q.toString().replace(/=(&|$)/g, '$1')}`;
 }
 
-/** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선). 없으면 쉐어웨어를 받는다 */
+const devHas = (name: string): Promise<boolean> => fetch(`/d1/${name}`, { method: 'HEAD' }).then((r) => r.ok, () => false);
+
+/** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선 + 헬파이어). 없으면 쉐어웨어를 받는다 */
 async function devD1(): Promise<D1Source> {
   for (const name of D1_MPQS) {
-    if (await fetch(`/d1/${name}`, { method: 'HEAD' }).then((r) => r.ok, () => false)) return { name, spawn: name === 'spawn.mpq', url: `/d1/${name}` };
+    if (!(await devHas(name))) continue;
+    const spawn = name === 'spawn.mpq';
+    const extras = spawn ? [] : (await Promise.all(HELLFIRE_MPQS.map(async (n) => ((await devHas(n)) ? { name: n, url: `/d1/${n}` } : null)))).filter((x) => x !== null);
+    return { name, spawn, url: `/d1/${name}`, extras };
   }
   return SHAREWARE;
 }

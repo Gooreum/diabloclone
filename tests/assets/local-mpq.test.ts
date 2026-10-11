@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openAsBlob, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { blobRange, canonicalName, d1FileOf, isMpq, MpqStore } from '../../src/assets/local-mpq';
+import { ALL_MPQS, blobRange, canonicalName, d1FileOf, HELLFIRE_MPQS, isMpq, MpqStore } from '../../src/assets/local-mpq';
 import { MpqRemote } from '../../src/assets/remote';
 import { GAME_DATA, hasGameData } from '../support/gamedata';
 
@@ -17,6 +17,14 @@ describe('유저가 고른 MPQ (브라우저 보관)', () => {
   it('디아블로 1 파일도 받는다 (정식 diabdat · 쉐어웨어 spawn)', () => {
     expect(canonicalName('DIABDAT.MPQ')).toBe('diabdat.mpq');
     expect(canonicalName('Diablo/spawn.mpq')).toBe('spawn.mpq');
+  });
+
+  it('디아블로 1 헬파이어 파일 4개도 받는다 (GOG 설치 파일의 hellfire 폴더)', () => {
+    expect(canonicalName('HELLFIRE.MPQ')).toBe('hellfire.mpq');
+    expect(canonicalName('Diablo/hellfire/hfMonk.mpq')).toBe('hfmonk.mpq');
+    expect(HELLFIRE_MPQS.every((n) => ALL_MPQS.includes(n))).toBe(true);
+    // 헬파이어만으로는 디아블로 1 이 아니다 (정식판 diabdat 가 있어야)
+    expect(d1FileOf(['hellfire.mpq', 'hfmonk.mpq'])).toBeNull();
   });
 
   it('디아블로 1 파일 찾기: 정식판 우선, 없으면 null', () => {

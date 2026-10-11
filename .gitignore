@@ -6,6 +6,8 @@ playwright-report/
 game-data/
 *.mpq
 *.MPQ
+# 디아블로 1 한글 글꼴 (DevilutionX fonts.mpq 의 한글 부분, SIL OFL — scripts/build-d1-fonts.ts)
+!public/d1x/fonts-ko.mpq
 .ai-bouncer-tasks/
 e2e-reports/
 .dvx-build/

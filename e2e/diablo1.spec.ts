@@ -94,20 +94,64 @@ test('?d1: 타이틀 → 메뉴 → 전사 만들기 → 트리스트럼에서 �
   expect(errors).toEqual([]);
 });
 
-test.describe('브라우저 언어가 한국어여도', () => {
+/** 게임 언어로 번역된 동작 이름 (엔진 키 배정 목록) — 한국어로 떴는지 보는 데 쓴다 */
+async function actionName(page: Page, id: string): Promise<string | undefined> {
+  const f = page.frame({ url: /d1x\/play\.html/ })!;
+  type Rt = { Module: { ccall(n: string, r: string, t: string[], a: string[]): string } };
+  const list = await f.evaluate(() => JSON.parse((window as unknown as Rt).Module.ccall('dvx_keymap_json', 'string', [], [])) as { id: string; name: string }[]);
+  return list.find((a) => a.id === id)?.name;
+}
+
+test.describe('브라우저 언어가 한국어면', () => {
   test.use({ locale: 'ko-KR' });
-  test('영어로 시작해 글꼴 파일(fonts.mpq) 없이 메뉴까지 간다', async ({ page }) => {
+  test('한글 글꼴(fonts-ko.mpq)을 받아 한국어로 시작한다', async ({ page }) => {
     test.setTimeout(180_000);
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await serveSpawn(page);
+    const fonts: string[] = [];
+    page.on('request', (r) => /fonts-ko\.mpq/.test(r.url()) && fonts.push(r.url()));
     await page.goto('/?d1');
     await waitReady(page);
+    expect(fonts).toHaveLength(1);
+    const f = page.frame({ url: /d1x\/play\.html/ })!;
+    expect(await f.evaluate(() => (window as unknown as { FS: { stat(p: string): { size: number } } }).FS.stat('/fonts.mpq').size)).toBeGreaterThan(15_000_000);
     await page.waitForTimeout(6000);
+    // 타이틀 넘기기 → 메인 메뉴 (한글)
     await page.mouse.click(400, 300);
     await page.waitForTimeout(3000);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(3000);
+    await page.screenshot({ path: 'test-results/diablo1-ko-menu.png' });
+    // 엔진이 한국어를 골랐다 — 번역된 이름에 한글
+    expect(await actionName(page, 'Help')).toMatch(/[가-힣]/);
     expect(await page.evaluate(() => window.__d1!.log.filter((l) => /fonts\.mpq/i.test(l)))).toEqual([]);
-    await page.screenshot({ path: 'test-results/diablo1-ko-locale.png' });
+    expect(await page.evaluate(() => window.__d1!.errors)).toEqual([]);
+    expect(errors).toEqual([]);
   });
+
+  test('글꼴을 받지 못하면 영어로 시작한다', async ({ page }) => {
+    test.setTimeout(180_000);
+    await serveSpawn(page);
+    await page.route(/fonts-ko\.mpq/, (r) => r.fulfill({ status: 404, body: '' }));
+    await page.goto('/?d1');
+    await waitReady(page);
+    await page.waitForTimeout(6000);
+    expect(await actionName(page, 'Help')).toBe('Help');
+    expect(await page.evaluate(() => window.__d1!.log.filter((l) => /fonts\.mpq/i.test(l)))).toEqual([]);
+  });
+});
+
+test('브라우저 언어가 영어면 글꼴을 받지 않고 영어로', async ({ page }) => {
+  test.setTimeout(180_000);
+  await serveSpawn(page);
+  const fonts: string[] = [];
+  page.on('request', (r) => /fonts-ko\.mpq/.test(r.url()) && fonts.push(r.url()));
+  await page.goto('/?d1');
+  await waitReady(page);
+  await page.waitForTimeout(3000);
+  expect(fonts).toEqual([]);
+  expect(await actionName(page, 'Help')).toBe('Help');
 });
 
 test('파일 없이 ?d1: 고르기 화면 없이 쉐어웨어를 받아 시작하고, 다음엔 받지 않는다', async ({ page }) => {

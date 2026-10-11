@@ -27,8 +27,8 @@ jobs:
       - run: npx vite build
         env:
           PAGES_BASE: /diabloclone/
-      - name: 원작 파일이 빌드에 섞이지 않았는지 확인
-        run: test -z "$(find dist -iname '*.mpq')"
+      - name: 원작 파일이 빌드에 섞이지 않았는지 확인 (우리가 만든 한글 글꼴 MPQ 만 허용)
+        run: test -z "$(find dist -iname '*.mpq' ! -path 'dist/d1x/fonts-ko.mpq')"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -16,8 +16,19 @@ export const SHAREWARE: D1Source = { name: 'spawn.mpq', spawn: true, url: SPAWN_
 
 /** e2e·디버그용 상태 (셸이 채운다) */
 export interface D1Debug { ready: boolean; errors: string[]; log: string[] }
-/** 셸에 넘기는 원작 파일 */
-export interface D1Payload { name: D1MpqName; buffer: ArrayBuffer }
+/** 셸에 넘기는 원작 파일 (+ 한국어면 한글 글꼴 MPQ) */
+export interface D1Payload { name: D1MpqName; buffer: ArrayBuffer; fonts?: ArrayBuffer }
+
+/** 한글 글꼴: DevilutionX fonts.mpq 의 한글 부분 (scripts/build-d1-fonts.ts, SIL OFL) */
+export const FONTS_KO_PATH = 'd1x/fonts-ko.mpq';
+export const FONTS_KO_SIZE = 16418824;
+/** 파일 sha256 앞 12자리 — 주소에 붙여 옛 캐시를 피한다 */
+export const FONTS_KO_VERSION = '2baee5ad59e6';
+
+/** 브라우저 첫 언어가 한국어인가 */
+export function wantsKorean(langs: readonly string[] = navigator.languages ?? [navigator.language]): boolean {
+  return /^ko\b/i.test(langs[0] ?? '');
+}
 declare global {
   interface Window { __d1?: D1Debug; __d1Source?: D1Payload }
 }
@@ -60,7 +71,15 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
     showError(status, debug, (e as Error).message);
     return new Promise<void>(() => undefined);
   }
-  window.__d1Source = { name: src.name, buffer: mpq };
+  // 한국어 브라우저면 한글 글꼴도 (받지 못하면 영어로 시작)
+  let fonts: ArrayBuffer | undefined;
+  if (wantsKorean()) {
+    fonts = await download(`${import.meta.env.BASE_URL}${FONTS_KO_PATH}?v=${FONTS_KO_VERSION}`, (got, total) => {
+      status.textContent = `한글 글꼴 받는 중… ${(got / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
+    }, FONTS_KO_SIZE).catch(() => undefined);
+    if (fonts && fonts.byteLength !== FONTS_KO_SIZE) fonts = undefined;
+  }
+  window.__d1Source = { name: src.name, buffer: mpq, fonts };
 
   const frame = document.createElement('iframe');
   frame.id = 'd1-frame';
@@ -97,7 +116,7 @@ export async function runDiablo1(host: HTMLElement, src: D1Source): Promise<void
 }
 
 /** 진행률을 알리며 통째로 받는다 */
-async function download(url: string, onProgress: (got: number, total: number) => void): Promise<ArrayBuffer> {
+async function download(url: string, onProgress: (got: number, total: number) => void, size = SPAWN_SIZES[0]!): Promise<ArrayBuffer> {
   let r: Response;
   try {
     r = await fetch(url);
@@ -105,7 +124,7 @@ async function download(url: string, onProgress: (got: number, total: number) =>
     throw new Error('디아블로 1 파일을 받지 못했습니다. 인터넷 연결을 확인하고 다시 시작해 주세요.');
   }
   if (!r.ok || !r.body) throw new Error(`디아블로 1 파일을 받지 못했습니다 (HTTP ${r.status}). 잠시 뒤 다시 시작해 주세요.`);
-  const total = Number(r.headers.get('content-length')) || SPAWN_SIZES[0]!;
+  const total = Number(r.headers.get('content-length')) || size;
   const parts: Uint8Array[] = [];
   let got = 0, last = 0;
   const reader = r.body.getReader();

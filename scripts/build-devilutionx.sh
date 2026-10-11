@@ -37,6 +37,9 @@ mkdir -p "$OUT"
 cp build-em/devilutionx.js build-em/devilutionx.wasm build-em/devilutionx.data "$OUT/"
 cp LICENSE.md "$OUT/LICENSE.md"
 
+# 한글 글꼴 (DevilutionX fonts.mpq 의 한글 부분) — public/d1x/fonts-ko.mpq
+(cd "$ROOT" && npx tsx scripts/build-d1-fonts.ts "${FONTS_MPQ:-}")
+
 # NOTICE.md 의 해시 표를 새 결과로 갱신
 node "$ROOT/scripts/update-d1x-notice.mjs" "$OUT" "$DVX_COMMIT" "$(emcc --version | head -1)"
 echo "완료: $OUT"

@@ -11,7 +11,7 @@ describe('DevilutionX 웹 빌드 반입본', () => {
   it('NOTICE.md 의 크기·sha256 이 실제 파일과 같다', () => {
     const notice = readFileSync(resolve(D1X, 'NOTICE.md'), 'utf8');
     const rows = [...notice.matchAll(/^\| `([^`]+)` \| (\d+) \| `([0-9a-f]{64})` \|$/gm)];
-    expect(rows.map((r) => r[1])).toEqual(['devilutionx.js', 'devilutionx.wasm', 'devilutionx.data']);
+    expect(rows.map((r) => r[1])).toEqual(['devilutionx.js', 'devilutionx.wasm', 'devilutionx.data', 'fonts-ko.mpq']);
     for (const [, name, size, hash] of rows) {
       const p = resolve(D1X, name!);
       expect(statSync(p).size, name).toBe(Number(size));

@@ -59,6 +59,8 @@ function serveGameData(): Plugin {
     name: 'serve-game-data',
     configureServer(server) {
       server.middlewares.use('/d2/', mount([GAME_DATA]));
+      // 디아블로 1 (game-data/diablo1/diabdat.mpq 또는 spawn.mpq)
+      server.middlewares.use('/d1/', mount([resolve(GAME_DATA, 'diablo1')]));
       // D2_EDITION=classic 이면 확장팩 파일이 없는 것처럼 (404 — 그냥 넘기면 vite 가 index.html 을 200 으로 준다). 클래식만 가진 사람 재현·e2e 회귀용
       const lod = process.env.D2_EDITION === 'classic' ? [] : [resolve(GAME_DATA, 'lod'), GAME_DATA];
       server.middlewares.use('/d2x/', mount(lod));

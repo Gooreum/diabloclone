@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openAsBlob, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { blobRange, canonicalName, isMpq, MpqStore } from '../../src/assets/local-mpq';
+import { blobRange, canonicalName, d1FileOf, isMpq, MpqStore } from '../../src/assets/local-mpq';
 import { MpqRemote } from '../../src/assets/remote';
 import { GAME_DATA, hasGameData } from '../support/gamedata';
 
@@ -12,6 +12,18 @@ describe('유저가 고른 MPQ (브라우저 보관)', () => {
     expect(canonicalName('foo.mpq')).toBeNull();
     // 확장팩 파일도 받는다 (d2exp 가 있으면 확장팩으로 — edition.ts)
     expect(canonicalName('d2exp.mpq')).toBe('d2exp.mpq');
+  });
+
+  it('디아블로 1 파일도 받는다 (정식 diabdat · 쉐어웨어 spawn)', () => {
+    expect(canonicalName('DIABDAT.MPQ')).toBe('diabdat.mpq');
+    expect(canonicalName('Diablo/spawn.mpq')).toBe('spawn.mpq');
+  });
+
+  it('디아블로 1 파일 찾기: 정식판 우선, 없으면 null', () => {
+    expect(d1FileOf(['spawn.mpq', 'd2data.mpq'])).toEqual({ name: 'spawn.mpq', spawn: true });
+    expect(d1FileOf(['SPAWN.MPQ', 'GOG/diabdat.mpq'])).toEqual({ name: 'diabdat.mpq', spawn: false });
+    expect(d1FileOf(['d2data.mpq'])).toBeNull();
+    expect(d1FileOf([])).toBeNull();
   });
 
   it('MPQ 헤더가 아니면 거절', async () => {

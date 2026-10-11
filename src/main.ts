@@ -2,7 +2,8 @@
 import { gfxEvents, healGraphics, spriteCache } from './render/sprites';
 import { AssetLoader } from './assets/loader';
 import { editionOf, mpqOrder, soundMpqs, type Edition } from './assets/edition';
-import { blobRange, MpqStore } from './assets/local-mpq';
+import { blobRange, D1_MPQS, d1FileOf, MpqStore } from './assets/local-mpq';
+import { runDiablo1, type D1Source } from './d1/host';
 import { httpRange, type RangeFetcher } from './assets/remote';
 import { loadGameData } from './assets/gamedata-loader';
 import { KOR_STRING, lngPaths, loadLang, saveLang, type Lang } from './data/lang';
@@ -36,6 +37,7 @@ import { InputController } from './input/dom';
 import { Menu } from './ui/menu';
 import { HeroStore } from './ui/storage';
 import { ensureLocalMpqs } from './ui/mpq-setup';
+import { fitStage } from './ui/stage';
 import { ControlPanel, type HudAction, type HudState } from './ui/hud';
 import { invWarnings } from './ui/invwarn';
 import { isBroken } from './engine/price';
@@ -177,28 +179,39 @@ window.addEventListener('unhandledrejection', (e) => reportClientError('rejectio
  * 원작 MPQ 를 어디서 읽나: dev 서버는 로컬 game-data/ 를 /d2/ (클래식)·/d2x/ (확장팩: game-data/lod 우선) 로 서빙,
  * 배포판(또는 ?local)은 유저가 고른 파일(브라우저 보관). 판본은 파일로 정한다 — d2exp.mpq 가 있으면 확장팩 (dev 는 ?edition=classic 로 클래식)
  */
-async function mpqSource(host: HTMLElement): Promise<{ base: string; fetch: RangeFetcher; local: boolean; edition: Edition }> {
+interface Source { base: string; fetch: RangeFetcher; local: boolean; edition: Edition; d1: D1Source | null; d2: boolean }
+async function mpqSource(host: HTMLElement): Promise<Source> {
   const q = new URLSearchParams(location.search);
   if (import.meta.env.DEV && !q.has('local')) {
     const lod = q.get('edition') !== 'classic' && (await fetch('/d2x/d2exp.mpq', { method: 'HEAD' }).then((r) => r.ok, () => false));
-    return lod ? { base: '/d2x/', fetch: httpRange, local: false, edition: 'lod' } : { base: '/d2/', fetch: httpRange, local: false, edition: 'classic' };
+    // 디아블로 1: dev 서버는 game-data/diablo1/ 을 /d1/ 로 (정식판 우선)
+    const d1 = await devD1();
+    return lod ? { base: '/d2x/', fetch: httpRange, local: false, edition: 'lod', d1, d2: true } : { base: '/d2/', fetch: httpRange, local: false, edition: 'classic', d1, d2: true };
   }
-  const files = await ensureLocalMpqs(host);
-  return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()) };
+  const files = await ensureLocalMpqs(host, q.has('files'));
+  const found = d1FileOf(files.keys());
+  const d1 = found ? { ...found, blob: files.get(found.name) } : null;
+  return { base: 'local/', fetch: blobRange(files), local: true, edition: editionOf(files.keys()), d1, d2: MpqStore.missing(files).length === 0 };
 }
 
-/** 800×600 무대를 창 크기에 맞춰 키운다 (비율 유지, 가운데). 게임 안 좌표는 그대로 800×600 — 입력은 화면 크기에서 환산 */
-function fitStage(stage: HTMLElement): void {
-  const s = Math.min(innerWidth / WIDTH, innerHeight / HEIGHT);
-  Object.assign(stage.style, {
-    position: 'absolute', transformOrigin: '0 0', transform: `scale(${s})`,
-    left: `${Math.round((innerWidth - WIDTH * s) / 2)}px`, top: `${Math.round((innerHeight - HEIGHT * s) / 2)}px`,
-  });
+/** dev 서버의 디아블로 1 파일 (/d1/, 정식판 우선) */
+async function devD1(): Promise<D1Source | null> {
+  for (const name of D1_MPQS) {
+    if (await fetch(`/d1/${name}`, { method: 'HEAD' }).then((r) => r.ok, () => false)) return { name, spawn: name === 'spawn.mpq', url: `/d1/${name}` };
+  }
+  return null;
 }
 
 async function boot(): Promise<void> {
   const host = document.getElementById('app') as HTMLElement;
   const src = await mpqSource(host);
+  // 디아블로 1: D2 파일이 없거나 ?d1 이면 메뉴 없이 바로. 끝나면 (D2 가 없으면) 파일 고르기 화면을 거쳐 다시 시작
+  if (src.d1 && (!src.d2 || new URLSearchParams(location.search).has('d1'))) {
+    await runDiablo1(host, src.d1);
+    if (!src.d2) await ensureLocalMpqs(host, true);
+    location.replace(location.pathname);
+    return;
+  }
   const canvas = document.createElement('canvas');
   // 브라우저가 그래픽 메모리를 회수해 컨텍스트를 잃었다 되찾으면 만들어 둔 그림이 모두 비므로 캐시를 버린다
   canvas.addEventListener('contextrestored', () => {
@@ -227,9 +240,9 @@ async function boot(): Promise<void> {
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
   stage.append(worldCanvas, canvas);
   host.replaceChildren(stage);
-  fitStage(stage);
-  addEventListener('resize', () => fitStage(stage));
-  document.addEventListener('fullscreenchange', () => fitStage(stage));
+  fitStage(stage, WIDTH, HEIGHT);
+  addEventListener('resize', () => fitStage(stage, WIDTH, HEIGHT));
+  document.addEventListener('fullscreenchange', () => fitStage(stage, WIDTH, HEIGHT));
   // 원작처럼 Alt+Enter 로 전체 화면 켜고 끄기
   addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || !e.altKey) return;

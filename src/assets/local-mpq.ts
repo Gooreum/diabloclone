@@ -7,10 +7,18 @@ import type { RangeFetcher } from './remote';
 export const REQUIRED_MPQS = ['patch_d2.mpq', 'd2char.mpq', 'd2data.mpq'] as const;
 /** 효과음·대사·음악 (없으면 소리 없이 — SoundFiles.open 은 못 연 파일을 건너뛴다) */
 export const OPTIONAL_MPQS = ['d2sfx.mpq', 'd2speech.mpq', 'd2music.mpq'] as const;
+/** 디아블로 1 (정식 diabdat.mpq / 쉐어웨어 spawn.mpq). 있으면 D2 파일 없이도 시작할 수 있고, D2 와 같이 있으면 타이틀에 "Diablo I" 단추 */
+export const D1_MPQS = ['diabdat.mpq', 'spawn.mpq'] as const;
+export type D1MpqName = (typeof D1_MPQS)[number];
 /** 확장팩 파일은 있으면 확장팩으로 (edition.ts) */
-export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS, ...LOD_MPQS];
+export const ALL_MPQS: readonly string[] = [...REQUIRED_MPQS, ...OPTIONAL_MPQS, ...LOD_MPQS, ...D1_MPQS];
 
-const DB = 'diabloclone-mpq', STORE = 'files';
+/** 보관 파일 중 디아블로 1 파일 (정식판 우선). 없으면 null */
+export function d1FileOf(names: Iterable<string>): { name: D1MpqName; spawn: boolean } | null {
+  const have = new Set([...names].map((n) => n.split(/[\\/]/).pop()!.toLowerCase()));
+  for (const name of D1_MPQS) if (have.has(name)) return { name, spawn: name === 'spawn.mpq' };
+  return null;
+}
 
 /** 파일 이름 → 표준 이름 (대소문자 무시). 모르는 파일이면 null */
 export function canonicalName(name: string): string | null {
@@ -35,47 +43,55 @@ export function blobRange(files: Map<string, Blob>): RangeFetcher {
   };
 }
 
-function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
+const STORE = 'files';
+
+/** IndexedDB 한 저장소 (키 → 값). 원작 MPQ(Blob) 와 디아블로 1 세이브(Uint8Array) 가 각자 DB 이름으로 쓴다 */
+export function kvStore<T>(db: string) {
+  const open = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+    const req = indexedDB.open(db, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-}
-
-async function run<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const db = await open();
-  return new Promise((resolve, reject) => {
-    const t = db.transaction(STORE, mode);
-    const r = fn(t.objectStore(STORE));
-    t.oncomplete = () => resolve(r.result);
-    t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error);
-  });
+  const run = async <R>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<R>): Promise<R> => {
+    const d = await open();
+    return new Promise((resolve, reject) => {
+      const t = d.transaction(STORE, mode);
+      const r = fn(t.objectStore(STORE));
+      t.oncomplete = () => resolve(r.result);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  };
+  return {
+    async all(): Promise<Map<string, T>> {
+      const d = await open();
+      return new Promise((resolve, reject) => {
+        const out = new Map<string, T>();
+        const req = d.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
+        req.onsuccess = () => {
+          const c = req.result;
+          if (!c) return resolve(out);
+          out.set(String(c.key), c.value as T);
+          c.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
+    },
+    async put(name: string, v: T): Promise<void> {
+      await run('readwrite', (s) => s.put(v, name));
+    },
+    async remove(name: string): Promise<void> {
+      await run('readwrite', (s) => s.delete(name));
+    },
+    async clear(): Promise<void> {
+      await run('readwrite', (s) => s.clear());
+    },
+  };
 }
 
 export const MpqStore = {
-  async all(): Promise<Map<string, Blob>> {
-    const db = await open();
-    return new Promise((resolve, reject) => {
-      const out = new Map<string, Blob>();
-      const req = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
-      req.onsuccess = () => {
-        const c = req.result;
-        if (!c) return resolve(out);
-        out.set(String(c.key), c.value as Blob);
-        c.continue();
-      };
-      req.onerror = () => reject(req.error);
-    });
-  },
-  async put(name: string, b: Blob): Promise<void> {
-    await run('readwrite', (s) => s.put(b, name));
-  },
-  async clear(): Promise<void> {
-    await run('readwrite', (s) => s.clear());
-  },
+  ...kvStore<Blob>('diabloclone-mpq'),
   /** 필수 MPQ 중 없는 것 */
   missing(have: Map<string, Blob>): string[] {
     return REQUIRED_MPQS.filter((n) => !have.has(n));

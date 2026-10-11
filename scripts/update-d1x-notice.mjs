@@ -21,6 +21,9 @@ writeFileSync(join(out, 'NOTICE.md'), `# DevilutionX 웹 빌드 (수정본)
   2. 소리 파일 이름이 .wav 여도 내용이 MP3 면 MP3 로 읽음 (웹용으로 다시 묶은 쉐어웨어 MPQ)
   3. 없는 소리는 게임을 멈추지 않고 짧은 무음으로
   4. 메뉴 오각별 그림(ui_art\\\\focus.pcx)이 없으면 작은 오각별(focus16)로
+  5. 단축키에 동시키(SHIFT+1·CTRL+ALT+A 등) — 조합 배정이 있으면 먼저, 없으면 원래처럼 키 하나
+  6. 브라우저가 먼저 쓰는 F1~F12 는 배정하지 않음 — 기본값을 H·SHIFT+S·SHIFT+L·SHIFT+1~4 로, 예전 설정의 F키는 기본값으로
+  7. 웹 페이지의 게임 중 단축키 화면이 키 배정을 읽고 바꾸는 함수 (dvx_keymap_json, dvx_keymap_set)
 - 빌드: \`scripts/build-devilutionx.sh\` (${emcc})
 
 | 파일 | 크기 | sha256 |

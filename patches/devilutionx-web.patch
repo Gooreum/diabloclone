@@ -1,5 +1,5 @@
 diff --git a/3rdParty/Lua/CMakeLists.txt b/3rdParty/Lua/CMakeLists.txt
-index c2fc550..da9c905 100644
+index c2fc5502..da9c9054 100644
 --- a/3rdParty/Lua/CMakeLists.txt
 +++ b/3rdParty/Lua/CMakeLists.txt
 @@ -37,9 +37,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin" AND DARWIN_MAJOR_VERSION VERSION_EQUAL 8)
@@ -14,7 +14,7 @@ index c2fc550..da9c905 100644
    target_compile_definitions(lua_static PUBLIC -DLUA_USE_C89)
  elseif(ANDROID AND ("${ANDROID_ABI}" STREQUAL "armeabi-v7a" OR "${ANDROID_ABI}" STREQUAL "x86"))
 diff --git a/CMake/Dependencies.cmake b/CMake/Dependencies.cmake
-index 2488f2c..d4786d5 100644
+index 2488f2c6..d4786d57 100644
 --- a/CMake/Dependencies.cmake
 +++ b/CMake/Dependencies.cmake
 @@ -58,7 +58,7 @@ endif()
@@ -27,7 +27,7 @@ index 2488f2c..d4786d5 100644
  elseif(USE_SDL1)
    find_package(SDL 1.2.10 REQUIRED)
 diff --git a/CMake/functions/devilutionx_library.cmake b/CMake/functions/devilutionx_library.cmake
-index d03271a..19e7bc2 100644
+index d03271a9..19e7bc28 100644
 --- a/CMake/functions/devilutionx_library.cmake
 +++ b/CMake/functions/devilutionx_library.cmake
 @@ -68,7 +68,9 @@ function(add_devilutionx_library NAME)
@@ -41,8 +41,20 @@ index d03271a..19e7bc2 100644
  
    set_relative_file_macro(${NAME})
  endfunction()
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index da178b1d..50afdbec 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -426,6 +426,7 @@ if(EMSCRIPTEN)
+     -sFORCE_FILESYSTEM=1
+     -sALLOW_MEMORY_GROWTH=1
+     -sASYNCIFY
++    -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
+     -lidbfs.js
+     --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/Packaging/emscripten/index.html
+   )
 diff --git a/Source/DiabloUI/diabloui.cpp b/Source/DiabloUI/diabloui.cpp
-index eca3f18..41b5f2b 100644
+index eca3f188..41b5f2bf 100644
 --- a/Source/DiabloUI/diabloui.cpp
 +++ b/Source/DiabloUI/diabloui.cpp
 @@ -657,7 +657,9 @@ void LoadUiGFX()
@@ -56,8 +68,154 @@ index eca3f18..41b5f2b 100644
  	ArtFocus[FOCUS_BIG] = LoadPcxSpriteList("ui_art\\focus42", /*numFrames=*/8, /*transparentColor=*/250);
  
  	ArtCursor = LoadPcx("ui_art\\cursor", /*transparentColor=*/0);
+diff --git a/Source/DiabloUI/settingsmenu.cpp b/Source/DiabloUI/settingsmenu.cpp
+index bf63d0f0..76410069 100644
+--- a/Source/DiabloUI/settingsmenu.cpp
++++ b/Source/DiabloUI/settingsmenu.cpp
+@@ -460,6 +460,9 @@ void UiSettingsMenu()
+ 					if (key >= SDLK_A && key <= SDLK_Z) {
+ 						key -= 'a' - 'A';
+ 					}
++					// diabloclone web: Shift/Ctrl/Alt held with another key -> combo (SHIFT+1)
++					if (!IsAnyOf(keycode, SDLK_LSHIFT, SDLK_RSHIFT, SDLK_LCTRL, SDLK_RCTRL, SDLK_LALT, SDLK_RALT, SDLK_LGUI, SDLK_RGUI))
++						key |= KeymapperModBits(static_cast<uint32_t>(SDL_GetModState()));
+ 				} break;
+ 				case SDL_EVENT_MOUSE_BUTTON_DOWN:
+ 					switch (event.button.button) {
+diff --git a/Source/controls/keymapper.cpp b/Source/controls/keymapper.cpp
+index b13b7416..3edbc00b 100644
+--- a/Source/controls/keymapper.cpp
++++ b/Source/controls/keymapper.cpp
+@@ -15,6 +15,9 @@
+ #include "control/control.hpp"
+ #include "options.h"
+ #include "utils/is_of.hpp"
++#include "utils/sdl_compat.h"
++
++#include <unordered_map>
+ 
+ namespace devilution {
+ namespace {
+@@ -48,12 +51,25 @@ SDL_Keycode ToAsciiUpper(SDL_Keycode key)
+ 	return key;
+ }
+ 
++/** diabloclone web: the key id (with modifiers) each held key was pressed as, so release finds the same action */
++std::unordered_map<uint32_t, uint32_t> PressedAs;
++
+ } // namespace
+ 
+ void KeymapperPress(SDL_Keycode key)
+ {
+ 	key = ToAsciiUpper(key);
+-	const KeymapperOptions::Action *action = GetOptions().Keymapper.findAction(static_cast<uint32_t>(key));
++	// diabloclone web: a combo binding (SHIFT+1) wins over the plain key; without one the plain key works as before
++	uint32_t id = static_cast<uint32_t>(key);
++	const KeymapperOptions::Action *action = nullptr;
++	const uint32_t mods = KeymapperModBits(static_cast<uint32_t>(SDL_GetModState()));
++	if (mods != 0 && (key & KeymapperMouseButtonMask) == 0)
++		action = GetOptions().Keymapper.findAction(id | mods);
++	if (action != nullptr)
++		id |= mods;
++	else
++		action = GetOptions().Keymapper.findAction(id);
++	PressedAs[static_cast<uint32_t>(key)] = id;
+ 	if (action == nullptr || !action->actionPressed || !action->isEnabled()) return;
+ 
+ 	// TODO: This should be handled outside of the keymapper.
+@@ -65,7 +81,12 @@ void KeymapperPress(SDL_Keycode key)
+ void KeymapperRelease(SDL_Keycode key)
+ {
+ 	key = ToAsciiUpper(key);
+-	const KeymapperOptions::Action *action = GetOptions().Keymapper.findAction(static_cast<uint32_t>(key));
++	uint32_t id = static_cast<uint32_t>(key);
++	if (const auto it = PressedAs.find(id); it != PressedAs.end()) {
++		id = it->second;
++		PressedAs.erase(it);
++	}
++	const KeymapperOptions::Action *action = GetOptions().Keymapper.findAction(id);
+ 	if (action == nullptr || !action->actionReleased || !action->isEnabled()) return;
+ 
+ 	// TODO: This should be handled outside of the keymapper.
+diff --git a/Source/diablo.cpp b/Source/diablo.cpp
+index e92c03c7..15916297 100644
+--- a/Source/diablo.cpp
++++ b/Source/diablo.cpp
+@@ -1861,7 +1861,7 @@ void InitKeymapActions()
+ 		    "QuickSpell{}",
+ 		    N_("Quick spell {}"),
+ 		    N_("Hotkey for skill or spell."),
+-		    i < 4 ? static_cast<uint32_t>(SDLK_F5) + i : static_cast<uint32_t>(SDLK_UNKNOWN),
++		    i < 4 ? static_cast<uint32_t>('1' + i) | KeymapperShiftMask : static_cast<uint32_t>(SDLK_UNKNOWN), // diabloclone web: was F5-F8
+ 		    [i]() {
+ 			    if (SpellSelectFlag) {
+ 				    SetSpeedSpell(i);
+@@ -1920,7 +1920,7 @@ void InitKeymapActions()
+ 	    "QuickSave",
+ 	    N_("Quick save"),
+ 	    N_("Saves the game."),
+-	    SDLK_F2,
++	    'S' | KeymapperShiftMask, // diabloclone web: was F2
+ 	    [] { gamemenu_save_game(false); },
+ 	    nullptr,
+ 	    [&]() { return !gbIsMultiplayer && CanPlayerTakeAction(); });
+@@ -1928,7 +1928,7 @@ void InitKeymapActions()
+ 	    "QuickLoad",
+ 	    N_("Quick load"),
+ 	    N_("Loads the game."),
+-	    SDLK_F3,
++	    'L' | KeymapperShiftMask, // diabloclone web: was F3
+ 	    [] { gamemenu_load_game(false); },
+ 	    nullptr,
+ 	    [&]() { return !gbIsMultiplayer && gbValidSaveFile && !IsPlayerInStore() && IsGameRunning(); });
+@@ -2024,7 +2024,7 @@ void InitKeymapActions()
+ 		    "QuickMessage{}",
+ 		    N_("Quick Message {}"),
+ 		    N_("Use Quick Message in chat."),
+-		    (i < 4) ? static_cast<uint32_t>(SDLK_F9) + i : static_cast<uint32_t>(SDLK_UNKNOWN),
++		    static_cast<uint32_t>(SDLK_UNKNOWN), // diabloclone web: was F9-F12
+ 		    [i]() { DiabloHotkeyMsg(i); },
+ 		    nullptr,
+ 		    nullptr,
+@@ -2097,7 +2097,7 @@ void InitKeymapActions()
+ 	    "Help",
+ 	    N_("Help"),
+ 	    N_("Open Help Screen."),
+-	    SDLK_F1,
++	    'H', // diabloclone web: was F1
+ 	    HelpKeyPressed,
+ 	    nullptr,
+ 	    CanPlayerTakeAction);
+@@ -3547,3 +3547,27 @@ void PrintScreen(SDL_Keycode vkey)
+ }
+ 
+ } // namespace devilution
++
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++
++// diabloclone web: the page's in-game key bindings screen reads and changes the keymap through these
++extern "C" {
++
++EMSCRIPTEN_KEEPALIVE const char *dvx_keymap_json()
++{
++	static std::string json;
++	json = devilution::GetOptions().Keymapper.ActionsJson();
++	return json.c_str();
++}
++
++EMSCRIPTEN_KEEPALIVE int dvx_keymap_set(const char *actionId, const char *keyName)
++{
++	if (!devilution::GetOptions().Keymapper.SetActionKey(actionId, keyName))
++		return 0;
++	devilution::SaveOptions();
++	return 1;
++}
++
++} // extern "C"
++#endif
 diff --git a/Source/engine/sound.cpp b/Source/engine/sound.cpp
-index 56a8adc..4a34308 100644
+index 56a8adce..4a34308f 100644
 --- a/Source/engine/sound.cpp
 +++ b/Source/engine/sound.cpp
 @@ -5,6 +5,8 @@
@@ -117,3 +275,139 @@ index 56a8adc..4a34308 100644
  		const int error = result.SetChunk(waveFile, size, isMp3);
  		if (error != 0) {
  			return std::unexpected(SDL_GetError());
+diff --git a/Source/options.cpp b/Source/options.cpp
+index d7ed9b4a..cd1aee86 100644
+--- a/Source/options.cpp
++++ b/Source/options.cpp
+@@ -44,6 +44,7 @@
+ #include "utils/log.hpp"
+ #include "utils/logged_fstream.hpp"
+ #include "utils/paths.h"
++#include "utils/sdl_compat.h"
+ #include "utils/sdl_ptrs.h"
+ #include "utils/str_cat.hpp"
+ #include "utils/str_split.hpp"
+@@ -1170,6 +1171,18 @@ KeymapperOptions::KeymapperOptions()
+ 	keyIDToKeyName.emplace(SDLK_KP_ENTER, "KEYPAD ENTER");
+ 	keyIDToKeyName.emplace(SDLK_KP_PERIOD, "KEYPAD DECIMAL");
+ 
++	// diabloclone web: modifier combos, named CTRL+ALT+SHIFT+<key>
++	const std::vector<std::pair<uint32_t, std::string>> single(keyIDToKeyName.begin(), keyIDToKeyName.end());
++	for (uint32_t m = 1; m < 8; ++m) {
++		const uint32_t mask = ((m & 1) != 0 ? KeymapperCtrlMask : 0) | ((m & 2) != 0 ? KeymapperAltMask : 0) | ((m & 4) != 0 ? KeymapperShiftMask : 0);
++		const std::string prefix = StrCat((m & 1) != 0 ? "CTRL+" : "", (m & 2) != 0 ? "ALT+" : "", (m & 4) != 0 ? "SHIFT+" : "");
++		for (const auto &[id, name] : single) {
++			if (id == SDLK_LALT || id == SDLK_RALT || id == SDLK_LCTRL || id == SDLK_RCTRL)
++				continue;
++			keyIDToKeyName.emplace(id | mask, prefix + name);
++		}
++	}
++
+ 	keyNameToKeyID.reserve(keyIDToKeyName.size());
+ 	for (const auto &[key, value] : keyIDToKeyName) {
+ 		keyNameToKeyID.emplace(value, key);
+@@ -1222,7 +1235,8 @@ void KeymapperOptions::Action::LoadFromIni(std::string_view category)
+ 	}
+ 
+ 	auto keyIt = GetOptions().Keymapper.keyNameToKeyID.find(iniValue);
+-	if (keyIt == GetOptions().Keymapper.keyNameToKeyID.end()) {
++	// diabloclone web: keys saved before the browser-safe defaults (F1...) fall back to the default
++	if (keyIt == GetOptions().Keymapper.keyNameToKeyID.end() || IsBrowserReservedKey(keyIt->second)) {
+ 		// Use the default key if the key is unknown.
+ 		Log("Keymapper: unknown key '{}'", iniValue);
+ 		SetValue(defaultKey);
+@@ -1259,8 +1273,26 @@ std::string_view KeymapperOptions::Action::GetValueDescription() const
+ 	return keyNameIt->second;
+ }
+ 
++uint32_t KeymapperModBits(uint32_t sdlMod)
++{
++	uint32_t bits = 0;
++	if ((sdlMod & SDL_KMOD_SHIFT) != 0) bits |= KeymapperShiftMask;
++	if ((sdlMod & SDL_KMOD_CTRL) != 0) bits |= KeymapperCtrlMask;
++	if ((sdlMod & SDL_KMOD_ALT) != 0) bits |= KeymapperAltMask;
++	return bits;
++}
++
++bool IsBrowserReservedKey(uint32_t key)
++{
++	if ((key & KeymapperMouseButtonMask) != 0) return false;
++	const uint32_t base = key & ~KeymapperModMask;
++	return base >= static_cast<uint32_t>(SDLK_F1) && base <= static_cast<uint32_t>(SDLK_F12);
++}
++
+ bool KeymapperOptions::Action::SetValue(int value)
+ {
++	if (IsBrowserReservedKey(static_cast<uint32_t>(value)))
++		return false;
+ 	if (value != SDLK_UNKNOWN && GetOptions().Keymapper.keyIDToKeyName.find(value) == GetOptions().Keymapper.keyIDToKeyName.end()) {
+ 		// Ignore invalid key values
+ 		return false;
+@@ -1315,6 +1347,36 @@ std::string_view KeymapperOptions::KeyNameForAction(std::string_view actionName)
+ 	return "";
+ }
+ 
++std::string KeymapperOptions::ActionsJson() const
++{
++	const auto quote = [](std::string_view s) {
++		std::string out = "\"";
++		for (const char c : s) {
++			if (c == '"' || c == '\\') out += '\\';
++			if (static_cast<unsigned char>(c) >= 0x20) out += c;
++		}
++		return out + "\"";
++	};
++	std::string json = "[";
++	for (const Action &action : actions) {
++		if (json.size() > 1) json += ',';
++		json += StrCat("{\"id\":", quote(action.key), ",\"name\":", quote(action.GetName()), ",\"key\":", quote(action.GetValueDescription()), "}");
++	}
++	return json + "]";
++}
++
++bool KeymapperOptions::SetActionKey(std::string_view actionId, std::string_view keyName)
++{
++	for (Action &action : actions) {
++		if (action.key != actionId) continue;
++		if (keyName.empty()) return action.SetValue(SDLK_UNKNOWN);
++		const auto it = keyNameToKeyID.find(keyName);
++		if (it == keyNameToKeyID.end()) return false;
++		return action.SetValue(static_cast<int>(it->second));
++	}
++	return false;
++}
++
+ uint32_t KeymapperOptions::KeyForAction(std::string_view actionName) const
+ {
+ 	for (const Action &action : actions) {
+diff --git a/Source/options.h b/Source/options.h
+index 8f674f9f..b588920d 100644
+--- a/Source/options.h
++++ b/Source/options.h
+@@ -713,6 +713,15 @@ constexpr uint32_t MouseScrollUpButton = 65536 | KeymapperMouseButtonMask;
+ constexpr uint32_t MouseScrollDownButton = 65537 | KeymapperMouseButtonMask;
+ constexpr uint32_t MouseScrollLeftButton = 65538 | KeymapperMouseButtonMask;
+ constexpr uint32_t MouseScrollRightButton = 65539 | KeymapperMouseButtonMask;
++// diabloclone web: modifier combos (e.g. SHIFT+1). SDL keycodes use bit 30, mouse uses bit 31.
++constexpr uint32_t KeymapperShiftMask = 1 << 28;
++constexpr uint32_t KeymapperCtrlMask = 1 << 27;
++constexpr uint32_t KeymapperAltMask = 1 << 26;
++constexpr uint32_t KeymapperModMask = KeymapperShiftMask | KeymapperCtrlMask | KeymapperAltMask;
++/** @brief SDL modifier state -> Keymapper modifier bits */
++uint32_t KeymapperModBits(uint32_t sdlMod);
++/** @brief Keys the browser takes first (F1-F12), with or without modifiers */
++bool IsBrowserReservedKey(uint32_t key);
+ 
+ /** The Keymapper maps keys to actions. */
+ struct KeymapperOptions : OptionCategoryBase {
+@@ -771,6 +780,10 @@ struct KeymapperOptions : OptionCategoryBase {
+ 	[[nodiscard]] const Action *findAction(uint32_t key) const;
+ 
+ 	std::string_view KeyNameForAction(std::string_view actionName) const;
++	/** @brief diabloclone web: actions as JSON [{"id","name","key"}] */
++	std::string ActionsJson() const;
++	/** @brief diabloclone web: bind by key name ("" = unbind). false if unknown action or key */
++	bool SetActionKey(std::string_view actionId, std::string_view keyName);
+ 	uint32_t KeyForAction(std::string_view actionName) const;
+ 
+ private:

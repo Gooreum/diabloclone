@@ -32,10 +32,14 @@ describe('DevilutionX 웹 빌드 반입본', () => {
     expect(js).not.toMatch(/new SharedArrayBuffer|ENVIRONMENT_IS_PTHREAD\s*=\s*true/);
   });
 
-  it('패치는 5개 파일만 고친다', () => {
+  it('패치는 정해진 11개 파일만 고친다 (스레드·소리·글꼴 대체 + 단축키)', () => {
     const patch = readFileSync(resolve(__dirname, '../../patches/devilutionx-web.patch'), 'utf8');
     const files = [...patch.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
-    expect(files).toEqual(['3rdParty/Lua/CMakeLists.txt', 'CMake/Dependencies.cmake', 'CMake/functions/devilutionx_library.cmake', 'Source/DiabloUI/diabloui.cpp', 'Source/engine/sound.cpp']);
+    expect(files).toEqual([
+      '3rdParty/Lua/CMakeLists.txt', 'CMake/Dependencies.cmake', 'CMake/functions/devilutionx_library.cmake', 'CMakeLists.txt',
+      'Source/DiabloUI/diabloui.cpp', 'Source/DiabloUI/settingsmenu.cpp', 'Source/controls/keymapper.cpp', 'Source/diablo.cpp',
+      'Source/engine/sound.cpp', 'Source/options.cpp', 'Source/options.h',
+    ]);
   });
 });
 

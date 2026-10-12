@@ -62,6 +62,8 @@ test('★ 최강: 메뉴에선 아무것도 안 하고, 마을의 전사는 레�
   // 투구·반지 2·목걸이·무기·방패·갑옷 (loc: 1 한손, 3 갑옷, 4 투구, 5 반지, 6 목걸이)
   expect(h.equip.map((e) => e.loc).sort()).toEqual([1, 1, 3, 4, 5, 5, 6]);
   expect(h.equip.every((e) => e.name.length > 0)).toBe(true);
+  // 방패는 가장 단단한 바탕 (예전엔 피해로 골라 버클러가 됐다)
+  expect(h.equip.find((e) => e.type === 5)?.name).not.toMatch(/Buckler/);
 
   await page.locator('#d1-frame').focus();
   await page.keyboard.press('i');

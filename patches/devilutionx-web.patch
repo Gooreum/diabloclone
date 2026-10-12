@@ -138,7 +138,7 @@ index b13b7416..3edbc00b 100644
  
  	// TODO: This should be handled outside of the keymapper.
 diff --git a/Source/diablo.cpp b/Source/diablo.cpp
-index e92c03c7..47fc16b6 100644
+index e92c03c7..da786ad5 100644
 --- a/Source/diablo.cpp
 +++ b/Source/diablo.cpp
 @@ -1861,7 +1861,7 @@ void InitKeymapActions()
@@ -221,7 +221,7 @@ index e92c03c7..47fc16b6 100644
 +	    && d.iMinDex <= p.GetMaximumAttributeValue(CharacterAttribute::Dexterity);
 +}
 +
-+/** best droppable base of a slot: highest max damage (weapons) or max AC (others) the hero can wear */
++/** best droppable base of a slot: highest max damage (weapons) or max AC (armor, shields) the hero can wear */
 +_item_indexes BestBase(const Player &p, item_equip_type loc, std::initializer_list<ItemType> types)
 +{
 +	_item_indexes best = IDI_NONE;
@@ -232,7 +232,7 @@ index e92c03c7..47fc16b6 100644
 +			continue;
 +		if (std::find(types.begin(), types.end(), d.itype) == types.end())
 +			continue;
-+		const int score = loc == ILOC_ONEHAND || loc == ILOC_TWOHAND ? d.iMaxDam : d.iMaxAC;
++		const int score = d.itype == ItemType::Shield || (loc != ILOC_ONEHAND && loc != ILOC_TWOHAND) ? d.iMaxAC : d.iMaxDam;
 +		if (score > bestScore) {
 +			bestScore = score;
 +			best = static_cast<_item_indexes>(i);

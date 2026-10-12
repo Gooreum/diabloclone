@@ -20,6 +20,6 @@
 | 파일 | 크기 | sha256 |
 |------|------|--------|
 | `devilutionx.js` | 221638 | `fb4526159cacbdbd2e08a1f7ba02e6444874a8a558107dc9ba672778decd97b7` |
-| `devilutionx.wasm` | 6036448 | `e93dc5970b6be8407bbb7d0793a24b74d99af116f4c207810d1b871f2c65d33c` |
+| `devilutionx.wasm` | 6036464 | `610bd7c72794dac48f67cdd600631be9071e2e6ef8da3ff80a8743b92b11493e` |
 | `devilutionx.data` | 12732968 | `e4cedda044a21cbe2efd7c926b9667c4267a986e692a309ac7df2c7ccf636ac6` |
 | `fonts-ko.mpq` | 16418824 | `2baee5ad59e672ca871feeee1874c562194129e9275a8aca5f4ce547cde92cc8` |
